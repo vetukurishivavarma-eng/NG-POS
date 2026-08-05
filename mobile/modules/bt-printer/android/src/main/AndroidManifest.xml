@@ -1,0 +1,18 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- Legacy Bluetooth permissions: implicitly granted, but only up to Android 11. -->
+  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+  <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+
+  <!--
+    Android 12+ runtime permission. `neverForLocation` matters: without it the
+    system also demands location access, which we have no use for and which
+    shop staff reasonably refuse.
+  -->
+  <uses-permission
+    android:name="android.permission.BLUETOOTH_CONNECT"
+    android:usesPermissionFlags="neverForLocation" />
+
+  <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+
+</manifest>

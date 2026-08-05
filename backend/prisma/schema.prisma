@@ -1,0 +1,414 @@
+// NG POS data model.
+//
+// Shapes follow the contract the mobile app already speaks (see the app's
+// SPEC.md), with two deliberate improvements over the system it replaces:
+//   1. Transaction line items are relational, not a JSON blob, so analytics can
+//      be computed in SQL instead of in application code.
+//   2. Sales carry a client-supplied idempotency key, so an offline sale that is
+//      replayed after a lost response cannot be recorded twice.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ORG_ADMIN
+  STORE_MANAGER
+  CASHIER
+}
+
+enum TaxType {
+  exempt
+  vat
+}
+
+enum TransactionType {
+  sale
+  refund
+  credit_note
+}
+
+enum TransactionStatus {
+  pending
+  completed
+  refunded
+  voided
+}
+
+enum PaymentMethod {
+  cash
+  card
+  mobile
+}
+
+enum TransferStatus {
+  pending
+  in_transit
+  completed
+  cancelled
+}
+
+enum StockMovementType {
+  purchase
+  sale
+  adjustment
+  transfer_in
+  transfer_out
+  refund
+}
+
+model Organization {
+  id               String   @id @default(uuid())
+  name             String
+  slug             String   @unique
+  logoBase64       String?  @map("logo_base64")
+  invoiceLogoBase64 String? @map("invoice_logo_base64")
+  vatRate          Decimal  @default(0.16) @map("vat_rate") @db.Decimal(5, 4)
+  currencySymbol   String   @default("K") @map("currency_symbol")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  users        User[]
+  stores       Store[]
+  products     Product[]
+  warehouses   Warehouse[]
+  transactions Transaction[]
+  transfers    Transfer[]
+  dailyReports DailyReport[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  email          String   @unique
+  passwordHash   String   @map("password_hash")
+  fullName       String   @map("full_name")
+  role           Role     @default(CASHIER)
+  /// Empty means "all stores in the organization".
+  assignedStores String[] @default([]) @map("assigned_stores")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Store {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  name           String
+  code           String
+  street         String    @default("")
+  city           String    @default("")
+  province       String    @default("")
+  postalCode     String    @default("") @map("postal_code")
+  country        String    @default("Zambia")
+  latitude       Float?
+  longitude      Float?
+  phone          String    @default("")
+  email          String    @default("")
+  isActive       Boolean   @default(true) @map("is_active")
+  lastSyncAt     DateTime? @map("last_sync_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inventory      Inventory[]
+  prices         StorePrice[]
+  transactions   Transaction[]
+  receiptCounters ReceiptCounter[]
+  stockMovements StockMovement[]
+  transfersOut   Transfer[]      @relation("TransferFrom")
+  transfersIn    Transfer[]      @relation("TransferTo")
+  dailyReports   DailyReport[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("stores")
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  description    String?
+  sku            String
+  barcode        String?
+  brand          String?
+  category       String?
+  costPrice      Decimal  @default(0) @map("cost_price") @db.Decimal(12, 2)
+  sellingPrice   Decimal  @default(0) @map("selling_price") @db.Decimal(12, 2)
+  taxType        TaxType  @default(exempt) @map("tax_type")
+  unit           String?
+  variants       Json     @default("[]")
+  isActive       Boolean  @default(true) @map("is_active")
+  imageBase64    String?  @map("image_base64")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inventory      Inventory[]
+  prices         StorePrice[]
+  items          TransactionItem[]
+  warehouseStock WarehouseStock[]
+  stockMovements StockMovement[]
+  transferItems  TransferItem[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId])
+  @@index([barcode])
+  @@map("products")
+}
+
+model Inventory {
+  id           String   @id @default(uuid())
+  storeId      String   @map("store_id")
+  productId    String   @map("product_id")
+  quantity     Decimal  @default(0) @db.Decimal(12, 3)
+  reorderLevel Decimal  @default(10) @map("reorder_level") @db.Decimal(12, 3)
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, productId])
+  @@index([storeId])
+  @@map("inventory")
+}
+
+/// Per-store price override. Absent means the product's default price applies.
+model StorePrice {
+  id        String   @id @default(uuid())
+  storeId   String   @map("store_id")
+  productId String   @map("product_id")
+  price     Decimal  @db.Decimal(12, 2)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, productId])
+  @@map("store_prices")
+}
+
+model Transaction {
+  id             String            @id @default(uuid())
+  organizationId String            @map("organization_id")
+  storeId        String            @map("store_id")
+  receiptNumber  String            @unique @map("receipt_number")
+  transactionType TransactionType  @default(sale) @map("transaction_type")
+  status         TransactionStatus @default(completed)
+  subtotal       Decimal           @default(0) @db.Decimal(12, 2)
+  discountAmount Decimal           @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxAmount      Decimal           @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  total          Decimal           @default(0) @db.Decimal(12, 2)
+  cashierId      String?           @map("cashier_id")
+  cashierName    String            @default("") @map("cashier_name")
+  customerName   String?           @map("customer_name")
+  customerPhone  String?           @map("customer_phone")
+  notes          String            @default("")
+  /// Idempotency key generated on the device before the sale is queued.
+  /// Unique, so replaying a queued sale after a lost response is a no-op.
+  clientReference String?          @unique @map("client_reference")
+  /// Set on the refund/credit note that reverses an earlier sale.
+  reversesId     String?           @map("reverses_id")
+  voidedAt       DateTime?         @map("voided_at")
+  voidReason     String?           @map("void_reason")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store        Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  cashier      User?             @relation(fields: [cashierId], references: [id], onDelete: SetNull)
+  items        TransactionItem[]
+  payments     Payment[]
+  reverses     Transaction?      @relation("Reversal", fields: [reversesId], references: [id], onDelete: SetNull)
+  reversedBy   Transaction[]     @relation("Reversal")
+
+  @@index([storeId, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("transactions")
+}
+
+model TransactionItem {
+  id             String  @id @default(uuid())
+  transactionId  String  @map("transaction_id")
+  productId      String? @map("product_id")
+  /// Denormalised so a historical receipt survives the product being renamed.
+  productName    String  @map("product_name")
+  sku            String  @default("")
+  brand          String?
+  quantity       Decimal @db.Decimal(12, 3)
+  unitPrice      Decimal @map("unit_price") @db.Decimal(12, 2)
+  costPrice      Decimal @default(0) @map("cost_price") @db.Decimal(12, 2)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxType        TaxType @default(exempt) @map("tax_type")
+  taxAmount      Decimal @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  lineTotal      Decimal @map("line_total") @db.Decimal(12, 2)
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  product     Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+  @@index([productId])
+  @@map("transaction_items")
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  transactionId String        @map("transaction_id")
+  method        PaymentMethod
+  amount        Decimal       @db.Decimal(12, 2)
+  reference     String?
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@map("payments")
+}
+
+/// Serialises receipt numbering per store per day.
+/// `STORECODE-YYYYMMDD-NNNNNN` must never collide, including when several
+/// devices sync queued offline sales at the same moment.
+model ReceiptCounter {
+  id       String @id @default(uuid())
+  storeId  String @map("store_id")
+  /// Local date as YYYYMMDD.
+  day      String
+  sequence Int    @default(0)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, day])
+  @@map("receipt_counters")
+}
+
+/// A frozen end-of-day Z-report, written by the nightly job.
+///
+/// The figures could always be recomputed from `transactions`, but a snapshot
+/// is what reconciles against the cash that was actually counted that night:
+/// it cannot drift when an old sale is later voided, and it survives the
+/// transaction table being archived.
+model DailyReport {
+  id               String   @id @default(uuid())
+  organizationId   String   @map("organization_id")
+  storeId          String   @map("store_id")
+  /// Local calendar date as YYYY-MM-DD, matching the receipt-number day.
+  date             String
+  transactionCount Int      @default(0) @map("transaction_count")
+  /// Net of refunds — the same figure the live endpoint calls `gross_total`.
+  grossTotal       Decimal  @default(0) @map("gross_total") @db.Decimal(12, 2)
+  taxTotal         Decimal  @default(0) @map("tax_total") @db.Decimal(12, 2)
+  refundTotal      Decimal  @default(0) @map("refund_total") @db.Decimal(12, 2)
+  cashTotal        Decimal  @default(0) @map("cash_total") @db.Decimal(12, 2)
+  cardTotal        Decimal  @default(0) @map("card_total") @db.Decimal(12, 2)
+  mobileTotal      Decimal  @default(0) @map("mobile_total") @db.Decimal(12, 2)
+  /// `[{ name, quantity, total }]`, best sellers first.
+  topItems         Json     @default("[]") @map("top_items")
+  /// True once the day is over and the job has sealed it. An intraday snapshot
+  /// is written unsealed so a manager can print a mid-day figure.
+  finalized        Boolean  @default(false)
+  generatedAt      DateTime @default(now()) @map("generated_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  store        Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, date])
+  @@index([organizationId, date])
+  @@map("daily_reports")
+}
+
+model StockMovement {
+  id        String            @id @default(uuid())
+  storeId   String            @map("store_id")
+  productId String            @map("product_id")
+  type      StockMovementType
+  /// Signed: negative for sales and transfers out.
+  quantity  Decimal           @db.Decimal(12, 3)
+  balance   Decimal           @db.Decimal(12, 3)
+  reference String?
+  note      String?
+  userId    String?           @map("user_id")
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, createdAt])
+  @@map("stock_movements")
+}
+
+model Warehouse {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  code           String
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  stock        WarehouseStock[]
+
+  @@unique([organizationId, code])
+  @@map("warehouses")
+}
+
+model WarehouseStock {
+  id          String   @id @default(uuid())
+  warehouseId String   @map("warehouse_id")
+  productId   String   @map("product_id")
+  quantity    Decimal  @default(0) @db.Decimal(12, 3)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, productId])
+  @@map("warehouse_stock")
+}
+
+model Transfer {
+  id             String         @id @default(uuid())
+  organizationId String         @map("organization_id")
+  reference      String         @unique
+  fromStoreId    String?        @map("from_store_id")
+  toStoreId      String?        @map("to_store_id")
+  status         TransferStatus @default(pending)
+  notes          String         @default("")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fromStore    Store?         @relation("TransferFrom", fields: [fromStoreId], references: [id], onDelete: SetNull)
+  toStore      Store?         @relation("TransferTo", fields: [toStoreId], references: [id], onDelete: SetNull)
+  items        TransferItem[]
+
+  @@index([organizationId])
+  @@map("transfers")
+}
+
+model TransferItem {
+  id         String  @id @default(uuid())
+  transferId String  @map("transfer_id")
+  productId  String  @map("product_id")
+  quantity   Decimal @db.Decimal(12, 3)
+
+  transfer Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([transferId])
+  @@map("transfer_items")
+}

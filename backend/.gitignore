@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# secrets — DATABASE_URL and JWT_SECRET live here. .env.example is the
+# committed template; the real .env never leaves this machine.
+.env
+.env.*
+!.env.example
+
+# test artifacts
+coverage/
+*.log
+npm-debug.*
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/

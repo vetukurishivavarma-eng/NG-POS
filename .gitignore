@@ -1,0 +1,11 @@
+# The two projects each keep their own .gitignore; this file only covers the
+# repository root. Everything below is machine-local and must never be pushed.
+
+# Pre-monorepo history, kept on disk as a safety net after the two separate
+# repos were merged into this one. Delete once you are happy with the merge.
+.git-preMonorepo/
+*/.git-preMonorepo/
+
+node_modules/
+.DS_Store
+Thumbs.db

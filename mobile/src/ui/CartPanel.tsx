@@ -1,0 +1,325 @@
+import React, { useMemo } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { computeTotals, PAYMENT_METHODS, useCart } from '../store/cart';
+import { useCheckout } from '../hooks/useCheckout';
+import { useSync } from '../db/sync';
+import { colors, font, formatKwacha, radius, spacing, splitAmount } from '../theme';
+import { Button, EmptyState, Icon } from './components';
+
+/**
+ * The cart body. Rendered inside a modal on phones and docked to the right of
+ * the product grid on tablets — same component, same behaviour, both places.
+ */
+export function CartPanel({ onDone, docked = false }: { onDone?: () => void; docked?: boolean }) {
+  const lines = useCart((s) => s.lines);
+  const setQuantity = useCart((s) => s.setQuantity);
+  const remove = useCart((s) => s.remove);
+  const clearCart = useCart((s) => s.clear);
+  const customerName = useCart((s) => s.customerName);
+  const setCustomer = useCart((s) => s.setCustomer);
+  const online = useSync((s) => s.online);
+
+  const { method, setMethod, busy, complete, canComplete } = useCheckout(onDone);
+  const totals = useMemo(() => computeTotals(lines), [lines]);
+  const amount = splitAmount(totals.total);
+
+  if (lines.length === 0) {
+    return (
+      <View style={[styles.root, docked && styles.docked]}>
+        {docked ? <PanelHeader count={0} onClear={clearCart} /> : null}
+        <EmptyState icon="shopping-cart" title="Cart is empty" hint="Tap a product to add it." />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.root, docked && styles.docked]}>
+      {docked ? <PanelHeader count={totals.itemCount} onClear={clearCart} /> : null}
+
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {lines.map((line) => (
+          <View key={line.product.id} style={styles.line}>
+            <View style={styles.lineTop}>
+              <Text style={styles.lineName} numberOfLines={2}>
+                {line.product.name}
+              </Text>
+              <Pressable onPress={() => remove(line.product.id)} hitSlop={10}>
+                <Icon name="x" size={16} color={colors.textFaint} />
+              </Pressable>
+            </View>
+
+            <View style={styles.lineBottom}>
+              <View style={styles.stepper}>
+                <Pressable
+                  style={styles.stepBtn}
+                  onPress={() => setQuantity(line.product.id, line.quantity - 1)}
+                  hitSlop={6}
+                >
+                  <Icon name="minus" size={15} color={colors.text} />
+                </Pressable>
+                <Text style={styles.qty}>{line.quantity}</Text>
+                <Pressable
+                  style={styles.stepBtn}
+                  onPress={() => setQuantity(line.product.id, line.quantity + 1)}
+                  hitSlop={6}
+                >
+                  <Icon name="plus" size={15} color={colors.text} />
+                </Pressable>
+              </View>
+
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.lineTotal}>
+                  {formatKwacha(line.product.selling_price * line.quantity)}
+                </Text>
+                <Text style={styles.lineUnit}>
+                  {formatKwacha(line.product.selling_price)} each
+                  {line.product.tax_type === 'vat' ? ' · VAT' : ''}
+                </Text>
+              </View>
+            </View>
+          </View>
+        ))}
+
+        <View style={styles.customerField}>
+          <Icon name="user" size={16} color={colors.textFaint} />
+          <TextInput
+            value={customerName}
+            onChangeText={(v) => setCustomer(v)}
+            placeholder="Customer name (optional)"
+            placeholderTextColor={colors.textFaint}
+            style={styles.customerInput}
+          />
+        </View>
+
+        <View style={styles.methods}>
+          {PAYMENT_METHODS.map((m) => {
+            const active = m.key === method;
+            const icon = m.key === 'cash' ? 'dollar-sign' : m.key === 'card' ? 'credit-card' : 'smartphone';
+            return (
+              <Pressable
+                key={m.key}
+                onPress={() => setMethod(m.key)}
+                style={[styles.method, active && styles.methodActive]}
+              >
+                <Icon
+                  name={icon as 'dollar-sign'}
+                  size={18}
+                  color={active ? colors.primary : colors.textMuted}
+                />
+                <Text style={[styles.methodText, active && styles.methodTextActive]}>{m.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={styles.totals}>
+          <SummaryRow label="Subtotal" value={formatKwacha(totals.subtotal)} />
+          {totals.discount > 0 ? (
+            <SummaryRow label="Discount" value={`− ${formatKwacha(totals.discount)}`} />
+          ) : null}
+          <SummaryRow label="VAT (16%)" value={formatKwacha(totals.tax)} />
+        </View>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        {!online ? (
+          <View style={styles.offlinePill}>
+            <Icon name="wifi-off" size={13} color={colors.warning} />
+            <Text style={styles.offlineText}>Offline — will sync automatically</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>Total</Text>
+          <Text style={styles.totalAmount}>
+            {amount.whole}
+            <Text style={styles.totalDecimals}>{amount.decimals}</Text>
+          </Text>
+        </View>
+
+        <Button
+          label={`Charge ${formatKwacha(totals.total)}`}
+          size="lg"
+          icon="check-circle"
+          onPress={complete}
+          loading={busy}
+          disabled={!canComplete}
+        />
+      </View>
+    </View>
+  );
+}
+
+function PanelHeader({ count, onClear }: { count: number; onClear: () => void }) {
+  return (
+    <View style={styles.panelHeader}>
+      <View style={styles.panelHeaderLeft}>
+        <Icon name="shopping-cart" size={17} color={colors.text} />
+        <Text style={styles.panelTitle}>Cart</Text>
+        {count > 0 ? (
+          <View style={styles.countPill}>
+            <Text style={styles.countPillText}>{count}</Text>
+          </View>
+        ) : null}
+      </View>
+      {count > 0 ? (
+        <Pressable onPress={onClear} hitSlop={8}>
+          <Text style={styles.clearText}>Clear</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.sumRow}>
+      <Text style={styles.sumLabel}>{label}</Text>
+      <Text style={styles.sumValue}>{value}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.canvas },
+  docked: {
+    backgroundColor: colors.surface,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.border,
+  },
+
+  panelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  panelHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  panelTitle: { fontFamily: font.bold, fontSize: 17, color: colors.text },
+  countPill: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  countPillText: { fontFamily: font.bold, fontSize: 11, color: '#fff' },
+  clearText: { fontFamily: font.semibold, fontSize: 13, color: colors.danger },
+
+  scroll: { padding: spacing.md, gap: spacing.sm },
+
+  line: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  lineTop: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  lineName: { flex: 1, fontFamily: font.semibold, fontSize: 14, color: colors.text, lineHeight: 19 },
+  lineBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceSunken,
+    borderRadius: radius.pill,
+    padding: 3,
+    gap: 2,
+  },
+  stepBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qty: { minWidth: 30, textAlign: 'center', fontFamily: font.bold, fontSize: 15, color: colors.text },
+
+  lineTotal: { fontFamily: font.bold, fontSize: 15, color: colors.text },
+  lineUnit: { fontFamily: font.regular, fontSize: 11, color: colors.textMuted, marginTop: 1 },
+
+  customerField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    height: 48,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.xs,
+  },
+  customerInput: { flex: 1, fontFamily: font.medium, fontSize: 14, color: colors.text },
+
+  methods: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  method: {
+    flex: 1,
+    height: 62,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  methodActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  methodText: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted },
+  methodTextActive: { color: colors.primary },
+
+  totals: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    gap: 6,
+    marginTop: spacing.xs,
+  },
+  sumRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  sumLabel: { fontFamily: font.regular, fontSize: 13, color: colors.textMuted },
+  sumValue: { fontFamily: font.semibold, fontSize: 13, color: colors.text },
+
+  footer: {
+    padding: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: spacing.sm,
+  },
+  offlinePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: colors.warningSoft,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+  },
+  offlineText: { fontFamily: font.semibold, fontSize: 11, color: colors.warning },
+
+  totalRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+  totalLabel: {
+    fontFamily: font.semibold,
+    fontSize: 12,
+    color: colors.textFaint,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  totalAmount: { fontFamily: font.extrabold, fontSize: 28, color: colors.text, letterSpacing: -0.8 },
+  totalDecimals: { fontFamily: font.bold, fontSize: 18, color: colors.textMuted },
+});

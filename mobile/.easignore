@@ -1,0 +1,15 @@
+# Keep the upload to source. The native project is regenerated or compiled on
+# the builder, and android/app/build alone runs to hundreds of megabytes.
+node_modules/
+android/build/
+android/app/build/
+android/.gradle/
+android/.cxx/
+android/app/.cxx/
+ios/build/
+ios/Pods/
+.expo/
+dist/
+*.apk
+*.aab
+*.keystore
