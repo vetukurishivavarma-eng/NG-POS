@@ -3,7 +3,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
-import { useAuth } from '../../src/store/auth';
+import { useAuth, roleLevel, useCan } from '../../src/store/auth';
 import { useStoreSelection } from '../../src/store/storeSelection';
 import { useSync, syncAll } from '../../src/db/sync';
 import { usePrinter } from '../../src/printing/printer';
@@ -27,6 +27,17 @@ export default function MoreScreen() {
   const reminder = useReminder((s) => s.config);
 
   const [busy, setBusy] = useState(false);
+
+  // Each of these mirrors a `requireRole` guard on the server, so a cashier is
+  // never shown a screen whose every action would come back 403.
+  const canWriteProducts = useCan('products.write');
+  const canAdjustStock = useCan('stock.adjust');
+  const canPrice = useCan('pricing.write');
+  const canTransfer = useCan('transfers.create');
+  const canViewStaff = useCan('users.view');
+  const canWarehouses = useCan('warehouses.write');
+  const canSettings = useCan('settings.write');
+  const seesReports = roleLevel(user) !== 'cashier';
 
   async function runSync() {
     if (!store) return;
@@ -107,6 +118,110 @@ export default function MoreScreen() {
             />
           </View>
         </View>
+
+        {canWriteProducts || canAdjustStock || canPrice ? (
+          <View>
+            <SectionLabel>Catalogue &amp; Stock</SectionLabel>
+            <View style={styles.card}>
+              {canWriteProducts ? (
+                <>
+                  <LinkRow
+                    icon="package"
+                    label="Products"
+                    value="Add, edit and price the catalogue"
+                    onPress={() => router.push('/products')}
+                  />
+                  <View style={styles.divider} />
+                </>
+              ) : null}
+              {canAdjustStock ? (
+                <>
+                  <LinkRow
+                    icon="plus-square"
+                    label="Adjust Stock"
+                    value="Receive deliveries, correct counts"
+                    onPress={() => router.push('/stock-adjust')}
+                  />
+                  <View style={styles.divider} />
+                  <LinkRow
+                    icon="activity"
+                    label="Stock Movements"
+                    value="Every change and who made it"
+                    onPress={() => router.push('/movements')}
+                  />
+                  <View style={styles.divider} />
+                </>
+              ) : null}
+              {canPrice ? (
+                <LinkRow
+                  icon="tag"
+                  label="Store Pricing"
+                  value="Prices that differ from the catalogue"
+                  onPress={() => router.push('/store-pricing')}
+                />
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
+        {canTransfer || canWarehouses ? (
+          <View>
+            <SectionLabel>Distribution</SectionLabel>
+            <View style={styles.card}>
+              {canTransfer ? (
+                <LinkRow
+                  icon="truck"
+                  label="Transfers"
+                  value="Move stock between stores"
+                  onPress={() => router.push('/transfers')}
+                />
+              ) : null}
+              {canTransfer && canWarehouses ? <View style={styles.divider} /> : null}
+              {canWarehouses ? (
+                <LinkRow
+                  icon="grid"
+                  label="Warehouses"
+                  value="Holding stock outside the shops"
+                  onPress={() => router.push('/warehouses')}
+                />
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
+        {seesReports || canViewStaff || canSettings ? (
+          <View>
+            <SectionLabel>Business</SectionLabel>
+            <View style={styles.card}>
+              {seesReports ? (
+                <LinkRow
+                  icon="bar-chart-2"
+                  label="Analytics"
+                  value="Sales and profit by branch and product"
+                  onPress={() => router.push('/analytics')}
+                />
+              ) : null}
+              {seesReports && (canViewStaff || canSettings) ? <View style={styles.divider} /> : null}
+              {canViewStaff ? (
+                <LinkRow
+                  icon="users"
+                  label="Staff"
+                  value="Who can sign in, and where"
+                  onPress={() => router.push('/users')}
+                />
+              ) : null}
+              {canViewStaff && canSettings ? <View style={styles.divider} /> : null}
+              {canSettings ? (
+                <LinkRow
+                  icon="sliders"
+                  label="Settings"
+                  value="Organisation, VAT rate and currency"
+                  onPress={() => router.push('/settings')}
+                />
+              ) : null}
+            </View>
+          </View>
+        ) : null}
 
         <View>
           <SectionLabel>Configuration</SectionLabel>

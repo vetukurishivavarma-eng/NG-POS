@@ -1,12 +1,13 @@
 import React, { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useStoreSelection } from '../src/store/storeSelection';
 import { useCart } from '../src/store/cart';
+import { useScanCapture } from '../src/store/scanCapture';
 import { findCachedByBarcode } from '../src/db';
 import { colors, font, radius, spacing } from '../src/theme';
 import { Button, Icon } from '../src/ui/components';
@@ -18,15 +19,30 @@ export default function ScanScreen() {
   const add = useCart((s) => s.add);
   const queryClient = useQueryClient();
 
+  /** `capture` returns the raw code to the caller instead of selling it. */
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const capturing = mode === 'capture';
+  const capture = useScanCapture((s) => s.capture);
+
   const [message, setMessage] = useState<string | null>(null);
   /** Barcode callbacks fire continuously; this gates one lookup at a time. */
   const busy = useRef(false);
 
   async function onScanned(data: string) {
-    if (busy.current || !store) return;
+    if (busy.current) return;
     busy.current = true;
 
     try {
+      // Capture mode hands the code straight back — no catalogue lookup, and no
+      // store needs to be selected, because the product may not exist yet.
+      if (capturing) {
+        capture(data);
+        router.back();
+        return;
+      }
+
+      if (!store) return;
+
       // Prefer whatever the sell screen already has loaded, so scanning behaves
       // identically online and offline.
       const cached = queryClient.getQueryData<CatalogueResult>(['catalogue', store.id]);
@@ -89,7 +105,9 @@ export default function ScanScreen() {
           <View style={[styles.corner, styles.cornerBL]} />
           <View style={[styles.corner, styles.cornerBR]} />
         </View>
-        <Text style={styles.hint}>Point at a product barcode</Text>
+        <Text style={styles.hint}>
+          {capturing ? 'Scan the barcode to fill the field' : 'Point at a product barcode'}
+        </Text>
       </View>
 
       {message ? (

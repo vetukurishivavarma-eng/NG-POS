@@ -188,12 +188,43 @@ export interface User {
   is_active: boolean;
 }
 
+/** The three roles the backend accepts. `User.role` stays a string for tolerance. */
+export type Role = 'ORG_ADMIN' | 'STORE_MANAGER' | 'CASHIER';
+
+export const ROLE_LABELS: Record<Role, string> = {
+  ORG_ADMIN: 'Organisation Admin',
+  STORE_MANAGER: 'Store Manager',
+  CASHIER: 'Cashier',
+};
+
+/** `password` is required on create, optional on update (omit to leave it alone). */
+export interface UserDraft {
+  email: string;
+  full_name: string;
+  password?: string;
+  role: Role;
+  assigned_stores: string[];
+  is_active: boolean;
+}
+
 export interface Organization {
   id: string;
   name: string;
   slug: string;
   logo_base64?: string | null;
   invoice_logo_base64?: string | null;
+  /** Fraction, not percent: 0.16 is 16%. */
+  vat_rate: number;
+  currency_symbol: string;
+}
+
+export interface OrganizationUpdate {
+  name?: string;
+  slug?: string;
+  logo_base64?: string | null;
+  invoice_logo_base64?: string | null;
+  vat_rate?: number;
+  currency_symbol?: string;
 }
 
 export interface LoginResponse {
@@ -214,4 +245,195 @@ export interface DashboardAnalytics {
   total_products: number;
   low_stock_count: number;
   [key: string]: unknown;
+}
+
+/* ------------------------------------------------------------------ products */
+
+/** What POST/PUT `/products` accepts. `id` and timestamps are server-owned. */
+export interface ProductDraft {
+  name: string;
+  description?: string | null;
+  sku: string;
+  barcode?: string | null;
+  brand?: string | null;
+  category?: string | null;
+  cost_price: number;
+  selling_price: number;
+  tax_type: TaxType;
+  unit?: string | null;
+  is_active?: boolean;
+  image_base64?: string | null;
+}
+
+/* --------------------------------------------------------------- stock moves */
+
+/**
+ * `purchase` for stock received, `adjustment` for a correction after a count.
+ * The transfer types are written by the transfers endpoint, never posted directly.
+ */
+export type MovementType = 'purchase' | 'adjustment' | 'transfer_in' | 'transfer_out';
+
+export const MOVEMENT_LABELS: Record<MovementType, string> = {
+  purchase: 'Stock received',
+  adjustment: 'Adjustment',
+  transfer_in: 'Transfer in',
+  transfer_out: 'Transfer out',
+};
+
+/**
+ * `quantity` is a *delta*, not a new total — signed for adjustments, positive
+ * for purchases. Sending the counted total instead would double the stock.
+ */
+export interface StockMovementDraft {
+  store_id: string;
+  product_id: string;
+  type: MovementType;
+  quantity: number;
+  note?: string;
+  reorder_level?: number;
+}
+
+export interface StockMovement {
+  id: string;
+  product_id: string;
+  product_name: string;
+  sku: string;
+  type: MovementType;
+  quantity: number;
+  /** Stock level immediately after this movement. */
+  balance: number;
+  reference: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+/** What `POST /inventory/movements` returns: the inventory row after the change. */
+export interface StockLevel {
+  product_id: string;
+  store_id: string;
+  quantity: number;
+  reorder_level: number;
+}
+
+/* --------------------------------------------------------------- store price */
+
+export interface StorePriceRow {
+  id: string;
+  store_id: string;
+  product_id: string;
+  product_name: string;
+  sku: string;
+  brand: string | null;
+  /** The catalogue price this override replaces. */
+  default_price: number;
+  store_price: number;
+  /** `store_price - default_price`; negative means this store sells cheaper. */
+  difference: number;
+}
+
+/* ---------------------------------------------------------------- warehouses */
+
+export interface Warehouse {
+  id: string;
+  organization_id: string;
+  name: string;
+  code: string;
+  is_active: boolean;
+  /** Number of distinct products held, not total units. */
+  stock_items: number;
+  created_at: string;
+}
+
+export interface WarehouseStockRow {
+  product_id: string;
+  product: Product;
+  quantity: number;
+}
+
+/* ----------------------------------------------------------------- transfers */
+
+export interface TransferItem {
+  product_id: string;
+  product_name: string;
+  sku: string;
+  quantity: number;
+}
+
+export interface Transfer {
+  id: string;
+  /** Server-assigned, e.g. `TRF-M8X2K1`. */
+  reference: string;
+  from_store_id: string;
+  from_store: string | null;
+  to_store_id: string;
+  to_store: string | null;
+  status: string;
+  items: TransferItem[];
+  created_at: string;
+}
+
+export interface TransferDraft {
+  from_store_id: string;
+  to_store_id: string;
+  items: { product_id: string; quantity: number }[];
+  notes?: string;
+}
+
+/* ----------------------------------------------------------------- analytics */
+
+export type AnalyticsPeriod = 'daily' | 'weekly' | 'monthly';
+
+export const PERIOD_LABELS: Record<AnalyticsPeriod, string> = {
+  daily: 'Today',
+  weekly: 'This week',
+  monthly: 'This month',
+};
+
+export interface SalesTrendPoint {
+  /** YYYY-MM-DD. Days with no sales are present with zeroes. */
+  date: string;
+  total: number;
+  count: number;
+}
+
+export interface TopProduct {
+  product_id: string | null;
+  product_name: string;
+  quantity: number;
+  total: number;
+}
+
+export interface SalesPerProductRow {
+  product_id: string | null;
+  product_name: string;
+  brand: string | null;
+  quantity: number;
+  sales: number;
+}
+
+export interface ProfitPerProductRow extends SalesPerProductRow {
+  /** Net of tax and the cost price captured on the line at sale time. */
+  profit: number;
+}
+
+export interface SalesPerBranchRow {
+  store_id: string;
+  branch: string;
+  transactions: number;
+  sales: number;
+}
+
+export interface ProfitPerBranchRow {
+  store_id: string;
+  branch: string;
+  sales: number;
+  profit: number;
+}
+
+export interface SalesSummary {
+  total_sales: number;
+  tax_collected: number;
+  discounts: number;
+  transactions: number;
+  average_transaction: number;
 }

@@ -75,7 +75,7 @@ analyticsRouter.get(
         SELECT COUNT(*)::bigint AS count
         FROM inventory i
         JOIN stores s ON s.id = i.store_id
-        WHERE s.organization_id = ${user.organizationId}::uuid
+        WHERE s.organization_id = ${user.organizationId}
           AND i.quantity <= i.reorder_level
       `,
     ]);
@@ -116,7 +116,7 @@ analyticsRouter.get(
       FROM generate_series(${since}::timestamp, NOW()::timestamp, '1 day') AS d(day)
       LEFT JOIN transactions t
         ON date_trunc('day', t.created_at) = date_trunc('day', d.day)
-       AND t.organization_id = ${user.organizationId}::uuid
+       AND t.organization_id = ${user.organizationId}
        AND t.status <> 'voided'
        ${q.store_id ? prismaStoreFilter(q.store_id) : prismaEmpty()}
       GROUP BY d.day
@@ -228,7 +228,7 @@ analyticsRouter.get(
              SUM(ti.line_total - ti.tax_amount - (ti.cost_price * ti.quantity))::float8 AS profit
       FROM transaction_items ti
       JOIN transactions t ON t.id = ti.transaction_id
-      WHERE t.organization_id = ${user.organizationId}::uuid
+      WHERE t.organization_id = ${user.organizationId}
         AND t.status <> 'voided'
         AND t.created_at >= ${since}
         ${q.store_id ? prismaStoreFilter(q.store_id) : prismaEmpty()}
@@ -301,7 +301,7 @@ analyticsRouter.get(
       LEFT JOIN transactions t
         ON t.store_id = s.id AND t.status <> 'voided' AND t.created_at >= ${since}
       LEFT JOIN transaction_items ti ON ti.transaction_id = t.id
-      WHERE s.organization_id = ${user.organizationId}::uuid
+      WHERE s.organization_id = ${user.organizationId}
       GROUP BY s.id, s.name
       ORDER BY profit DESC
     `;
@@ -369,11 +369,16 @@ analyticsRouter.get(
 );
 
 /* Raw-SQL fragment helpers. Kept at the bottom because they exist only to make
-   the optional store filter readable inside tagged templates. */
+   the optional store filter readable inside tagged templates.
+
+   Do not add a `::uuid` cast to any bound id in this file. Prisma's default
+   `String @id` maps to a `text` column, not `uuid`, so casting the parameter
+   produces `text = uuid` and Postgres rejects the whole query with a 500. That
+   is what it did on every raw query here until 2026-08-06. */
 import { Prisma } from '@prisma/client';
 
 function prismaStoreFilter(storeId: string) {
-  return Prisma.sql`AND t.store_id = ${storeId}::uuid`;
+  return Prisma.sql`AND t.store_id = ${storeId}`;
 }
 
 function prismaEmpty() {

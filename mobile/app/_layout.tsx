@@ -151,6 +151,31 @@ export default function RootLayout() {
             name="reminder"
             options={{ presentation: 'modal', headerShown: true, title: 'Closing Reminder' }}
           />
+
+          <Stack.Screen name="products/index" options={{ headerShown: true, title: 'Products' }} />
+          <Stack.Screen
+            name="products/[id]"
+            options={{ presentation: 'modal', headerShown: true, title: 'Product' }}
+          />
+          <Stack.Screen
+            name="stock-adjust"
+            options={{ presentation: 'modal', headerShown: true, title: 'Adjust Stock' }}
+          />
+          <Stack.Screen name="movements" options={{ headerShown: true, title: 'Stock Movements' }} />
+          <Stack.Screen name="store-pricing" options={{ headerShown: true, title: 'Store Pricing' }} />
+          <Stack.Screen name="users/index" options={{ headerShown: true, title: 'Staff' }} />
+          <Stack.Screen
+            name="users/[id]"
+            options={{ presentation: 'modal', headerShown: true, title: 'Staff Member' }}
+          />
+          <Stack.Screen name="transfers/index" options={{ headerShown: true, title: 'Transfers' }} />
+          <Stack.Screen
+            name="transfers/new"
+            options={{ presentation: 'modal', headerShown: true, title: 'New Transfer' }}
+          />
+          <Stack.Screen name="warehouses" options={{ headerShown: true, title: 'Warehouses' }} />
+          <Stack.Screen name="analytics" options={{ headerShown: true, title: 'Analytics' }} />
+          <Stack.Screen name="settings" options={{ headerShown: true, title: 'Settings' }} />
         </Stack>
       </SafeAreaProvider>
     </QueryClientProvider>

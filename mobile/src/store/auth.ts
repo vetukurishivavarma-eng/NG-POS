@@ -54,3 +54,52 @@ export function capabilitiesFor(user: User | null): Capability[] {
   if (role.includes('manager')) return ['sell', 'stock', 'reports'];
   return ['sell'];
 }
+
+/** Normalised role, tolerant of whatever casing the API returns. */
+export type RoleLevel = 'admin' | 'manager' | 'cashier';
+
+export function roleLevel(user: User | null): RoleLevel {
+  const role = (user?.role ?? '').toLowerCase();
+  if (role.includes('admin')) return 'admin';
+  if (role.includes('manager')) return 'manager';
+  return 'cashier';
+}
+
+/**
+ * Mirrors the backend's `requireRole` guards one-for-one. Hiding a control the
+ * server would reject is the whole point — but this is presentation only, and
+ * the server is still the thing that decides.
+ */
+export type Permission =
+  | 'products.write'
+  | 'products.delete'
+  | 'stock.adjust'
+  | 'pricing.write'
+  | 'warehouses.write'
+  | 'transfers.create'
+  | 'users.view'
+  | 'users.write'
+  | 'settings.write'
+  | 'refunds.issue';
+
+const PERMISSIONS: Record<Permission, RoleLevel[]> = {
+  'products.write': ['admin', 'manager'],
+  'products.delete': ['admin'],
+  'stock.adjust': ['admin', 'manager'],
+  'pricing.write': ['admin', 'manager'],
+  'warehouses.write': ['admin'],
+  'transfers.create': ['admin', 'manager'],
+  'users.view': ['admin', 'manager'],
+  'users.write': ['admin'],
+  'settings.write': ['admin'],
+  'refunds.issue': ['admin', 'manager'],
+};
+
+export function can(user: User | null, permission: Permission): boolean {
+  return PERMISSIONS[permission].includes(roleLevel(user));
+}
+
+/** Hook form, for use inside screens. */
+export function useCan(permission: Permission): boolean {
+  return can(useAuth((s) => s.user), permission);
+}
