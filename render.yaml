@@ -16,7 +16,12 @@ services:
     # Ohio are roughly twice that.
     region: frankfurt
     rootDir: backend
-    buildCommand: npm ci && npx prisma generate && npm run build
+    # --include=dev is load-bearing: NODE_ENV=production below makes `npm ci`
+    # skip devDependencies, and both the TypeScript compiler and the Prisma CLI
+    # live there. Without it the build has no `tsc` and dies on `npm run build`.
+    # Render does not prune afterwards, so the Prisma CLI is still present for
+    # the `migrate deploy` in startCommand.
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
     # Migrations run at start, not at build: Render's build step has no
     # guarantee of database reachability, and `migrate deploy` is a no-op when
     # there is nothing new to apply.
