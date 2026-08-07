@@ -14,6 +14,15 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+
+  // Serverless Postgres (Neon, Supabase) hands out two connection strings: a
+  // pooled one through PgBouncer for queries, and a direct one. Migrations must
+  // not go through the pooler — it multiplexes sessions, so the advisory lock
+  // and DDL that `prisma migrate` relies on are unreliable there.
+  //
+  // Prisma errors if this is unset, so it must be defined everywhere — locally
+  // there is no pooler, so set it to the same value as DATABASE_URL.
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {

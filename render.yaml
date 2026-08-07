@@ -1,0 +1,53 @@
+# Render blueprint for the NG POS API.
+#
+# Render's "New > Blueprint" reads this file and provisions the service, so the
+# build and start commands below are the source of truth rather than settings
+# typed into a form and forgotten.
+#
+# No database is declared here on purpose. Render's free Postgres is deleted
+# after ~30 days; the database lives on Neon instead, and its two connection
+# strings are pasted in as environment variables.
+services:
+  - type: web
+    name: ngpos-api
+    runtime: node
+    plan: free
+    # Frankfurt is Render's closest region to Zambia (~150-200ms). Oregon and
+    # Ohio are roughly twice that.
+    region: frankfurt
+    rootDir: backend
+    buildCommand: npm ci && npx prisma generate && npm run build
+    # Migrations run at start, not at build: Render's build step has no
+    # guarantee of database reachability, and `migrate deploy` is a no-op when
+    # there is nothing new to apply.
+    startCommand: npx prisma migrate deploy && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Pooled Neon URL (hostname contains "-pooler"), used for queries.
+      - key: DATABASE_URL
+        sync: false
+      # Direct Neon URL, used by `prisma migrate` only. See schema.prisma.
+      - key: DIRECT_URL
+        sync: false
+      # Must be 32+ characters or the process refuses to boot (src/env.ts).
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 30d
+      # Native clients send no Origin header, so this only constrains browsers.
+      - key: CORS_ORIGINS
+        value: "*"
+      # Reporting days are cut in the shops' timezone, not the container's UTC.
+      - key: REPORT_TIMEZONE
+        value: Africa/Lusaka
+      - key: MAX_CASHIER_DISCOUNT_PERCENT
+        value: "10"
+      # NOTE: on the free plan the service sleeps after ~15 minutes idle, and a
+      # sleeping container runs no cron — so the 00:20 seal in
+      # src/jobs/dailyReport.ts will not fire on schedule. catchUpOnBoot() only
+      # recovers *yesterday*, so a weekend of sleep leaves older days unsealed.
+      # Fine for testing; move to a paid instance before real till data exists.
+      - key: CRON_ENABLED
+        value: "true"
