@@ -49,6 +49,29 @@ services:
         value: Africa/Lusaka
       - key: MAX_CASHIER_DISCOUNT_PERCENT
         value: "10"
+      # Forgotten passwords. Reset codes are mailed to ONE administrator, never
+      # to the address that asked — shop staff have internal addresses no mailbox
+      # answers. Leave PASSWORD_RESET_NOTIFY_EMAIL empty to keep the feature off;
+      # the endpoint then says so instead of accepting requests nobody reads.
+      - key: PASSWORD_RESET_NOTIFY_EMAIL
+        sync: false
+      - key: PASSWORD_RESET_TTL_MINUTES
+        value: "30"
+      - key: APP_NAME
+        value: NG POS
+      # Gmail needs an App Password here, not the account password.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
       # NOTE: on the free plan the service sleeps after ~15 minutes idle, and a
       # sleeping container runs no cron — so the 00:20 seal in
       # src/jobs/dailyReport.ts will not fire on schedule. catchUpOnBoot() only

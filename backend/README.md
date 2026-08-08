@@ -47,11 +47,12 @@ device — it resolves to the phone itself.
 ## API
 
 All routes are under `/api` and require `Authorization: Bearer <token>` except
-`/api/auth/login`, `/api/auth/register` and `/health`.
+`/api/auth/login`, `/api/auth/register`, `/api/auth/forgot-password`,
+`/api/auth/reset-password` and `/health`.
 
 | Area | Routes |
 | --- | --- |
-| Auth | `POST /auth/login`, `/auth/register`, `GET /auth/me`, `POST /auth/change-password` |
+| Auth | `POST /auth/login`, `/auth/register`, `GET /auth/me`, `POST /auth/change-password`, `POST /auth/forgot-password`, `POST /auth/reset-password` |
 | Organisation | `GET|PUT /organizations/current`, `GET /settings` |
 | Stores | `GET|POST /stores`, `GET|PUT|DELETE /stores/:id` |
 | Products | `GET|POST /products`, `GET|PUT|DELETE /products/:id`, `GET /products/brands`, `GET /products/with-stock/:storeId`, `POST /products/import` |
@@ -68,6 +69,37 @@ All routes are under `/api` and require `Authorization: Bearer <token>` except
 Errors return `{ "detail": "..." }`, which is what the mobile client reads.
 
 ## Design decisions worth knowing
+
+**Forgotten passwords go through a human, not a mailbox.** Staff accounts use
+internal addresses (`cashier@ngpos.local`) that no mail server answers, so there
+is nowhere to send a reset link — and mailing a reset to an address an attacker
+controls is the hole that flow usually opens. `POST /auth/forgot-password`
+instead mails a one-time code to the single address in
+`PASSWORD_RESET_NOTIFY_EMAIL`; the administrator hands it to the person standing
+in front of them, which is a check no emailed link can make. The code is 8
+characters from an alphabet with no `O`/`0`/`I`/`1` (it gets read aloud), stored
+only as a bcrypt hash, valid once, expiring after
+`PASSWORD_RESET_TTL_MINUTES`, and burned after five wrong guesses. Requesting a
+new code invalidates the previous one. The endpoint answers identically for
+known, unknown and deactivated addresses, so it cannot enumerate staff.
+
+Leave `PASSWORD_RESET_NOTIFY_EMAIL` unset and the feature is off — the endpoint
+says so rather than accepting requests nobody will read. With SMTP unset in
+development the mail is printed to the console so the flow stays testable; that
+printing is disabled under `NODE_ENV=production`.
+
+**A password change ends every other session.** `users.password_changed_at` is
+compared against each token's `iat`, so changing a password, an admin resetting
+one from `PUT /users/:id`, and a code reset all sign out the devices holding
+older tokens. Without it, an account recovered *because* it was compromised
+stays compromised for the 30 days the stolen token still has to run. The device
+that made the change gets a fresh token in the response.
+
+**Store access is checked against the tenant first.** `assertStoreAccess` looks
+the store up inside the caller's organisation before its role checks, and
+answers 404 — not 403 — for a store belonging to someone else, so the two cases
+are indistinguishable. It is async for that reason; every call site must
+`await` it.
 
 **Prices are recalculated server-side.** The client sends product IDs and
 quantities; the server prices the sale. A device offline for a week would

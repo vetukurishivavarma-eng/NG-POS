@@ -29,7 +29,7 @@ transactionsRouter.get(
   asyncHandler(async (req, res) => {
     const q = listQuery.parse(req.query);
     const user = currentUser(req);
-    if (q.store_id) assertStoreAccess(user, q.store_id);
+    if (q.store_id) await assertStoreAccess(user, q.store_id);
 
     const rows = await prisma.transaction.findMany({
       where: {
@@ -117,7 +117,7 @@ transactionsRouter.post(
   asyncHandler(async (req, res) => {
     const body = saleSchema.parse(req.body);
     const user = currentUser(req);
-    assertStoreAccess(user, body.store_id);
+    await assertStoreAccess(user, body.store_id);
 
     const { transaction, duplicate } = await createSale(user, body);
 
@@ -155,7 +155,7 @@ transactionsRouter.post(
     if (original.transactionType !== 'sale') throw badRequest('Only a sale can be refunded.');
     if (original.voidedAt) throw badRequest('This sale has been voided.');
 
-    assertStoreAccess(user, original.storeId);
+    await assertStoreAccess(user, original.storeId);
 
     // What the sale actually contained, one entry per product: the same product
     // can appear on two lines, and matching per line would refund the requested
@@ -304,7 +304,7 @@ transactionsRouter.get(
       .parse(req.query);
 
     const user = currentUser(req);
-    assertStoreAccess(user, q.store_id);
+    await assertStoreAccess(user, q.store_id);
 
     res.json(await readDailyReport(q.store_id, q.date ?? todayKey()));
   })
@@ -322,7 +322,7 @@ transactionsRouter.get(
       .parse(req.query);
 
     const user = currentUser(req);
-    assertStoreAccess(user, q.store_id);
+    await assertStoreAccess(user, q.store_id);
 
     const rows = await prisma.dailyReport.findMany({
       where: { storeId: q.store_id, organizationId: user.organizationId },
@@ -369,7 +369,7 @@ transactionsRouter.post(
       })
       .parse(req.body);
 
-    assertStoreAccess(currentUser(req), body.store_id);
+    await assertStoreAccess(currentUser(req), body.store_id);
 
     if (body.force) {
       await prisma.dailyReport.updateMany({

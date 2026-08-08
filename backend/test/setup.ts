@@ -14,6 +14,8 @@ beforeEach(async () => {
       payments, transaction_items, transactions, stock_movements,
       receipt_counters, daily_reports, inventory, store_prices,
       warehouse_stock, transfer_items, transfers, warehouses,
+      supplier_payments, supplier_invoice_items, supplier_invoices, suppliers,
+      password_reset_requests,
       products, stores, users, organizations
     RESTART IDENTITY CASCADE
   `);

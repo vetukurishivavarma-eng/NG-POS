@@ -86,7 +86,7 @@ productsRouter.get(
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
     const storeId = req.params.storeId as string;
-    assertStoreAccess(user, storeId);
+    await assertStoreAccess(user, storeId);
 
     const store = await prisma.store.findFirst({
       where: { id: storeId, organizationId: user.organizationId },

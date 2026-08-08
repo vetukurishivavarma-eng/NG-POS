@@ -5,6 +5,7 @@ import morgan from 'morgan';
 
 import { corsOrigins, env } from './env.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
+import { rateLimit } from './middleware/rateLimit.js';
 
 import { authRouter } from './routes/auth.js';
 import { organizationsRouter } from './routes/organizations.js';
@@ -13,6 +14,7 @@ import { productsRouter } from './routes/products.js';
 import { inventoryRouter } from './routes/inventory.js';
 import { transactionsRouter } from './routes/transactions.js';
 import { analyticsRouter } from './routes/analytics.js';
+import { supplierInvoicesRouter, suppliersRouter } from './routes/suppliers.js';
 import {
   storePricingRouter,
   syncRouter,
@@ -33,12 +35,39 @@ export function createApp() {
 
   app.get('/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
+  /**
+   * A ceiling on any one address, under which the sensitive endpoints keep their
+   * own much tighter limits. Sized for a branch: several tills behind one NAT
+   * address, each syncing a catalogue and posting sales, stays far beneath it —
+   * a script walking the API does not.
+   *
+   * `clearOnSuccess` off on purpose: this caps throughput, and a limiter that
+   * forgives every success can never be reached by the traffic it exists for.
+   * Health checks sit above it so an uptime probe can't be locked out.
+   */
+  if (env.NODE_ENV !== 'test') {
+    app.use(
+      '/api',
+      rateLimit({
+        windowMs: 60_000,
+        max: 600,
+        clearOnSuccess: false,
+        message: 'Too many requests from this connection. Slow down and try again shortly.',
+      })
+    );
+  }
+
   app.use('/api/auth', authRouter);
   app.use('/api/organizations', organizationsRouter);
   app.use('/api/settings', organizationsRouter);
   app.use('/api/stores', storesRouter);
   app.use('/api/products', productsRouter);
   app.use('/api/inventory', inventoryRouter);
+  app.use('/api/suppliers', suppliersRouter);
+  app.use('/api/supplier-invoices', supplierInvoicesRouter);
+  // The client calls a delivery a "purchase"; the record is a supplier invoice.
+  // Same router, so either name works and neither has to be the one true one.
+  app.use('/api/purchases', supplierInvoicesRouter);
   app.use('/api/transactions', transactionsRouter);
   app.use('/api/store-pricing', storePricingRouter);
   app.use('/api/warehouses', warehousesRouter);

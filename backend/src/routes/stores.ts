@@ -65,7 +65,7 @@ storesRouter.get(
       where: { id: req.params.id, organizationId: user.organizationId },
     });
     if (!store) throw notFound('Store not found.');
-    assertStoreAccess(user, store.id);
+    await assertStoreAccess(user, store.id);
     res.json(serializeStore(store));
   })
 );

@@ -27,6 +27,36 @@ const schema = z.object({
    * manager for every discount.
    */
   MAX_CASHIER_DISCOUNT_PERCENT: z.coerce.number().min(0).max(100).default(10),
+  /**
+   * Where password-reset requests are sent.
+   *
+   * Deliberately *not* the address that asked. Shop staff are created with
+   * internal addresses (`cashier@ngpos.local`) that no mailbox answers, and
+   * mailing a reset to an address an attacker controls is the whole class of
+   * bug this avoids. A human administrator receives the request and passes the
+   * code on to the person standing in front of them.
+   *
+   * Unset means the feature is off: the endpoint then says so rather than
+   * silently accepting requests nobody will ever read.
+   */
+  PASSWORD_RESET_NOTIFY_EMAIL: z.string().email().optional(),
+  /** Minutes a reset code stays valid. Short — it is read off a phone in a shop. */
+  PASSWORD_RESET_TTL_MINUTES: z.coerce.number().min(5).max(1440).default(30),
+
+  /** SMTP. All five must be present for mail to be sent at all. */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  SMTP_FROM: z.string().optional(),
+  /** false for STARTTLS on 587, true for implicit TLS on 465. */
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  /** Shown in the subject line so an admin with several shops can tell them apart. */
+  APP_NAME: z.string().default('NG POS'),
+
   /** Set false on a second instance so the job only runs once. */
   CRON_ENABLED: z
     .enum(['true', 'false'])
@@ -50,3 +80,21 @@ export const env = parsed.data;
 
 export const corsOrigins =
   env.CORS_ORIGINS === '*' ? true : env.CORS_ORIGINS.split(',').map((o) => o.trim());
+
+/** True only when a reset mail can actually be delivered to a real mailbox. */
+export const passwordResetConfigured = Boolean(
+  env.PASSWORD_RESET_NOTIFY_EMAIL &&
+    env.SMTP_HOST &&
+    env.SMTP_USER &&
+    env.SMTP_PASSWORD &&
+    env.SMTP_FROM
+);
+
+// A production deployment that half-configured this would look fine until the
+// first person forgot their password, so say it at boot instead.
+if (env.NODE_ENV === 'production' && env.PASSWORD_RESET_NOTIFY_EMAIL && !passwordResetConfigured) {
+  console.warn(
+    '[startup] PASSWORD_RESET_NOTIFY_EMAIL is set but SMTP_HOST/USER/PASSWORD/FROM are not. ' +
+      'Password reset is disabled until all of them are present.'
+  );
+}

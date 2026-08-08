@@ -28,10 +28,10 @@ function startOfToday(): Date {
 const storeQuery = z.object({ store_id: z.string().uuid().optional() });
 
 /** Scopes a query to one store, or to every store the caller may see. */
-function scope(req: Parameters<typeof currentUser>[0], storeId?: string) {
+async function scope(req: Parameters<typeof currentUser>[0], storeId?: string) {
   const user = currentUser(req);
   if (storeId) {
-    assertStoreAccess(user, storeId);
+    await assertStoreAccess(user, storeId);
     return { organizationId: user.organizationId, storeId };
   }
   if (user.role !== 'ORG_ADMIN' && user.assignedStores.length > 0) {
@@ -45,7 +45,7 @@ analyticsRouter.get(
   asyncHandler(async (req, res) => {
     const { store_id } = storeQuery.parse(req.query);
     const user = currentUser(req);
-    const where = { ...scope(req, store_id), status: { not: 'voided' as const } };
+    const where = { ...(await scope(req, store_id)), status: { not: 'voided' as const } };
 
     const now = new Date();
     const weekStart = new Date(startOfToday());
@@ -148,7 +148,7 @@ analyticsRouter.get(
       by: ['productId', 'productName'],
       where: {
         transaction: {
-          ...scope(req, q.store_id),
+          ...(await scope(req, q.store_id)),
           status: { not: 'voided' },
           transactionType: 'sale',
           createdAt: { gte: periodStart(q.period) },
@@ -181,7 +181,7 @@ analyticsRouter.get(
       by: ['productId', 'productName', 'brand'],
       where: {
         transaction: {
-          ...scope(req, q.store_id),
+          ...(await scope(req, q.store_id)),
           status: { not: 'voided' },
           createdAt: { gte: periodStart(q.period) },
         },
@@ -326,7 +326,7 @@ analyticsRouter.get(
 
     const agg = await prisma.transaction.aggregate({
       where: {
-        ...scope(req, q.store_id),
+        ...(await scope(req, q.store_id)),
         status: { not: 'voided' },
         createdAt: { gte: periodStart(q.period) },
       },

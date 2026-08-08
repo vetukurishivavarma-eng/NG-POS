@@ -22,7 +22,15 @@ export function rateLimit(options: {
   /** What counts as "the same caller". Defaults to the client IP. */
   key?: (req: Request) => string;
   message?: string;
+  /**
+   * Whether a successful response forgives the attempts before it. Right for
+   * sign-in, where success proves the caller is legitimate — and wrong for any
+   * endpoint whose *success* is the thing being abused (sending mail, say),
+   * because then the limit can never be reached.
+   */
+  clearOnSuccess?: boolean;
 }) {
+  const clearOnSuccess = options.clearOnSuccess ?? true;
   const buckets = new Map<string, Bucket>();
 
   // Unbounded growth would be a slow leak on a long-lived process.
@@ -57,9 +65,11 @@ export function rateLimit(options: {
     }
 
     // A successful response clears the count, so ordinary use never trips it.
-    res.on('finish', () => {
-      if (res.statusCode < 400) buckets.delete(key);
-    });
+    if (clearOnSuccess) {
+      res.on('finish', () => {
+        if (res.statusCode < 400) buckets.delete(key);
+      });
+    }
 
     next();
   };

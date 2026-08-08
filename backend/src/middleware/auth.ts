@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 
 import { env } from '../env.js';
 import { prisma } from '../prisma.js';
-import { forbidden, unauthorized } from '../lib/errors.js';
+import { forbidden, notFound, unauthorized } from '../lib/errors.js';
 
 export interface AuthUser {
   id: string;
@@ -26,10 +26,18 @@ declare global {
 export interface TokenPayload {
   sub: string;
   org: string;
+  /** Seconds since epoch, set by jsonwebtoken when the token is signed. */
+  iat?: number;
 }
+
+// Pinned so signing and verification can never disagree on the algorithm. With
+// a symmetric secret this is belt-and-braces, but it removes the whole class of
+// algorithm-confusion tricks for free, and documents the intent.
+const JWT_ALG: jwt.Algorithm = 'HS256';
 
 export function signToken(userId: string, organizationId: string): string {
   return jwt.sign({ sub: userId, org: organizationId } satisfies TokenPayload, env.JWT_SECRET, {
+    algorithm: JWT_ALG,
     expiresIn: env.JWT_EXPIRES_IN,
   } as jwt.SignOptions);
 }
@@ -47,13 +55,22 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
     const token = header.slice(7);
     let payload: TokenPayload;
     try {
-      payload = jwt.verify(token, env.JWT_SECRET) as TokenPayload;
+      payload = jwt.verify(token, env.JWT_SECRET, { algorithms: [JWT_ALG] }) as TokenPayload;
     } catch {
       throw unauthorized('Session expired. Please sign in again.');
     }
 
     const user = await prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || !user.isActive) throw unauthorized('This account is no longer active.');
+
+    // A password change or reset must actually end the other sessions, or an
+    // account recovered *because* it was compromised stays compromised for the
+    // 30 days the stolen token still has to run. `iat` is whole seconds, so
+    // compare on the same scale to avoid logging out the token just issued.
+    const issuedAt = payload.iat ?? 0;
+    if (issuedAt < Math.floor(user.passwordChangedAt.getTime() / 1000)) {
+      throw unauthorized('Your password was changed. Please sign in again.');
+    }
 
     req.user = {
       id: user.id,
@@ -87,8 +104,23 @@ export function currentUser(req: Request): AuthUser {
 /**
  * A user with no explicit assignment can use every store in their organisation;
  * otherwise the store must be on their list. Org admins always pass.
+ *
+ * The tenant check comes first and is not optional. Both shortcuts below — org
+ * admin, and "no assignment means all stores" — used to return before anything
+ * confirmed the store was even in the caller's organisation, so a store id from
+ * another tenant sailed through on any route that did not separately re-scope
+ * its own query. Doing it here means a caller cannot reach another
+ * organisation's data by guessing an id, on this route or a future one.
  */
-export function assertStoreAccess(user: AuthUser, storeId: string): void {
+export async function assertStoreAccess(user: AuthUser, storeId: string): Promise<void> {
+  const store = await prisma.store.findFirst({
+    where: { id: storeId, organizationId: user.organizationId },
+    select: { id: true },
+  });
+  // Not 403: another tenant's id must be indistinguishable from one that does
+  // not exist, or the difference between the two answers maps their stores.
+  if (!store) throw notFound('Store not found.');
+
   if (user.role === 'ORG_ADMIN') return;
   if (user.assignedStores.length === 0) return;
   if (!user.assignedStores.includes(storeId)) {

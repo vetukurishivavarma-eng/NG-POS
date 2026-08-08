@@ -73,7 +73,12 @@ usersRouter.put(
         role: body.role,
         assignedStores: body.assigned_stores,
         isActive: body.is_active,
-        ...(body.password ? { passwordHash: await bcrypt.hash(body.password, 10) } : {}),
+        // Setting a password from here is how an admin takes an account back —
+        // usually because it is compromised. That has to end the sessions the
+        // old password opened, or the tokens keep working for another 30 days.
+        ...(body.password
+          ? { passwordHash: await bcrypt.hash(body.password, 10), passwordChangedAt: new Date() }
+          : {}),
       },
     });
 
@@ -107,7 +112,7 @@ storePricingRouter.get(
   '/',
   asyncHandler(async (req, res) => {
     const { store_id } = z.object({ store_id: z.string().uuid() }).parse(req.query);
-    assertStoreAccess(currentUser(req), store_id);
+    await assertStoreAccess(currentUser(req), store_id);
 
     const rows = await prisma.storePrice.findMany({
       where: { storeId: store_id },
@@ -143,7 +148,16 @@ storePricingRouter.post(
       })
       .parse(req.body);
 
-    assertStoreAccess(currentUser(req), body.store_id);
+    const user = currentUser(req);
+    await assertStoreAccess(user, body.store_id);
+
+    // The store is now known to be ours; the product has to be checked too, or
+    // a price row could be pinned to another organisation's product.
+    const product = await prisma.product.findFirst({
+      where: { id: body.product_id, organizationId: user.organizationId },
+      select: { id: true },
+    });
+    if (!product) throw notFound('Product not found.');
 
     const row = await prisma.storePrice.upsert({
       where: { storeId_productId: { storeId: body.store_id, productId: body.product_id } },
@@ -159,7 +173,22 @@ storePricingRouter.delete(
   '/:id',
   requireRole('ORG_ADMIN', 'STORE_MANAGER'),
   asyncHandler(async (req, res) => {
-    await prisma.storePrice.delete({ where: { id: req.params.id as string } });
+    const user = currentUser(req);
+
+    // Deleting straight by id trusted whatever the caller sent: any manager
+    // could remove any organisation's custom price by guessing a uuid. Resolve
+    // it inside the tenant first, and a foreign id is simply not found.
+    const existing = await prisma.storePrice.findFirst({
+      where: {
+        id: req.params.id as string,
+        store: { organizationId: user.organizationId },
+      },
+      select: { id: true, storeId: true },
+    });
+    if (!existing) throw notFound('Custom price not found.');
+
+    await assertStoreAccess(user, existing.storeId);
+    await prisma.storePrice.delete({ where: { id: existing.id } });
     res.json({ detail: 'Custom price removed; the catalogue price now applies.' });
   })
 );
@@ -306,7 +335,11 @@ transfersRouter.post(
     if (body.from_store_id === body.to_store_id) {
       throw badRequest('Source and destination must be different stores.');
     }
-    assertStoreAccess(user, body.from_store_id);
+    await assertStoreAccess(user, body.from_store_id);
+    // The destination needs checking too. Only the source was verified, so stock
+    // could be transferred *out* of this organisation into another one's store —
+    // it left our shelves and landed somewhere the sender cannot even see.
+    await assertStoreAccess(user, body.to_store_id);
 
     const transfer = await prisma.$transaction(async (tx) => {
       const reference = `TRF-${Date.now().toString(36).toUpperCase()}`;
@@ -403,7 +436,7 @@ syncRouter.get(
       .parse(req.query);
 
     const user = currentUser(req);
-    assertStoreAccess(user, q.store_id);
+    await assertStoreAccess(user, q.store_id);
 
     const since = q.last_sync ? new Date(q.last_sync) : null;
     if (since && Number.isNaN(since.getTime())) throw badRequest('last_sync is not a valid date.');

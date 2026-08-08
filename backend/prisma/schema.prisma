@@ -71,46 +71,96 @@ enum StockMovementType {
   refund
 }
 
-model Organization {
-  id               String   @id @default(uuid())
-  name             String
-  slug             String   @unique
-  logoBase64       String?  @map("logo_base64")
-  invoiceLogoBase64 String? @map("invoice_logo_base64")
-  vatRate          Decimal  @default(0.16) @map("vat_rate") @db.Decimal(5, 4)
-  currencySymbol   String   @default("K") @map("currency_symbol")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+/// How much of a supplier's invoice has been settled. Derived from the payments
+/// against it, but stored so "what do we still owe?" is one indexed query
+/// rather than a sum over every payment row in the organisation.
+enum SupplierInvoiceStatus {
+  unpaid
+  partial
+  paid
+}
 
-  users        User[]
-  stores       Store[]
-  products     Product[]
-  warehouses   Warehouse[]
-  transactions Transaction[]
-  transfers    Transfer[]
-  dailyReports DailyReport[]
+/// Deliberately separate from `PaymentMethod`, which is what a *customer* can
+/// tender at the till. Money going out to a supplier moves in different ways —
+/// nobody pays a wholesaler by swiping a card at the counter — and widening the
+/// till's enum to fit would let those values be offered to a cashier.
+enum SupplierPaymentMethod {
+  cash
+  bank_transfer
+  mobile
+  cheque
+  card
+  other
+}
+
+model Organization {
+  id                String   @id @default(uuid())
+  name              String
+  slug              String   @unique
+  logoBase64        String?  @map("logo_base64")
+  invoiceLogoBase64 String?  @map("invoice_logo_base64")
+  vatRate           Decimal  @default(0.16) @map("vat_rate") @db.Decimal(5, 4)
+  currencySymbol    String   @default("K") @map("currency_symbol")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  users            User[]
+  stores           Store[]
+  products         Product[]
+  warehouses       Warehouse[]
+  transactions     Transaction[]
+  transfers        Transfer[]
+  dailyReports     DailyReport[]
+  suppliers        Supplier[]
+  supplierInvoices SupplierInvoice[]
 
   @@map("organizations")
 }
 
 model User {
-  id             String   @id @default(uuid())
-  organizationId String   @map("organization_id")
-  email          String   @unique
-  passwordHash   String   @map("password_hash")
-  fullName       String   @map("full_name")
-  role           Role     @default(CASHIER)
+  id                String   @id @default(uuid())
+  organizationId    String   @map("organization_id")
+  email             String   @unique
+  passwordHash      String   @map("password_hash")
+  fullName          String   @map("full_name")
+  role              Role     @default(CASHIER)
   /// Empty means "all stores in the organization".
-  assignedStores String[] @default([]) @map("assigned_stores")
-  isActive       Boolean  @default(true) @map("is_active")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  assignedStores    String[] @default([]) @map("assigned_stores")
+  isActive          Boolean  @default(true) @map("is_active")
+  /// Tokens issued before this moment are refused, so changing or resetting a
+  /// password logs out every device that still holds the old one.
+  passwordChangedAt DateTime @default(now()) @map("password_changed_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions   Transaction[]
+  passwordResets PasswordResetRequest[]
 
   @@index([organizationId])
   @@map("users")
+}
+
+/// A staff member asked to have their password reset. The one-time code is
+/// stored only as a bcrypt hash — a leaked database row must not be usable as a
+/// reset code. The plaintext exists once, in the mail sent to the organisation's
+/// administrator, who is the one who vouches for the request.
+model PasswordResetRequest {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  codeHash   String    @map("code_hash")
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  /// Wrong guesses against this code; the code is burned once it gets too high.
+  attempts   Int       @default(0)
+  /// Recorded for the notification mail so an admin can judge the request.
+  requestIp  String    @default("") @map("request_ip")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_requests")
 }
 
 model Store {
@@ -132,15 +182,16 @@ model Store {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  inventory      Inventory[]
-  prices         StorePrice[]
-  transactions   Transaction[]
-  receiptCounters ReceiptCounter[]
-  stockMovements StockMovement[]
-  transfersOut   Transfer[]      @relation("TransferFrom")
-  transfersIn    Transfer[]      @relation("TransferTo")
-  dailyReports   DailyReport[]
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inventory        Inventory[]
+  prices           StorePrice[]
+  transactions     Transaction[]
+  receiptCounters  ReceiptCounter[]
+  stockMovements   StockMovement[]
+  transfersOut     Transfer[]        @relation("TransferFrom")
+  transfersIn      Transfer[]        @relation("TransferTo")
+  dailyReports     DailyReport[]
+  supplierInvoices SupplierInvoice[]
 
   @@unique([organizationId, code])
   @@index([organizationId])
@@ -166,13 +217,14 @@ model Product {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  inventory      Inventory[]
-  prices         StorePrice[]
-  items          TransactionItem[]
-  warehouseStock WarehouseStock[]
-  stockMovements StockMovement[]
-  transferItems  TransferItem[]
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inventory            Inventory[]
+  prices               StorePrice[]
+  items                TransactionItem[]
+  warehouseStock       WarehouseStock[]
+  stockMovements       StockMovement[]
+  transferItems        TransferItem[]
+  supplierInvoiceItems SupplierInvoiceItem[]
 
   @@unique([organizationId, sku])
   @@index([organizationId])
@@ -212,30 +264,30 @@ model StorePrice {
 }
 
 model Transaction {
-  id             String            @id @default(uuid())
-  organizationId String            @map("organization_id")
-  storeId        String            @map("store_id")
-  receiptNumber  String            @unique @map("receipt_number")
-  transactionType TransactionType  @default(sale) @map("transaction_type")
-  status         TransactionStatus @default(completed)
-  subtotal       Decimal           @default(0) @db.Decimal(12, 2)
-  discountAmount Decimal           @default(0) @map("discount_amount") @db.Decimal(12, 2)
-  taxAmount      Decimal           @default(0) @map("tax_amount") @db.Decimal(12, 2)
-  total          Decimal           @default(0) @db.Decimal(12, 2)
-  cashierId      String?           @map("cashier_id")
-  cashierName    String            @default("") @map("cashier_name")
-  customerName   String?           @map("customer_name")
-  customerPhone  String?           @map("customer_phone")
-  notes          String            @default("")
+  id              String            @id @default(uuid())
+  organizationId  String            @map("organization_id")
+  storeId         String            @map("store_id")
+  receiptNumber   String            @unique @map("receipt_number")
+  transactionType TransactionType   @default(sale) @map("transaction_type")
+  status          TransactionStatus @default(completed)
+  subtotal        Decimal           @default(0) @db.Decimal(12, 2)
+  discountAmount  Decimal           @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxAmount       Decimal           @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  total           Decimal           @default(0) @db.Decimal(12, 2)
+  cashierId       String?           @map("cashier_id")
+  cashierName     String            @default("") @map("cashier_name")
+  customerName    String?           @map("customer_name")
+  customerPhone   String?           @map("customer_phone")
+  notes           String            @default("")
   /// Idempotency key generated on the device before the sale is queued.
   /// Unique, so replaying a queued sale after a lost response is a no-op.
-  clientReference String?          @unique @map("client_reference")
+  clientReference String?           @unique @map("client_reference")
   /// Set on the refund/credit note that reverses an earlier sale.
-  reversesId     String?           @map("reverses_id")
-  voidedAt       DateTime?         @map("voided_at")
-  voidReason     String?           @map("void_reason")
-  createdAt      DateTime          @default(now()) @map("created_at")
-  updatedAt      DateTime          @updatedAt @map("updated_at")
+  reversesId      String?           @map("reverses_id")
+  voidedAt        DateTime?         @map("voided_at")
+  voidReason      String?           @map("void_reason")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
 
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   store        Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -420,4 +472,120 @@ model TransferItem {
 
   @@index([transferId])
   @@map("transfer_items")
+}
+
+/// A wholesaler the shop buys from.
+model Supplier {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  contactName    String   @default("") @map("contact_name")
+  phone          String   @default("")
+  email          String   @default("")
+  address        String   @default("")
+  /// Free text: agreed terms, account number, delivery days.
+  notes          String   @default("")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices     SupplierInvoice[]
+
+  // One row per supplier per organisation, so the same wholesaler cannot end up
+  // entered three times with three separate outstanding balances.
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("suppliers")
+}
+
+/// A delivery from a supplier, priced. Posting one is what puts stock on the
+/// shelf: the goods, the paperwork reference and the money owed are the same
+/// event, and recording them separately is how a shop ends up with stock it
+/// cannot account for.
+///
+/// `amountPaid` is maintained alongside the payment rows rather than summed on
+/// read. The balance is asked for on every list screen, and a stored figure can
+/// be constrained — a payment is refused if it would take the invoice past its
+/// total, which a sum computed after the fact cannot prevent.
+model SupplierInvoice {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  supplierId     String    @map("supplier_id")
+  /// The store the goods were received into; stock lands here.
+  storeId        String    @map("store_id")
+  /// The supplier's own invoice number, as printed on the paper.
+  invoiceNumber  String    @map("invoice_number")
+  invoiceDate    DateTime  @map("invoice_date")
+  dueDate        DateTime? @map("due_date")
+
+  subtotal       Decimal @default(0) @db.Decimal(12, 2)
+  taxAmount      Decimal @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  /// Delivery, handling — anything on the invoice that is not a stock line.
+  otherCharges   Decimal @default(0) @map("other_charges") @db.Decimal(12, 2)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  total          Decimal @default(0) @db.Decimal(12, 2)
+  amountPaid     Decimal @default(0) @map("amount_paid") @db.Decimal(12, 2)
+
+  status        SupplierInvoiceStatus @default(unpaid)
+  notes         String                @default("")
+  createdById   String?               @map("created_by_id")
+  createdByName String                @default("") @map("created_by_name")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier     Supplier              @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  store        Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  items        SupplierInvoiceItem[]
+  payments     SupplierPayment[]
+
+  // Entering the same paper invoice twice would double the stock and double the
+  // debt. The database refuses it rather than the form remembering to.
+  @@unique([organizationId, supplierId, invoiceNumber])
+  @@index([organizationId, status])
+  @@index([storeId, invoiceDate])
+  @@map("supplier_invoices")
+}
+
+model SupplierInvoiceItem {
+  id          String  @id @default(uuid())
+  invoiceId   String  @map("invoice_id")
+  productId   String? @map("product_id")
+  /// Denormalised so the invoice still reads correctly after a rename.
+  productName String  @map("product_name")
+  sku         String  @default("")
+  quantity    Decimal @db.Decimal(12, 3)
+  unitCost    Decimal @map("unit_cost") @db.Decimal(12, 2)
+  lineTotal   Decimal @map("line_total") @db.Decimal(12, 2)
+
+  invoice SupplierInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@index([productId])
+  @@map("supplier_invoice_items")
+}
+
+/// One instalment against an invoice. Part-payments are the normal case here —
+/// stock is taken on credit and settled over weeks — so each one is its own row
+/// with its own reference, and the running balance is the invoice total minus
+/// their sum.
+model SupplierPayment {
+  id        String                @id @default(uuid())
+  invoiceId String                @map("invoice_id")
+  amount    Decimal               @db.Decimal(12, 2)
+  method    SupplierPaymentMethod @default(cash)
+  /// Cheque number, transfer reference, mobile-money code.
+  reference String                @default("")
+  note      String                @default("")
+  paidAt    DateTime              @default(now()) @map("paid_at")
+  userId    String?               @map("user_id")
+  userName  String                @default("") @map("user_name")
+  createdAt DateTime              @default(now()) @map("created_at")
+
+  invoice SupplierInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("supplier_payments")
 }

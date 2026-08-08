@@ -1,0 +1,75 @@
+name: SonarCloud
+
+# Analyse on every push to main and on PRs, so the "new code" quality gate has
+# a baseline to diff against. PRs get their findings posted back by SonarCloud.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  analyze:
+    name: Scan and test
+    runs-on: ubuntu-latest
+
+    # A real Postgres, because the backend suite deliberately talks to one —
+    # mocking Prisma would test the mock. Matches the credentials the tests
+    # expect via TEST_DATABASE_URL below.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ngpos
+          POSTGRES_PASSWORD: ngpos
+          POSTGRES_DB: ngpos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ngpos"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The suite reads these; env.ts requires DATABASE_URL and a 32+ char secret.
+      TEST_DATABASE_URL: postgresql://ngpos:ngpos@localhost:5432/ngpos_test
+      DATABASE_URL: postgresql://ngpos:ngpos@localhost:5432/ngpos_test
+      DIRECT_URL: postgresql://ngpos:ngpos@localhost:5432/ngpos_test
+      JWT_SECRET: ci-only-jwt-secret-not-used-anywhere-real-000000
+      NODE_ENV: test
+      # The service DB already exists and there is no compose container to exec
+      # into, so globalSetup skips its drop/create dance.
+      TEST_DB_MANAGED: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Sonar's blame/new-code analysis needs the full history, not a shallow
+          # clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The backend lockfile is the one that drives coverage; install against it.
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Run backend tests with coverage
+        working-directory: backend
+        run: npm run test:coverage
+
+      # Static analysis of both backend and mobile source, plus the coverage
+      # report produced above. Config lives in sonar-project.properties.
+      - name: SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
