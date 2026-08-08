@@ -437,3 +437,197 @@ export interface SalesSummary {
   transactions: number;
   average_transaction: number;
 }
+
+/* ------------------------------------------------------------------ shops */
+
+/** What `POST /stores` accepts. Address and location are nested, as they are read. */
+export interface StoreDraft {
+  name: string;
+  code: string;
+  address?: Partial<Store['address']>;
+  location?: Partial<Store['location']>;
+  phone?: string;
+  email?: string;
+  is_active?: boolean;
+}
+
+/* -------------------------------------------------------------- suppliers */
+
+export interface Supplier {
+  id: string;
+  organization_id: string;
+  name: string;
+  contact_name: string;
+  phone: string;
+  email: string;
+  address: string;
+  notes: string;
+  is_active: boolean;
+  /** Present on the list, not on a single create/update response. */
+  outstanding_balance?: number;
+  invoice_count?: number;
+  created_at: string;
+}
+
+export interface SupplierDraft {
+  name: string;
+  contact_name?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  is_active?: boolean;
+}
+
+/* ------------------------------------------------- supplier invoices */
+
+export type SupplierInvoiceStatus = 'unpaid' | 'partial' | 'paid';
+
+export type SupplierPaymentMethod =
+  | 'cash'
+  | 'bank_transfer'
+  | 'mobile'
+  | 'cheque'
+  | 'card'
+  | 'other';
+
+export interface SupplierInvoiceItem {
+  id: string;
+  product_id: string | null;
+  product_name: string;
+  sku: string;
+  quantity: number;
+  unit_cost: number;
+  line_total: number;
+}
+
+export interface SupplierPaymentRow {
+  id: string;
+  amount: number;
+  method: SupplierPaymentMethod;
+  reference: string;
+  note: string;
+  paid_at: string;
+  user_name: string;
+}
+
+export interface SupplierInvoice {
+  id: string;
+  organization_id: string;
+  supplier_id: string;
+  supplier_name: string;
+  supplier_phone: string;
+  store_id: string;
+  store_name: string;
+  store_code: string;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string | null;
+  subtotal: number;
+  tax_amount: number;
+  other_charges: number;
+  discount_amount: number;
+  total: number;
+  amount_paid: number;
+  /** Total minus what has been paid. The figure every screen leads with. */
+  balance: number;
+  status: SupplierInvoiceStatus;
+  notes: string;
+  created_by_name: string;
+  items: SupplierInvoiceItem[];
+  payments: SupplierPaymentRow[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupplierPaymentDraft {
+  amount: number;
+  method?: SupplierPaymentMethod;
+  reference?: string;
+  note?: string;
+  paid_at?: string;
+}
+
+export interface SupplierInvoiceDraft {
+  supplier_id: string;
+  store_id: string;
+  invoice_number: string;
+  invoice_date?: string;
+  due_date?: string | null;
+  items: { product_id: string; quantity: number; unit_cost: number }[];
+  tax_amount?: number;
+  other_charges?: number;
+  discount_amount?: number;
+  notes?: string;
+  /** A delivery is when the true cost is known, so this defaults to true. */
+  update_cost_price?: boolean;
+  /** Omit entirely for goods taken on credit. */
+  payment?: SupplierPaymentDraft;
+}
+
+export interface SupplierOutstandingSummary {
+  outstanding_total: number;
+  open_invoice_count: number;
+  overdue_total: number;
+  overdue_count: number;
+  by_supplier: {
+    supplier_id: string;
+    supplier_name: string;
+    balance: number;
+    invoices: number;
+  }[];
+}
+
+/* ------------------------------------------------------------ bulk upload */
+
+/**
+ * `set` reads the quantity column as the number counted on the shelf — what an
+ * opening stock take means. `add` reads it as a delivery to be added on.
+ */
+export type BulkUploadMode = 'set' | 'add';
+
+export interface BulkUploadRequest {
+  store_id: string;
+  csv: string;
+  mode?: BulkUploadMode;
+  create_missing_products?: boolean;
+  update_existing_products?: boolean;
+  validate_only?: boolean;
+  reference?: string;
+  note?: string;
+}
+
+export interface BulkUploadRowPreview {
+  row: number;
+  sku: string;
+  name: string;
+  product_action: 'create' | 'update' | 'unchanged';
+  quantity_before: number;
+  quantity_after: number;
+  change: number;
+}
+
+export interface BulkUploadResult {
+  applied: boolean;
+  detail: string;
+  store_id: string;
+  mode: BulkUploadMode;
+  total_rows: number;
+  products_to_create: number;
+  products_to_update: number;
+  stock_rows: number;
+  warnings: string[];
+  /** Only on a dry run. */
+  preview?: BulkUploadRowPreview[];
+  reference?: string;
+}
+
+/** The 422 body when a file cannot be read. Nothing was imported. */
+export interface BulkUploadRejection {
+  applied: false;
+  detail: string;
+  total_rows: number;
+  errors: { row: number; sku: string; message: string }[];
+  error_count: number;
+  warnings: string[];
+}

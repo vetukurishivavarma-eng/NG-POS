@@ -37,6 +37,9 @@ export default function MoreScreen() {
   const canViewStaff = useCan('users.view');
   const canWarehouses = useCan('warehouses.write');
   const canSettings = useCan('settings.write');
+  const canImport = useCan('products.import');
+  const canShops = useCan('stores.write');
+  const canBuy = useCan('purchases.write');
   const seesReports = roleLevel(user) !== 'cashier';
 
   async function runSync() {
@@ -134,12 +137,23 @@ export default function MoreScreen() {
                   <View style={styles.divider} />
                 </>
               ) : null}
+              {canImport ? (
+                <>
+                  <LinkRow
+                    icon="upload"
+                    label="Bulk Stock Upload"
+                    value="Load a whole catalogue from a spreadsheet"
+                    onPress={() => router.push('/stock-import')}
+                  />
+                  <View style={styles.divider} />
+                </>
+              ) : null}
               {canAdjustStock ? (
                 <>
                   <LinkRow
                     icon="plus-square"
                     label="Adjust Stock"
-                    value="Receive deliveries, correct counts"
+                    value="Correct a count, write off damage"
                     onPress={() => router.push('/stock-adjust')}
                   />
                   <View style={styles.divider} />
@@ -160,6 +174,34 @@ export default function MoreScreen() {
                   onPress={() => router.push('/store-pricing')}
                 />
               ) : null}
+            </View>
+          </View>
+        ) : null}
+
+        {canBuy ? (
+          <View>
+            <SectionLabel>Buying</SectionLabel>
+            <View style={styles.card}>
+              <LinkRow
+                icon="file-text"
+                label="Supplier Invoices"
+                value="Deliveries received and what is still owed"
+                onPress={() => router.push('/purchases')}
+              />
+              <View style={styles.divider} />
+              <LinkRow
+                icon="download"
+                label="Record a Delivery"
+                value="Stock in, invoice filed, payment tracked"
+                onPress={() => router.push('/purchases/new')}
+              />
+              <View style={styles.divider} />
+              <LinkRow
+                icon="truck"
+                label="Suppliers"
+                value="Who we buy from, and what we owe them"
+                onPress={() => router.push('/suppliers')}
+              />
             </View>
           </View>
         ) : null}
@@ -189,10 +231,21 @@ export default function MoreScreen() {
           </View>
         ) : null}
 
-        {seesReports || canViewStaff || canSettings ? (
+        {seesReports || canViewStaff || canSettings || canShops ? (
           <View>
             <SectionLabel>Business</SectionLabel>
             <View style={styles.card}>
+              {canShops ? (
+                <>
+                  <LinkRow
+                    icon="home"
+                    label="Shops"
+                    value="Open a branch, edit its address"
+                    onPress={() => router.push('/shops')}
+                  />
+                  <View style={styles.divider} />
+                </>
+              ) : null}
               {seesReports ? (
                 <LinkRow
                   icon="bar-chart-2"

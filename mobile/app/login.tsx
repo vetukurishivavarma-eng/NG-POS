@@ -10,20 +10,42 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router, useLocalSearchParams } from 'expo-router';
 
 import { useAuth } from '../src/store/auth';
-import { errorMessage } from '../src/api/client';
+import {
+  CONFIGURED_BASE_URL,
+  apiBaseUrlHost,
+  errorMessage,
+  getApiBaseUrl,
+  isNetworkError,
+  resetApiBaseUrl,
+  setApiBaseUrl,
+} from '../src/api/client';
 import { Button, Icon } from '../src/ui/components';
 import { colors, font, radius, shadow, spacing } from '../src/theme';
 
 export default function LoginScreen() {
   const signIn = useAuth((s) => s.signIn);
-  const [email, setEmail] = useState('');
+  // Carried back from a completed password reset, so the last thing someone does
+  // isn't retyping the address they just used.
+  const params = useLocalSearchParams<{ email?: string }>();
+  const [email, setEmail] = useState(params.email ?? '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [focused, setFocused] = useState<'email' | 'password' | null>(null);
+  const [focused, setFocused] = useState<'email' | 'password' | 'server' | null>(null);
+
+  // The server address is editable here and nowhere else that matters: if it is
+  // wrong, nobody can sign in, so a screen behind authentication would be the
+  // one place you cannot reach.
+  const [serverUrl, setServerUrl] = useState(getApiBaseUrl());
+  const [serverOpen, setServerOpen] = useState(false);
+  const [serverDraft, setServerDraft] = useState(getApiBaseUrl());
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [serverBusy, setServerBusy] = useState(false);
+  const [unreachable, setUnreachable] = useState(false);
 
   async function submit() {
     if (!email.trim() || !password) {
@@ -32,12 +54,47 @@ export default function LoginScreen() {
     }
     setBusy(true);
     setError(null);
+    setUnreachable(false);
     try {
       await signIn(email.trim(), password);
     } catch (err) {
       setError(errorMessage(err));
+      // A dead link and a wrong password look identical to a tired cashier, so
+      // say which one it is and point at the thing that fixes it.
+      setUnreachable(isNetworkError(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function saveServer() {
+    setServerBusy(true);
+    setServerError(null);
+    try {
+      const next = await setApiBaseUrl(serverDraft);
+      setServerUrl(next);
+      setServerDraft(next);
+      setServerOpen(false);
+      setError(null);
+      setUnreachable(false);
+    } catch (err) {
+      setServerError(err instanceof Error ? err.message : 'Could not save that address.');
+    } finally {
+      setServerBusy(false);
+    }
+  }
+
+  async function revertServer() {
+    setServerBusy(true);
+    setServerError(null);
+    try {
+      const next = await resetApiBaseUrl();
+      setServerUrl(next);
+      setServerDraft(next);
+      setError(null);
+      setUnreachable(false);
+    } finally {
+      setServerBusy(false);
     }
   }
 
@@ -108,7 +165,16 @@ export default function LoginScreen() {
               {error ? (
                 <View style={styles.errorBox}>
                   <Icon name="alert-circle" size={15} color={colors.danger} />
-                  <Text style={styles.errorText}>{error}</Text>
+                  <View style={styles.flex}>
+                    <Text style={styles.errorText}>{error}</Text>
+                    {unreachable ? (
+                      <Pressable onPress={() => setServerOpen(true)} hitSlop={6}>
+                        <Text style={styles.errorAction}>
+                          Couldn&apos;t reach {apiBaseUrlHost(serverUrl)} — check the server address
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
                 </View>
               ) : null}
 
@@ -119,7 +185,84 @@ export default function LoginScreen() {
                 loading={busy}
                 style={{ marginTop: spacing.lg }}
               />
+
+              <Pressable
+                onPress={() => router.push({ pathname: '/forgot-password', params: { email: email.trim() } })}
+                hitSlop={10}
+                disabled={busy}
+                style={styles.forgotLink}
+              >
+                <Text style={styles.forgotText}>Forgot password?</Text>
+              </Pressable>
             </View>
+
+            {serverOpen ? (
+              <View style={styles.serverCard}>
+                <View style={styles.serverHead}>
+                  <Text style={styles.serverTitle}>Server address</Text>
+                  <Pressable onPress={() => setServerOpen(false)} hitSlop={10}>
+                    <Icon name="x" size={18} color={colors.textFaint} />
+                  </Pressable>
+                </View>
+                <Text style={styles.serverHint}>
+                  Where this till sends its sales. Saved on this device.
+                </Text>
+
+                <View style={[styles.field, focused === 'server' && styles.fieldFocused]}>
+                  <Icon name="server" size={18} color={colors.textFaint} />
+                  <TextInput
+                    value={serverDraft}
+                    onChangeText={setServerDraft}
+                    onFocus={() => setFocused('server')}
+                    onBlur={() => setFocused(null)}
+                    placeholder="ngpos-api.onrender.com"
+                    placeholderTextColor={colors.textFaint}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    style={styles.input}
+                    editable={!serverBusy}
+                    onSubmitEditing={saveServer}
+                    returnKeyType="done"
+                  />
+                </View>
+
+                {serverError ? (
+                  <View style={styles.errorBox}>
+                    <Icon name="alert-circle" size={15} color={colors.danger} />
+                    <Text style={styles.errorText}>{serverError}</Text>
+                  </View>
+                ) : null}
+
+                <Button
+                  label="Use This Server"
+                  onPress={saveServer}
+                  loading={serverBusy}
+                  style={{ marginTop: spacing.md }}
+                />
+
+                {serverUrl !== CONFIGURED_BASE_URL ? (
+                  <Pressable onPress={revertServer} hitSlop={8} disabled={serverBusy}>
+                    <Text style={styles.serverReset}>
+                      Reset to {apiBaseUrlHost(CONFIGURED_BASE_URL)}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : (
+              <Pressable
+                onPress={() => {
+                  setServerDraft(serverUrl);
+                  setServerOpen(true);
+                }}
+                hitSlop={10}
+                style={styles.serverToggle}
+              >
+                <Icon name="server" size={13} color={colors.onDarkMuted} />
+                <Text style={styles.serverToggleText}>{apiBaseUrlHost(serverUrl)}</Text>
+                <Icon name="chevron-down" size={13} color={colors.onDarkMuted} />
+              </Pressable>
+            )}
 
             <Text style={styles.footnote}>Mama Maxx Agrovet</Text>
           </ScrollView>
@@ -222,6 +365,52 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   errorText: { flex: 1, fontFamily: font.medium, fontSize: 13, color: colors.danger },
+  errorAction: {
+    fontFamily: font.semibold,
+    fontSize: 12,
+    color: colors.danger,
+    textDecorationLine: 'underline',
+    marginTop: 4,
+  },
+
+  // Sits under the sign-in card on the dark wash, so it reads as an escape
+  // hatch rather than a field anyone needs to touch on a normal morning.
+  serverToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  serverToggleText: { fontFamily: font.medium, fontSize: 12, color: colors.onDarkMuted },
+
+  serverCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginTop: spacing.lg,
+    ...shadow.raised,
+  },
+  serverHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  serverTitle: { fontFamily: font.bold, fontSize: 16, color: colors.text },
+  serverHint: {
+    fontFamily: font.regular,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+    marginBottom: spacing.md,
+  },
+  serverReset: {
+    fontFamily: font.medium,
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.md,
+  },
+
+  forgotLink: { alignSelf: 'center', marginTop: spacing.md, paddingVertical: spacing.xs },
+  forgotText: { fontFamily: font.medium, fontSize: 13, color: colors.primary },
 
   footnote: {
     fontFamily: font.medium,

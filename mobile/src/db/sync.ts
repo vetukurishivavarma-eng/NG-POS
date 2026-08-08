@@ -1,7 +1,8 @@
 import NetInfo from '@react-native-community/netinfo';
 import { create } from 'zustand';
 import { products as productsApi, transactions as txApi } from '../api/endpoints';
-import { errorMessage, isNetworkError } from '../api/client';
+import { errorMessage, isNetworkError, isNotFound } from '../api/client';
+import { useStoreSelection } from '../store/storeSelection';
 import {
   cacheProducts,
   countPending,
@@ -104,6 +105,23 @@ export async function pushPending(storeId: string): Promise<{ sent: number; fail
 export async function pullCatalogue(storeId: string): Promise<number> {
   useSync.getState()._set({ syncing: true, lastError: null });
   try {
+    return await pullInto(storeId, true);
+  } catch (err) {
+    useSync.getState()._set({ lastError: errorMessage(err) });
+    throw err;
+  } finally {
+    useSync.getState()._set({ syncing: false });
+  }
+}
+
+/**
+ * A 404 here means this device is pinned to a store the server no longer has —
+ * a reseeded database or a build repointed at another server. Re-bind the saved
+ * selection and pull again once, so one tap of Sync Now recovers instead of
+ * failing identically forever.
+ */
+async function pullInto(storeId: string, mayRecover: boolean): Promise<number> {
+  try {
     const items = await productsApi.withStock(storeId);
     await cacheProducts(storeId, items);
     const now = new Date().toISOString();
@@ -111,10 +129,16 @@ export async function pullCatalogue(storeId: string): Promise<number> {
     useSync.getState()._set({ lastSyncedAt: now });
     return items.length;
   } catch (err) {
-    useSync.getState()._set({ lastError: errorMessage(err) });
-    throw err;
-  } finally {
-    useSync.getState()._set({ syncing: false });
+    if (!mayRecover || !isNotFound(err)) throw err;
+
+    await useStoreSelection.getState().reconcile();
+    const recovered = useStoreSelection.getState().selected;
+    if (!recovered || recovered.id === storeId) {
+      throw new Error(
+        'This device is set to a store that no longer exists on the server. Pick your store again from the store selector.'
+      );
+    }
+    return pullInto(recovered.id, false);
   }
 }
 

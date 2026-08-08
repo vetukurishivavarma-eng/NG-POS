@@ -103,6 +103,19 @@ export default function StockScreen() {
         />
       </View>
 
+      {/* Without this, a failed fetch silently shows the last synced copy and a
+          product added minutes ago simply is not there — indistinguishable from
+          the save having failed. Every other catalogue screen says so; this one
+          is the one people check after adding stock. */}
+      {data?.fromCache ? (
+        <View style={[styles.cacheBanner, { marginHorizontal: layout.gutter }]}>
+          <Icon name="download-cloud" size={14} color={colors.warning} />
+          <Text style={styles.cacheText}>
+            Showing last synced catalogue — pull down to refresh.
+          </Text>
+        </View>
+      ) : null}
+
       {isLoading ? (
         <Loading />
       ) : (
@@ -215,6 +228,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   searchInput: { flex: 1, fontFamily: font.medium, fontSize: 14, color: colors.text },
+
+  cacheBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.warningSoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
+  },
+  cacheText: { flex: 1, fontFamily: font.medium, fontSize: 11, color: colors.warning },
 
   row: {
     flex: 1,

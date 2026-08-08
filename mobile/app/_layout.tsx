@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Stack, router, useSegments } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -16,7 +16,7 @@ import {
 
 import * as Notifications from 'expo-notifications';
 
-import { setUnauthorizedHandler } from '../src/api/client';
+import { restoreApiBaseUrl, setUnauthorizedHandler } from '../src/api/client';
 import { useAuth } from '../src/store/auth';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { startConnectivityWatcher, useSync } from '../src/db/sync';
@@ -41,7 +41,12 @@ const queryClient = new QueryClient({
       // Shop staff work on flaky rural connections; don't hammer a dying link.
       retry: 1,
       staleTime: 30_000,
-      refetchOnWindowFocus: false,
+      // Coming back to the app should show the current picture, not whatever
+      // was on screen when it was backgrounded — the data here is shared
+      // between tills and branches, so it goes stale without this device
+      // doing anything. Still bounded by staleTime, so it is not a free-for-all.
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
     },
   },
 });
@@ -55,6 +60,9 @@ export default function RootLayout() {
   const segments = useSegments();
   const lastResponse = Notifications.useLastNotificationResponse();
   const handledResponse = useRef<string | null>(null);
+  // Nothing may render until the saved server address is loaded, or the first
+  // request would go to the address baked into the build instead.
+  const [apiReady, setApiReady] = useState(false);
 
   const [fontsLoaded] = useFonts({
     Jakarta_400Regular: PlusJakartaSans_400Regular,
@@ -65,11 +73,21 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
+    void restoreApiBaseUrl().finally(() => setApiReady(true));
     void restore();
     void restoreStore();
     void restorePrinter();
     void restoreReminder();
   }, [restore, restoreStore, restorePrinter, restoreReminder]);
+
+  // The saved store is a snapshot of a server row and can outlive it (reseeded
+  // database, build repointed at another server). Left unchecked, every
+  // store-scoped call — including Sync Now — fails with "Store not found" until
+  // the app is reinstalled, so re-bind it as soon as we can talk to the server.
+  useEffect(() => {
+    if (!user || !hydrated || !storeHydrated || !apiReady) return;
+    void useStoreSelection.getState().reconcile();
+  }, [user, hydrated, storeHydrated, apiReady]);
 
   // Tapping the closing-time reminder should land on the report itself, not
   // wherever the app happened to be left. `useLastNotificationResponse` also
@@ -112,7 +130,7 @@ export default function RootLayout() {
     }
   }, [user, hydrated, storeHydrated, segments]);
 
-  if (!hydrated || !storeHydrated || !fontsLoaded) {
+  if (!hydrated || !storeHydrated || !fontsLoaded || !apiReady) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.canvas, justifyContent: 'center' }}>
         <Loading />
@@ -126,6 +144,7 @@ export default function RootLayout() {
         <StatusBar style="light" />
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.canvas } }}>
           <Stack.Screen name="login" />
+          <Stack.Screen name="forgot-password" />
           <Stack.Screen name="(tabs)" />
           <Stack.Screen
             name="store-picker"
@@ -162,6 +181,21 @@ export default function RootLayout() {
             options={{ presentation: 'modal', headerShown: true, title: 'Adjust Stock' }}
           />
           <Stack.Screen name="movements" options={{ headerShown: true, title: 'Stock Movements' }} />
+          <Stack.Screen
+            name="stock-import"
+            options={{ headerShown: true, title: 'Bulk Stock Upload' }}
+          />
+          <Stack.Screen name="shops" options={{ headerShown: true, title: 'Shops' }} />
+          <Stack.Screen name="suppliers" options={{ headerShown: true, title: 'Suppliers' }} />
+          <Stack.Screen
+            name="purchases/index"
+            options={{ headerShown: true, title: 'Supplier Invoices' }}
+          />
+          <Stack.Screen
+            name="purchases/new"
+            options={{ headerShown: true, title: 'Record a Delivery' }}
+          />
+          <Stack.Screen name="purchases/[id]" options={{ headerShown: true, title: 'Invoice' }} />
           <Stack.Screen name="store-pricing" options={{ headerShown: true, title: 'Store Pricing' }} />
           <Stack.Screen name="users/index" options={{ headerShown: true, title: 'Staff' }} />
           <Stack.Screen

@@ -115,6 +115,32 @@ describe('mobile API contract', () => {
     expectShape(one.body, keys, 'Store (single)');
   });
 
+  it('stores.create, update and deactivate work the way the Shops screen sends them', async () => {
+    const created = await post('/api/stores', world.tokens.admin, {
+      name: 'Katende',
+      // The screen shows the code already uppercased and stripped, because this
+      // is what the server stores whatever it is sent.
+      code: 'KATENDE',
+      address: { street: 'Main road', city: 'Katende', province: 'Central', country: 'Zambia' },
+      phone: '0977000000',
+      email: '',
+    });
+
+    expect(created.status).toBe(201);
+    expect(created.body.code).toBe('KATENDE');
+    expect(created.body.address.city).toBe('Katende');
+
+    const updated = await put(`/api/stores/${created.body.id}`, world.tokens.admin, {
+      phone: '0955111222',
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.body.phone).toBe('0955111222');
+
+    const closed = await del(`/api/stores/${created.body.id}`, world.tokens.admin);
+    expect(closed.status).toBe(200);
+    expectShape(closed.body, ['detail'], 'deactivate response');
+  });
+
   /* -------------------------------------------------------------- products */
 
   const productKeys = [
@@ -686,6 +712,203 @@ describe('mobile API contract', () => {
     // The analytics screen's "All stores" scope omits the param entirely.
     const res = await get('/api/analytics/sales-summary', world.tokens.admin, { period: 'monthly' });
     expect(res.status).toBe(200);
+  });
+
+  /* -------------------------------------------------------------- suppliers */
+
+  it('suppliers.list, create and update return the Supplier shape', async () => {
+    const created = await post('/api/suppliers', world.tokens.admin, {
+      name: 'Contract Wholesale',
+      contact_name: 'Mrs Phiri',
+      phone: '0966000111',
+    });
+
+    expect(created.status).toBe(201);
+    expectShape(
+      created.body,
+      [
+        'id',
+        'organization_id',
+        'name',
+        'contact_name',
+        'phone',
+        'email',
+        'address',
+        'notes',
+        'is_active',
+        'created_at',
+      ],
+      'Supplier'
+    );
+
+    const list = await get('/api/suppliers', world.tokens.admin);
+    expect(list.status).toBe(200);
+    // The list screen leads with the balance, so these two only exist here.
+    expectShape(list.body[0], ['id', 'name', 'outstanding_balance', 'invoice_count'], 'Supplier row');
+
+    const updated = await put(`/api/suppliers/${created.body.id}`, world.tokens.admin, {
+      phone: '0955222333',
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.body.phone).toBe('0955222333');
+
+    const removed = await del(`/api/suppliers/${created.body.id}`, world.tokens.admin);
+    expect(removed.status).toBe(200);
+    expectShape(removed.body, ['detail'], 'deactivate response');
+  });
+
+  /* ------------------------------------------------------ supplier invoices */
+
+  it('purchases.create returns the SupplierInvoice shape the app reads', async () => {
+    const supplier = await post('/api/suppliers', world.tokens.admin, { name: 'Invoice Supplier' });
+
+    const res = await post('/api/supplier-invoices', world.tokens.admin, {
+      supplier_id: supplier.body.id,
+      store_id: world.storeId,
+      invoice_number: 'CT-1',
+      items: [{ product_id: world.products[0]!.id, quantity: 4, unit_cost: 25 }],
+      payment: { amount: 40, method: 'cash' },
+    });
+
+    expect(res.status).toBe(201);
+    expectShape(
+      res.body,
+      [
+        'id',
+        'supplier_id',
+        'supplier_name',
+        'store_id',
+        'store_name',
+        'store_code',
+        'invoice_number',
+        'invoice_date',
+        'due_date',
+        'subtotal',
+        'tax_amount',
+        'other_charges',
+        'discount_amount',
+        'total',
+        'amount_paid',
+        'balance',
+        'status',
+        'notes',
+        'created_by_name',
+        'items',
+        'payments',
+      ],
+      'SupplierInvoice'
+    );
+    expectShape(
+      res.body.items[0],
+      ['id', 'product_id', 'product_name', 'sku', 'quantity', 'unit_cost', 'line_total'],
+      'SupplierInvoiceItem'
+    );
+    expectShape(
+      res.body.payments[0],
+      ['id', 'amount', 'method', 'reference', 'note', 'paid_at', 'user_name'],
+      'SupplierPaymentRow'
+    );
+
+    const one = await get(`/api/supplier-invoices/${res.body.id}`, world.tokens.admin);
+    expect(one.status).toBe(200);
+    expect(one.body.balance).toBe(60);
+
+    // The list screen's filter chips send exactly these values.
+    for (const status of ['outstanding', 'unpaid', 'partial', 'paid']) {
+      const listed = await get('/api/supplier-invoices', world.tokens.admin, {
+        store_id: world.storeId,
+        status,
+        limit: 100,
+      });
+      expect(listed.status, `status=${status}`).toBe(200);
+    }
+
+    const paid = await post(
+      `/api/supplier-invoices/${res.body.id}/payments`,
+      world.tokens.admin,
+      { amount: 60, method: 'bank_transfer', reference: 'FT-1' }
+    );
+    expect(paid.status).toBe(201);
+    expect(paid.body.status).toBe('paid');
+  });
+
+  it('purchases.summary returns the shape the invoice list header renders', async () => {
+    const res = await get('/api/supplier-invoices/summary', world.tokens.admin, {
+      store_id: world.storeId,
+    });
+
+    expect(res.status).toBe(200);
+    expectShape(
+      res.body,
+      ['outstanding_total', 'open_invoice_count', 'overdue_total', 'overdue_count', 'by_supplier'],
+      'SupplierOutstandingSummary'
+    );
+  });
+
+  /* ------------------------------------------------------------ bulk upload */
+
+  it('inventory.bulkUpload returns the result shape, dry run and applied', async () => {
+    const csv = ['sku,name,cost_price,selling_price,quantity', 'CT-BULK-1,Contract Feed,10,20,5'].join(
+      '\n'
+    );
+
+    const dry = await post('/api/inventory/bulk-upload', world.tokens.admin, {
+      store_id: world.storeId,
+      csv,
+      validate_only: true,
+    });
+
+    expect(dry.status).toBe(200);
+    expectShape(
+      dry.body,
+      [
+        'applied',
+        'detail',
+        'store_id',
+        'mode',
+        'total_rows',
+        'products_to_create',
+        'products_to_update',
+        'stock_rows',
+        'warnings',
+        'preview',
+      ],
+      'BulkUploadResult (dry run)'
+    );
+    expectShape(
+      dry.body.preview[0],
+      ['row', 'sku', 'name', 'product_action', 'quantity_before', 'quantity_after', 'change'],
+      'BulkUploadRowPreview'
+    );
+
+    const applied = await post('/api/inventory/bulk-upload', world.tokens.admin, {
+      store_id: world.storeId,
+      csv,
+    });
+    expect(applied.status).toBe(201);
+    expect(applied.body.applied).toBe(true);
+    expectShape(applied.body, ['reference'], 'BulkUploadResult (applied)');
+
+    // The import screen renders this body directly, so its shape is contract.
+    const rejected = await post('/api/inventory/bulk-upload', world.tokens.admin, {
+      store_id: world.storeId,
+      csv: 'sku,name,quantity\nCT-BULK-2,Bad,lots\n',
+    });
+    expect(rejected.status).toBe(422);
+    expectShape(
+      rejected.body,
+      ['applied', 'detail', 'total_rows', 'errors', 'error_count', 'warnings'],
+      'BulkUploadRejection'
+    );
+    expectShape(rejected.body.errors[0], ['row', 'sku', 'message'], 'bulk upload row error');
+  });
+
+  it('inventory.bulkUploadTemplate serves a CSV the importer accepts', async () => {
+    const res = await get('/api/inventory/bulk-upload/template', world.tokens.admin);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+    expect(res.text.split(/\r?\n/)[0]).toContain('sku');
   });
 
   /* ------------------------------------------------------------------ sync */

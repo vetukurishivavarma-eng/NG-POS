@@ -1,6 +1,8 @@
 import { api } from './client';
 import type {
   AnalyticsPeriod,
+  BulkUploadRequest,
+  BulkUploadResult,
   DailyReport,
   DashboardAnalytics,
   InventoryRow,
@@ -21,7 +23,15 @@ import type {
   StockMovement,
   StockMovementDraft,
   Store,
+  StoreDraft,
   StorePriceRow,
+  Supplier,
+  SupplierDraft,
+  SupplierInvoice,
+  SupplierInvoiceDraft,
+  SupplierInvoiceStatus,
+  SupplierOutstandingSummary,
+  SupplierPaymentDraft,
   TopProduct,
   Transaction,
   TransactionDraft,
@@ -37,6 +47,23 @@ import type {
 export const auth = {
   login: (email: string, password: string) =>
     api.post<LoginResponse>('/auth/login', { email, password }).then((r) => r.data),
+
+  /**
+   * Asks the server to mail a one-time code to the organisation's administrator.
+   * The answer is the same whether or not the address is known, so it can't be
+   * used to find out who has an account.
+   */
+  forgotPassword: (email: string) =>
+    api.post<{ detail: string }>('/auth/forgot-password', { email }).then((r) => r.data),
+
+  resetPassword: (email: string, code: string, newPassword: string) =>
+    api
+      .post<{ detail: string }>('/auth/reset-password', {
+        email,
+        code,
+        new_password: newPassword,
+      })
+      .then((r) => r.data),
 };
 
 export const organizations = {
@@ -49,6 +76,64 @@ export const organizations = {
 export const stores = {
   list: () => api.get<Store[]>('/stores').then((r) => r.data),
   get: (id: string) => api.get<Store>(`/stores/${id}`).then((r) => r.data),
+  /** Admin only. `code` is uppercased and stripped of spaces by the server. */
+  create: (body: StoreDraft) => api.post<Store>('/stores', body).then((r) => r.data),
+  update: (id: string, body: Partial<StoreDraft>) =>
+    api.put<Store>(`/stores/${id}`, body).then((r) => r.data),
+  /** Deactivates rather than deletes — receipts still reference the shop. */
+  deactivate: (id: string) =>
+    api.delete<{ detail: string }>(`/stores/${id}`).then((r) => r.data),
+};
+
+export const suppliers = {
+  /** Each row carries `outstanding_balance`, so the list can lead with the debt. */
+  list: () => api.get<Supplier[]>('/suppliers').then((r) => r.data),
+  create: (body: SupplierDraft) => api.post<Supplier>('/suppliers', body).then((r) => r.data),
+  update: (id: string, body: Partial<SupplierDraft>) =>
+    api.put<Supplier>(`/suppliers/${id}`, body).then((r) => r.data),
+  deactivate: (id: string) =>
+    api.delete<{ detail: string }>(`/suppliers/${id}`).then((r) => r.data),
+};
+
+export const purchases = {
+  list: (params?: {
+    store_id?: string;
+    supplier_id?: string;
+    status?: SupplierInvoiceStatus | 'outstanding';
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }) => api.get<SupplierInvoice[]>('/supplier-invoices', { params }).then((r) => r.data),
+
+  get: (id: string) =>
+    api.get<SupplierInvoice>(`/supplier-invoices/${id}`).then((r) => r.data),
+
+  /**
+   * Records the delivery, the debt and the stock in one server transaction.
+   * The invoice number is unique per supplier, so a second attempt at the same
+   * paperwork comes back 409 rather than doubling both.
+   */
+  create: (body: SupplierInvoiceDraft) =>
+    api.post<SupplierInvoice>('/supplier-invoices', body).then((r) => r.data),
+
+  /** One instalment. Refused if it would take the invoice past its total. */
+  pay: (id: string, body: SupplierPaymentDraft) =>
+    api.post<SupplierInvoice>(`/supplier-invoices/${id}/payments`, body).then((r) => r.data),
+
+  /** Only the paperwork fields; the money and the stock are settled events. */
+  update: (id: string, body: { notes?: string; due_date?: string | null }) =>
+    api.put<SupplierInvoice>(`/supplier-invoices/${id}`, body).then((r) => r.data),
+
+  /** Reverses the stock too. Refused once anything has been paid against it. */
+  remove: (id: string) =>
+    api.delete<{ detail: string }>(`/supplier-invoices/${id}`).then((r) => r.data),
+
+  summary: (storeId?: string) =>
+    api
+      .get<SupplierOutstandingSummary>('/supplier-invoices/summary', {
+        params: storeId ? { store_id: storeId } : undefined,
+      })
+      .then((r) => r.data),
 };
 
 export const products = {
@@ -87,6 +172,20 @@ export const inventory = {
   movements: (storeId: string, params?: { product_id?: string; limit?: number }) =>
     api
       .get<StockMovement[]>('/inventory/movements', { params: { store_id: storeId, ...params } })
+      .then((r) => r.data),
+
+  /**
+   * Loads a whole spreadsheet at once. All or nothing: one unreadable line
+   * rejects the file with 422 and a list of line numbers, and nothing is
+   * written — so `validate_only` first is free, and worth doing every time.
+   */
+  bulkUpload: (body: BulkUploadRequest) =>
+    api.post<BulkUploadResult>('/inventory/bulk-upload', body).then((r) => r.data),
+
+  /** The blank spreadsheet, as CSV text, to save or share from the device. */
+  bulkUploadTemplate: () =>
+    api
+      .get<string>('/inventory/bulk-upload/template', { responseType: 'text' })
       .then((r) => r.data),
 };
 

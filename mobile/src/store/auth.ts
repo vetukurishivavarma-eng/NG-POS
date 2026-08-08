@@ -73,10 +73,16 @@ export function roleLevel(user: User | null): RoleLevel {
 export type Permission =
   | 'products.write'
   | 'products.delete'
+  | 'products.import'
   | 'stock.adjust'
   | 'pricing.write'
   | 'warehouses.write'
   | 'transfers.create'
+  | 'stores.write'
+  | 'suppliers.write'
+  | 'suppliers.delete'
+  | 'purchases.write'
+  | 'purchases.delete'
   | 'users.view'
   | 'users.write'
   | 'settings.write'
@@ -85,10 +91,18 @@ export type Permission =
 const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'products.write': ['admin', 'manager'],
   'products.delete': ['admin'],
+  'products.import': ['admin', 'manager'],
   'stock.adjust': ['admin', 'manager'],
   'pricing.write': ['admin', 'manager'],
   'warehouses.write': ['admin'],
   'transfers.create': ['admin', 'manager'],
+  // Opening a shop is an organisation-level act, so admin only — the same guard
+  // the server puts on POST /stores.
+  'stores.write': ['admin'],
+  'suppliers.write': ['admin', 'manager'],
+  'suppliers.delete': ['admin'],
+  'purchases.write': ['admin', 'manager'],
+  'purchases.delete': ['admin'],
   'users.view': ['admin', 'manager'],
   'users.write': ['admin'],
   'settings.write': ['admin'],

@@ -20,8 +20,11 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
       ]
     },
     "web": {
@@ -34,15 +37,29 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "NG POS uses the camera to scan product barcodes at checkout."
+          "cameraPermission": "NG POS uses the camera to scan product barcodes at checkout.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
-      ]
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": false,
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "extraProguardRules": "# Keep rules so first-time minification can't strip native modules that are\n# resolved by reflection/JNI at runtime. Additive keeps only — they can prevent\n# a crash but never cause one.\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keepclassmembers class * { @com.facebook.proguard.annotations.DoNotStrip *; @com.facebook.jni.annotations.DoNotStrip *; }\n-keep,includedescriptorclasses class * { native <methods>; }\n# React Native / Hermes bridge\n-keep class com.facebook.react.** { *; }\n-keep class com.facebook.hermes.** { *; }\n-keep class com.facebook.jni.** { *; }\n-dontwarn com.facebook.react.**\n# Reanimated / Worklets (JNI-heavy)\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n-keep class com.facebook.react.turbomodule.** { *; }\n# Expo modules are discovered reflectively\n-keep class expo.modules.** { *; }\n-keep class expo.modules.securestore.** { *; }\n-dontwarn expo.modules.**\n# OkHttp (the network stack under axios' native layer)\n-dontwarn okhttp3.**\n-dontwarn okio.**\n"
+          }
+        }
+      ],
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
-      "apiBaseUrl": "http://192.168.29.124:4000/api",
+      "apiBaseUrl": "https://ngpos-api.onrender.com/api",
       "router": {},
       "eas": {
         "projectId": "248907a6-a41d-4003-9d58-ca85a725f8c7"

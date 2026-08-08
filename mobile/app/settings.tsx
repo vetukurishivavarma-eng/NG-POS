@@ -5,7 +5,7 @@ import Constants from 'expo-constants';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { organizations } from '../src/api/endpoints';
-import { API_BASE_URL, errorMessage } from '../src/api/client';
+import { errorMessage, getApiBaseUrl, isCustomApiBaseUrl } from '../src/api/client';
 import { ROLE_LABELS } from '../src/api/types';
 import { useAuth, useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
@@ -261,8 +261,15 @@ export default function SettingsScreen() {
             <AboutRow icon="home" label="Organisation" value={current.name} />
             <RowDivider />
             {/* The single most useful line when a build is pointed at the wrong
-                server — selectable so it can be pasted into a bug report. */}
-            <AboutRow icon="server" label="API server" value={API_BASE_URL} wrap />
+                server — selectable so it can be pasted into a bug report. It is
+                changed from the login screen, which is the only place it can be
+                reached when a wrong address is keeping everyone signed out. */}
+            <AboutRow
+              icon="server"
+              label={isCustomApiBaseUrl() ? 'API server (overridden)' : 'API server'}
+              value={getApiBaseUrl()}
+              wrap
+            />
             {appVersion ? (
               <>
                 <RowDivider />
