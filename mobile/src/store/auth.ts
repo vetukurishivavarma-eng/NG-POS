@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import { auth as authApi } from '../api/endpoints';
 import { clearToken, setToken, getToken } from '../api/client';
+import { deviceIdentity } from './device';
 import type { User } from '../api/types';
 
 const USER_KEY = 'pos_user';
@@ -29,13 +30,22 @@ export const useAuth = create<AuthState>((set) => ({
   },
 
   signIn: async (email, password) => {
-    const res = await authApi.login(email, password);
+    const res = await authApi.login(email, password, await deviceIdentity());
     await setToken(res.access_token);
     await SecureStore.setItemAsync(USER_KEY, JSON.stringify(res.user));
     set({ user: res.user });
   },
 
   signOut: async () => {
+    // Release the device server-side first, so the account is free for the next
+    // shift immediately rather than when the token expires in thirty days.
+    // Best-effort: a till with no signal must still be able to sign out, and
+    // the local state below is what actually ends the session on this handset.
+    try {
+      await authApi.logout();
+    } catch {
+      /* offline, or the session was already revoked by an admin */
+    }
     await clearToken();
     await SecureStore.deleteItemAsync(USER_KEY);
     set({ user: null });

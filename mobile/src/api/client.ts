@@ -180,6 +180,19 @@ export function isNetworkError(error: unknown): boolean {
   return axios.isAxiosError(error) && !error.response;
 }
 
+/**
+ * True when the sign-in was refused because another handset already holds the
+ * account. Matched on the code, not the status: 409 is a generic conflict and
+ * other routes use it for their own reasons.
+ */
+export function isDeviceConflict(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 409 &&
+    (error.response.data as { code?: string } | undefined)?.code === 'DEVICE_ALREADY_ACTIVE'
+  );
+}
+
 /** True when the server answered "that row isn't here" rather than failing. */
 export function isNotFound(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 404;

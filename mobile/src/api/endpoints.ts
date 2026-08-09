@@ -1,4 +1,5 @@
 import { api } from './client';
+import type { DeviceIdentity } from '../store/device';
 import type {
   AnalyticsPeriod,
   BulkUploadRequest,
@@ -37,6 +38,7 @@ import type {
   TransactionDraft,
   TransactionListParams,
   Transfer,
+  DeviceSession,
   TransferDraft,
   User,
   UserDraft,
@@ -45,8 +47,16 @@ import type {
 } from './types';
 
 export const auth = {
-  login: (email: string, password: string) =>
-    api.post<LoginResponse>('/auth/login', { email, password }).then((r) => r.data),
+  /**
+   * The device is sent with the credentials, not after them: the server binds
+   * the session to it at sign-in and refuses a second handset, so there is no
+   * moment where a token exists without a device attached.
+   */
+  login: (email: string, password: string, device: DeviceIdentity) =>
+    api.post<LoginResponse>('/auth/login', { email, password, device }).then((r) => r.data),
+
+  /** Releases this device so the account can be used on another one. */
+  logout: () => api.post<{ detail: string }>('/auth/logout').then((r) => r.data),
 
   /**
    * Asks the server to mail a one-time code to the organisation's administrator.
@@ -63,6 +73,28 @@ export const auth = {
         code,
         new_password: newPassword,
       })
+      .then((r) => r.data),
+};
+
+export const devices = {
+  /** Everything signed in across the organisation. Admin and manager. */
+  list: (params?: { user_id?: string; include_revoked?: boolean }) =>
+    api
+      .get<DeviceSession[]>('/devices', {
+        params: {
+          ...(params?.user_id ? { user_id: params.user_id } : {}),
+          ...(params?.include_revoked ? { include_revoked: 'true' } : {}),
+        },
+      })
+      .then((r) => r.data),
+
+  /** This handset's own session. */
+  me: () => api.get<DeviceSession>('/devices/me').then((r) => r.data),
+
+  /** Release a device. Admin only; takes effect on that handset immediately. */
+  remove: (id: string, reason?: string) =>
+    api
+      .delete<DeviceSession>(`/devices/${id}`, { data: reason ? { reason } : undefined })
       .then((r) => r.data),
 };
 

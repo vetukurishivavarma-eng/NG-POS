@@ -203,6 +203,7 @@ export default function RootLayout() {
           <Stack.Screen name="purchases/[id]" options={{ headerShown: true, title: 'Invoice' }} />
           <Stack.Screen name="store-pricing" options={{ headerShown: true, title: 'Store Pricing' }} />
           <Stack.Screen name="users/index" options={{ headerShown: true, title: 'Staff' }} />
+          <Stack.Screen name="devices" options={{ headerShown: true, title: 'Devices' }} />
           <Stack.Screen
             name="users/[id]"
             options={{ presentation: 'modal', headerShown: true, title: 'Staff Member' }}

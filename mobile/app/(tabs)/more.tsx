@@ -263,6 +263,17 @@ export default function MoreScreen() {
                   onPress={() => router.push('/users')}
                 />
               ) : null}
+              {canViewStaff ? (
+                <>
+                  <View style={styles.divider} />
+                  <LinkRow
+                    icon="smartphone"
+                    label="Devices"
+                    value="Which phone each account is signed in on"
+                    onPress={() => router.push('/devices')}
+                  />
+                </>
+              ) : null}
               {canViewStaff && canSettings ? <View style={styles.divider} /> : null}
               {canSettings ? (
                 <LinkRow

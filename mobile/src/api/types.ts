@@ -231,6 +231,28 @@ export interface LoginResponse {
   access_token: string;
   token_type?: string;
   user: User;
+  device?: DeviceSession;
+}
+
+/**
+ * One device's claim on one account. The raw device id is never sent back —
+ * it is what the app authenticates with, so an admin screen listing every one
+ * of them would hand anyone who can read that screen the means to impersonate
+ * a till.
+ */
+export interface DeviceSession {
+  id: string;
+  user_id: string;
+  device_name: string;
+  platform: string;
+  app_version: string | null;
+  last_seen_at: string;
+  last_ip: string | null;
+  created_at: string;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+  is_active: boolean;
+  user: { id: string; full_name: string; email: string; role: Role } | null;
 }
 
 export interface DashboardAnalytics {

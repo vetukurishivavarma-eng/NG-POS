@@ -18,6 +18,7 @@ import {
   apiBaseUrlHost,
   errorMessage,
   getApiBaseUrl,
+  isDeviceConflict,
   isNetworkError,
   resetApiBaseUrl,
   setApiBaseUrl,
@@ -46,6 +47,7 @@ export default function LoginScreen() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [serverBusy, setServerBusy] = useState(false);
   const [unreachable, setUnreachable] = useState(false);
+  const [deviceBlocked, setDeviceBlocked] = useState(false);
 
   async function submit() {
     if (!email.trim() || !password) {
@@ -55,6 +57,7 @@ export default function LoginScreen() {
     setBusy(true);
     setError(null);
     setUnreachable(false);
+    setDeviceBlocked(false);
     try {
       await signIn(email.trim(), password);
     } catch (err) {
@@ -62,6 +65,10 @@ export default function LoginScreen() {
       // A dead link and a wrong password look identical to a tired cashier, so
       // say which one it is and point at the thing that fixes it.
       setUnreachable(isNetworkError(err));
+      // Being refused because another handset holds the account is not a wrong
+      // password, and treating it like one sends people round in circles
+      // retyping something that was already correct.
+      setDeviceBlocked(isDeviceConflict(err));
     } finally {
       setBusy(false);
     }
@@ -173,6 +180,15 @@ export default function LoginScreen() {
                           Couldn&apos;t reach {apiBaseUrlHost(serverUrl)} — check the server address
                         </Text>
                       </Pressable>
+                    ) : null}
+                    {deviceBlocked ? (
+                      // The password was right, so offer the two ways out
+                      // rather than leaving them retyping it.
+                      <Text style={styles.errorAction}>
+                        Your password was correct. Ask your administrator to remove that device
+                        under More → Devices, or use “Forgot password?” below — resetting it
+                        releases every device.
+                      </Text>
                     ) : null}
                   </View>
                 </View>
