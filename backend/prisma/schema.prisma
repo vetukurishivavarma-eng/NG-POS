@@ -181,9 +181,17 @@ model DeviceSession {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// One row per account per physical device; signing in again on the same
-  /// device reuses it rather than piling up history nobody reads.
-  @@unique([userId, deviceId])
+  /// Deliberately NOT unique on (userId, deviceId).
+  ///
+  /// It was, and that quietly barred a phone forever: releasing a device keeps
+  /// the row as history, so the next sign-in on that same handset collided with
+  /// its own revoked record and came back as "already signed in elsewhere". One
+  /// row per *claim*, not per device — a device signed in, released and signed
+  /// in again is three facts an administrator may want, not a conflict.
+  ///
+  /// Uniqueness that does matter — one live claim per device — is enforced in
+  /// `claimDevice`, which only ever looks at rows with `revokedAt: null`.
+  @@index([userId, deviceId])
   @@index([userId])
   @@index([organizationId])
   @@index([organizationId, revokedAt])
