@@ -1,16 +1,17 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { env, passwordResetConfigured } from '../env.js';
 import { asyncHandler } from '../middleware/error.js';
 import { authenticate, currentUser, signToken } from '../middleware/auth.js';
-import { serializeUser } from '../lib/serialize.js';
-import { badRequest, unauthorized } from '../lib/errors.js';
+import { serializeDevice, serializeUser } from '../lib/serialize.js';
+import { badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { sendMail } from '../lib/mailer.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { revokeOwnSession } from './devices.js';
 
 export const authRouter = Router();
 
@@ -29,16 +30,31 @@ const loginLimiter = rateLimit({
 /** Registration creates a whole tenant; one a minute per address is generous. */
 const registerLimiter = rateLimit({ windowMs: 60_000, max: 3 });
 
+/**
+ * Optional so a browser or a support script can still sign in; when it is
+ * absent the session is recorded as an unnamed device rather than escaping the
+ * one-device rule, which is what makes the rule worth having.
+ */
+const deviceSchema = z
+  .object({
+    device_id: z.string().min(6).max(128).optional(),
+    device_name: z.string().max(120).optional(),
+    platform: z.string().max(40).optional(),
+    app_version: z.string().max(40).optional(),
+  })
+  .optional();
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  device: deviceSchema,
 });
 
 authRouter.post(
   '/login',
   loginLimiter,
   asyncHandler(async (req, res) => {
-    const { email, password } = loginSchema.parse(req.body);
+    const { email, password, device } = loginSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
 
@@ -50,13 +66,78 @@ authRouter.post(
     if (!user || !ok) throw unauthorized('Incorrect email or password.');
     if (!user.isActive) throw unauthorized('This account has been deactivated.');
 
+    const session = await claimDevice(user, device, req.ip ?? null);
+
     res.json({
-      access_token: signToken(user.id, user.organizationId),
+      access_token: signToken(user.id, user.organizationId, session.id),
       token_type: 'bearer',
       user: serializeUser(user),
+      device: serializeDevice(session),
     });
   })
 );
+
+/**
+ * Binds this sign-in to one device, or refuses it.
+ *
+ * Signing in again on the device that already holds the account is always
+ * allowed — a token expiring, an app restart or a reinstall must not need an
+ * administrator. What is refused is a *second* device while the first is still
+ * active, which is the case the rule exists for: one set of credentials being
+ * passed around a counter.
+ */
+async function claimDevice(
+  user: { id: string; organizationId: string },
+  device: { device_id?: string; device_name?: string; platform?: string; app_version?: string } | undefined,
+  ip: string | null
+) {
+  // A client that sends no id gets a fresh one each time, so it is bound by the
+  // same rule instead of quietly bypassing it by staying anonymous.
+  const deviceId = device?.device_id ?? `unidentified-${randomUUID()}`;
+  const deviceName = device?.device_name?.trim() || 'Unnamed device';
+  const platform = device?.platform ?? 'unknown';
+
+  const active = await prisma.deviceSession.findMany({
+    where: { userId: user.id, revokedAt: null },
+  });
+
+  const mine = active.find((s) => s.deviceId === deviceId);
+  if (mine) {
+    return prisma.deviceSession.update({
+      where: { id: mine.id },
+      data: {
+        lastSeenAt: new Date(),
+        lastIp: ip,
+        deviceName,
+        platform,
+        appVersion: device?.app_version ?? null,
+      },
+    });
+  }
+
+  const other = active[0];
+  if (other) {
+    // 409, not 401: the credentials were right. Telling them which device holds
+    // the account is the whole point — it is how the person works out whether
+    // it is their own old phone or somebody else using their password.
+    throw conflict(
+      `This account is already signed in on ${other.deviceName}. Ask your administrator to remove that device, or reset your password to release it.`,
+      'DEVICE_ALREADY_ACTIVE'
+    );
+  }
+
+  return prisma.deviceSession.create({
+    data: {
+      userId: user.id,
+      organizationId: user.organizationId,
+      deviceId,
+      deviceName,
+      platform,
+      appVersion: device?.app_version ?? null,
+      lastIp: ip,
+    },
+  });
+}
 
 const registerSchema = z.object({
   organization_name: z.string().min(2),
@@ -67,6 +148,7 @@ const registerSchema = z.object({
   full_name: z.string().min(2),
   email: z.string().email(),
   password: z.string().min(8, 'Password must be at least 8 characters.'),
+  device: deviceSchema,
 });
 
 /**
@@ -101,10 +183,16 @@ authRouter.post(
       });
     });
 
+    // Registration binds the device it was performed on, like any sign-in —
+    // otherwise the very first account in an organisation would hold a token
+    // attached to no device and outside the rule.
+    const session = await claimDevice(user, body.device, req.ip ?? null);
+
     res.status(201).json({
-      access_token: signToken(user.id, user.organizationId),
+      access_token: signToken(user.id, user.organizationId, session.id),
       token_type: 'bearer',
       user: serializeUser(user),
+      device: serializeDevice(session),
     });
   })
 );
@@ -125,6 +213,22 @@ authRouter.get(
         isActive: true,
       })
     );
+  })
+);
+
+/**
+ * Sign out, and release the device.
+ *
+ * Under the one-device rule this is not a convenience — it is how a person
+ * hands a shared handset to the next shift without an administrator. Idempotent
+ * so an app retrying on a bad connection cannot fail on the second attempt.
+ */
+authRouter.post(
+  '/logout',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    if (req.session) await revokeOwnSession(req.session.id);
+    res.json({ detail: 'Signed out. This device has been released.' });
   })
 );
 
@@ -153,13 +257,23 @@ authRouter.post(
       },
     });
 
-    // Every other device holding a pre-change token is now signed out. Hand this
-    // one a fresh token so the person who *made* the change isn't logged out by
-    // their own action.
+    // Every *other* device is released, this one deliberately kept: changing
+    // your own password must not lock you out of the handset in your hand, and
+    // under the one-device rule a self-inflicted lockout would need an admin to
+    // undo.
+    const keep = req.session?.id;
+    await prisma.deviceSession.updateMany({
+      where: { userId: me.id, revokedAt: null, ...(keep ? { NOT: { id: keep } } : {}) },
+      data: { revokedAt: new Date(), revokedReason: 'Password changed' },
+    });
+
+    // Hand this device a fresh token so the person who *made* the change isn't
+    // logged out by their own action.
     res.json({
       detail: 'Password updated.',
-      access_token: signToken(me.id, me.organizationId),
-      token_type: 'bearer',
+      ...(keep
+        ? { access_token: signToken(me.id, me.organizationId, keep), token_type: 'bearer' }
+        : {}),
     });
   })
 );
@@ -364,8 +478,18 @@ authRouter.post(
         where: { id: request.id },
         data: { consumedAt: new Date() },
       }),
+      // Releases the device that was holding the account. This is the escape
+      // hatch from the one-device rule: an administrator whose only phone was
+      // lost has nobody above them to press "remove", so proving control of the
+      // reset code has to be enough to free it.
+      prisma.deviceSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date(), revokedReason: 'Password reset' },
+      }),
     ]);
 
-    res.json({ detail: 'Password updated. Sign in with your new password.' });
+    res.json({
+      detail: 'Password updated. Any device signed in with the old password has been released.',
+    });
   })
 );

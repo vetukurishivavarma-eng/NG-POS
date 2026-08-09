@@ -15,6 +15,7 @@ import { inventoryRouter } from './routes/inventory.js';
 import { transactionsRouter } from './routes/transactions.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { supplierInvoicesRouter, suppliersRouter } from './routes/suppliers.js';
+import { devicesRouter } from './routes/devices.js';
 import {
   storePricingRouter,
   syncRouter,
@@ -73,6 +74,7 @@ export function createApp() {
   app.use('/api/warehouses', warehousesRouter);
   app.use('/api/transfers', transfersRouter);
   app.use('/api/users', usersRouter);
+  app.use('/api/devices', devicesRouter);
   app.use('/api/analytics', analyticsRouter);
   app.use('/api/sync', syncRouter);
 

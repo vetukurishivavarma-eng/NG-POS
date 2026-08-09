@@ -211,3 +211,38 @@ export function serializeUser(u: {
     is_active: u.isActive,
   };
 }
+
+export function serializeDevice(d: {
+  id: string;
+  userId: string;
+  deviceId: string;
+  deviceName: string;
+  platform: string;
+  appVersion: string | null;
+  lastSeenAt: Date;
+  lastIp: string | null;
+  createdAt: Date;
+  revokedAt: Date | null;
+  revokedReason: string | null;
+  user?: { id: string; fullName: string; email: string; role: string } | null;
+}) {
+  return {
+    id: d.id,
+    user_id: d.userId,
+    // The raw device id is never sent out. It is the value the app proves
+    // itself with, so an admin screen listing every one of them would hand
+    // anyone who can read that screen the means to impersonate any till.
+    device_name: d.deviceName,
+    platform: d.platform,
+    app_version: d.appVersion,
+    last_seen_at: d.lastSeenAt.toISOString(),
+    last_ip: d.lastIp,
+    created_at: d.createdAt.toISOString(),
+    revoked_at: d.revokedAt?.toISOString() ?? null,
+    revoked_reason: d.revokedReason,
+    is_active: d.revokedAt == null,
+    user: d.user
+      ? { id: d.user.id, full_name: d.user.fullName, email: d.user.email, role: d.user.role }
+      : null,
+  };
+}

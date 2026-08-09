@@ -14,11 +14,19 @@ export interface AuthUser {
   assignedStores: string[];
 }
 
+/** The device session the request arrived on, for routes that report or end it. */
+export interface AuthSession {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+}
+
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user?: AuthUser;
+      session?: AuthSession;
     }
   }
 }
@@ -26,6 +34,14 @@ declare global {
 export interface TokenPayload {
   sub: string;
   org: string;
+  /**
+   * The device session this token belongs to.
+   *
+   * Optional only in the type: a token without one predates device binding and
+   * is refused, because accepting it would be a way to hold a session no
+   * administrator can see in the Devices list or release.
+   */
+  sid?: string;
   /** Seconds since epoch, set by jsonwebtoken when the token is signed. */
   iat?: number;
 }
@@ -35,12 +51,26 @@ export interface TokenPayload {
 // algorithm-confusion tricks for free, and documents the intent.
 const JWT_ALG: jwt.Algorithm = 'HS256';
 
-export function signToken(userId: string, organizationId: string): string {
-  return jwt.sign({ sub: userId, org: organizationId } satisfies TokenPayload, env.JWT_SECRET, {
-    algorithm: JWT_ALG,
-    expiresIn: env.JWT_EXPIRES_IN,
-  } as jwt.SignOptions);
+export function signToken(userId: string, organizationId: string, sessionId: string): string {
+  return jwt.sign(
+    { sub: userId, org: organizationId, sid: sessionId } satisfies TokenPayload,
+    env.JWT_SECRET,
+    {
+      algorithm: JWT_ALG,
+      expiresIn: env.JWT_EXPIRES_IN,
+    } as jwt.SignOptions
+  );
 }
+
+/**
+ * How stale `lastSeenAt` is allowed to get.
+ *
+ * Every authenticated request could refresh it, but a till polling the
+ * catalogue would then write to this row hundreds of times an hour for a column
+ * an administrator glances at. Five minutes is far finer than the judgement it
+ * supports — "is this device still in use?" — at a fraction of the writes.
+ */
+const LAST_SEEN_REFRESH_MS = 5 * 60_000;
 
 /**
  * The user is re-read on each request rather than trusted from the token, so
@@ -72,6 +102,38 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
       throw unauthorized('Your password was changed. Please sign in again.');
     }
 
+    // The device this token was issued to must still be the one holding the
+    // account. Checked on every request, not just at sign-in: releasing a
+    // device from the Devices screen has to take effect on the phone in
+    // somebody's pocket within seconds, not in thirty days when the token runs
+    // out — which is the entire point of being able to remove it.
+    if (!payload.sid) {
+      throw unauthorized('Please sign in again to register this device.');
+    }
+    const session = await prisma.deviceSession.findUnique({ where: { id: payload.sid } });
+    if (!session || session.userId !== user.id) {
+      throw unauthorized('Please sign in again to register this device.');
+    }
+    if (session.revokedAt) {
+      throw unauthorized(
+        session.revokedReason
+          ? `This device was removed by an administrator (${session.revokedReason}).`
+          : 'This device was removed by an administrator. Please sign in again.'
+      );
+    }
+
+    if (Date.now() - session.lastSeenAt.getTime() > LAST_SEEN_REFRESH_MS) {
+      // Not awaited and not fatal: a failed heartbeat must never turn a working
+      // request into a 500. Worst case the admin sees a slightly older time.
+      void prisma.deviceSession
+        .update({
+          where: { id: session.id },
+          data: { lastSeenAt: new Date(), lastIp: req.ip ?? null },
+        })
+        .catch(() => {});
+    }
+
+    req.session = { id: session.id, deviceId: session.deviceId, deviceName: session.deviceName };
     req.user = {
       id: user.id,
       organizationId: user.organizationId,

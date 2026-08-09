@@ -8,6 +8,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
 import { num, serializeProduct, serializeUser } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
+import { revokeAllSessions } from './devices.js';
 
 /* ------------------------------------------------------------------- users */
 
@@ -81,6 +82,14 @@ usersRouter.put(
           : {}),
       },
     });
+
+    // Taking an account back has to free the handset too. Otherwise the new
+    // password is useless: the one-device rule would refuse the sign-in because
+    // the device being taken away is still holding the claim.
+    if (body.password) await revokeAllSessions(user.id, 'Password reset by administrator');
+    // Deactivating is the same act by another name — the device keeps its claim
+    // and blocks nobody, but leaving it listed as active misreports the estate.
+    if (body.is_active === false) await revokeAllSessions(user.id, 'Account deactivated');
 
     res.json(serializeUser(user));
   })
