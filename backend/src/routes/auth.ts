@@ -44,6 +44,18 @@ const deviceSchema = z
   })
   .optional();
 
+/**
+ * Marks a session opened by a client that identified no device.
+ *
+ * The distinction earns its keep. Such a session is still subject to the
+ * one-device rule — a script cannot sign in behind a till's back — but it never
+ * *enforces* it, and a real device signing in revokes it. Without that
+ * asymmetry a single stray API login wedges the account shut: freeing a device
+ * requires an administrator to sign in, and the administrator is precisely who
+ * cannot. That is not hypothetical; it happened on the first live test run.
+ */
+const UNIDENTIFIED_PREFIX = 'unidentified-';
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
@@ -91,9 +103,10 @@ async function claimDevice(
   device: { device_id?: string; device_name?: string; platform?: string; app_version?: string } | undefined,
   ip: string | null
 ) {
-  // A client that sends no id gets a fresh one each time, so it is bound by the
-  // same rule instead of quietly bypassing it by staying anonymous.
-  const deviceId = device?.device_id ?? `unidentified-${randomUUID()}`;
+  // A client that sends no id gets a fresh one each time, so it cannot hold a
+  // stable claim. See UNIDENTIFIED_PREFIX for why it also cannot block one.
+  const identified = device?.device_id != null;
+  const deviceId = device?.device_id ?? `${UNIDENTIFIED_PREFIX}${randomUUID()}`;
   const deviceName = device?.device_name?.trim() || 'Unnamed device';
   const platform = device?.platform ?? 'unknown';
 
@@ -115,15 +128,32 @@ async function claimDevice(
     });
   }
 
-  const other = active[0];
-  if (other) {
+  // Only a real till may stand in the way of another real till. A session
+  // opened by something that sent no device id — a support script, a curl
+  // check, a browser — is held to the rule but never enforces it.
+  const blocking = active.find((s) => !s.deviceId.startsWith(UNIDENTIFIED_PREFIX));
+  if (blocking) {
     // 409, not 401: the credentials were right. Telling them which device holds
     // the account is the whole point — it is how the person works out whether
     // it is their own old phone or somebody else using their password.
     throw conflict(
-      `This account is already signed in on ${other.deviceName}. Ask your administrator to remove that device, or reset your password to release it.`,
+      `This account is already signed in on ${blocking.deviceName}. Ask your administrator to remove that device, or reset your password to release it.`,
       'DEVICE_ALREADY_ACTIVE'
     );
+  }
+
+  if (identified) {
+    // A phone signing in displaces any scripted sessions outright. This is what
+    // stops a stray automated login from locking a shop out of its own till —
+    // the deadlock is real, because releasing a device needs an admin to sign
+    // in, and the admin is the one who cannot.
+    const stale = active.filter((s) => s.deviceId.startsWith(UNIDENTIFIED_PREFIX));
+    if (stale.length > 0) {
+      await prisma.deviceSession.updateMany({
+        where: { id: { in: stale.map((s) => s.id) } },
+        data: { revokedAt: new Date(), revokedReason: 'Replaced by a registered device' },
+      });
+    }
   }
 
   return prisma.deviceSession.create({
