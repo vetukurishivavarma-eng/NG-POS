@@ -24,6 +24,7 @@ import { usePrinter } from '../src/printing/printer';
 import { useReminder } from '../src/notifications/reminder';
 import { colors } from '../src/theme';
 import { Loading } from '../src/ui/components';
+import { FlyToCartProvider } from '../src/ui/flyToCart';
 
 // A closing-time reminder is useless if it only appears while the app is open.
 Notifications.setNotificationHandler({
@@ -142,6 +143,10 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
         <StatusBar style="light" />
+        {/* Wraps the navigator so a token can fly over the whole app, including
+            across a modal — the cart bar it lands on belongs to the screen
+            underneath. */}
+        <FlyToCartProvider>
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.canvas } }}>
           <Stack.Screen name="login" />
           <Stack.Screen name="forgot-password" />
@@ -211,6 +216,7 @@ export default function RootLayout() {
           <Stack.Screen name="analytics" options={{ headerShown: true, title: 'Analytics' }} />
           <Stack.Screen name="settings" options={{ headerShown: true, title: 'Settings' }} />
         </Stack>
+        </FlyToCartProvider>
       </SafeAreaProvider>
     </QueryClientProvider>
   );

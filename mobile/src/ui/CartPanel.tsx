@@ -5,7 +5,7 @@ import { computeTotals, PAYMENT_METHODS, useCart } from '../store/cart';
 import { useCheckout } from '../hooks/useCheckout';
 import { useSync } from '../db/sync';
 import { colors, font, formatKwacha, radius, spacing, splitAmount } from '../theme';
-import { Button, EmptyState, Icon } from './components';
+import { Button, EmptyState, Icon, QtyStepper } from './components';
 
 /**
  * The cart body. Rendered inside a modal on phones and docked to the right of
@@ -54,23 +54,11 @@ export function CartPanel({ onDone, docked = false }: { onDone?: () => void; doc
             </View>
 
             <View style={styles.lineBottom}>
-              <View style={styles.stepper}>
-                <Pressable
-                  style={styles.stepBtn}
-                  onPress={() => setQuantity(line.product.id, line.quantity - 1)}
-                  hitSlop={6}
-                >
-                  <Icon name="minus" size={15} color={colors.text} />
-                </Pressable>
-                <Text style={styles.qty}>{line.quantity}</Text>
-                <Pressable
-                  style={styles.stepBtn}
-                  onPress={() => setQuantity(line.product.id, line.quantity + 1)}
-                  hitSlop={6}
-                >
-                  <Icon name="plus" size={15} color={colors.text} />
-                </Pressable>
-              </View>
+              <QtyStepper
+                value={line.quantity}
+                max={line.product.quantity}
+                onChange={(next) => setQuantity(line.product.id, next)}
+              />
 
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={styles.lineTotal}>
@@ -82,6 +70,15 @@ export function CartPanel({ onDone, docked = false }: { onDone?: () => void; doc
                 </Text>
               </View>
             </View>
+
+            {/* The cap is only obvious once you have hit it, so say why the plus
+                has stopped responding rather than leaving it looking broken. */}
+            {line.quantity >= line.product.quantity && line.product.quantity > 0 ? (
+              <View style={styles.capNote}>
+                <Icon name="alert-circle" size={12} color={colors.accentDeep} />
+                <Text style={styles.capText}>All {line.product.quantity} in stock are on this sale.</Text>
+              </View>
+            ) : null}
           </View>
         ))}
 
@@ -230,23 +227,8 @@ const styles = StyleSheet.create({
   lineName: { flex: 1, fontFamily: font.semibold, fontSize: 14, color: colors.text, lineHeight: 19 },
   lineBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 
-  stepper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surfaceSunken,
-    borderRadius: radius.pill,
-    padding: 3,
-    gap: 2,
-  },
-  stepBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qty: { minWidth: 30, textAlign: 'center', fontFamily: font.bold, fontSize: 15, color: colors.text },
+  capNote: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  capText: { fontFamily: font.medium, fontSize: 11, color: colors.accentDeep },
 
   lineTotal: { fontFamily: font.bold, fontSize: 15, color: colors.text },
   lineUnit: { fontFamily: font.regular, fontSize: 11, color: colors.textMuted, marginTop: 1 },

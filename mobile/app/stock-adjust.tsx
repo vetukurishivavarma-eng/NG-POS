@@ -11,7 +11,7 @@ import { useCan } from '../src/store/auth';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { filterCatalogue, useCatalogue } from '../src/hooks/useCatalogue';
 import { useLayout } from '../src/ui/responsive';
-import { colors, font, formatKwacha, radius, shadow, spacing } from '../src/theme';
+import { bevel, colors, font, formatKwacha, radius, shadow, spacing } from '../src/theme';
 import {
   Badge,
   Button,
@@ -19,6 +19,7 @@ import {
   Field,
   Icon,
   Loading,
+  QtyStepper,
   SectionLabel,
   Select,
 } from '../src/ui/components';
@@ -314,6 +315,13 @@ export default function StockAdjustScreen() {
               error={amountInvalid ? 'Enter a number.' : null}
               hint="Count only what arrived today — not the total on the shelf."
             />
+            <Tally
+              label="Or count them in"
+              value={entered ?? 0}
+              onChange={(next) => setAmount(next === 0 ? '' : String(next))}
+              resultLabel="New level"
+              result={newLevel}
+            />
           </View>
         ) : (
           <View style={{ gap: spacing.md }}>
@@ -355,24 +363,41 @@ export default function StockAdjustScreen() {
               </>
             ) : (
               <>
+                {/* One control, both directions. The old shape asked for a
+                    direction from a dropdown and then a positive number, so
+                    "remove 3" was two decisions and the sign lived somewhere
+                    the eye never returned to. Here the number on screen is the
+                    level the shelf will be left at, and it moves the way the
+                    stock does. */}
+                <Tally
+                  label="Set the level"
+                  value={newLevel}
+                  min={0}
+                  onChange={(next) => {
+                    const nextDelta = round3(next - current);
+                    setDirection(nextDelta < 0 ? 'remove' : 'add');
+                    setAmount(nextDelta === 0 ? '' : String(Math.abs(nextDelta)));
+                  }}
+                  resultLabel={delta === 0 ? 'Unchanged' : delta > 0 ? 'Adding' : 'Removing'}
+                  result={Math.abs(delta)}
+                />
+                <Field
+                  label={direction === 'remove' ? 'Or type units to remove' : 'Or type units to add'}
+                  value={amount}
+                  onChangeText={(t) => setAmount(numericText(t))}
+                  placeholder="0"
+                  keyboardType="numeric"
+                  error={amountInvalid ? 'Enter a number.' : null}
+                  hint="A difference, not a total. Use the buttons above for small corrections."
+                />
                 <Select<'add' | 'remove'>
-                  label="Direction"
+                  label="Direction for the typed figure"
                   value={direction}
                   onChange={setDirection}
                   options={[
                     { value: 'remove', label: '− Remove' },
                     { value: 'add', label: '+ Add' },
                   ]}
-                />
-                <Field
-                  label={direction === 'remove' ? 'Units to remove' : 'Units to add'}
-                  value={amount}
-                  onChangeText={(t) => setAmount(numericText(t))}
-                  placeholder="0"
-                  keyboardType="numeric"
-                  autoFocus
-                  error={amountInvalid ? 'Enter a number.' : null}
-                  hint="A difference, not a total."
                 />
               </>
             )}
@@ -457,6 +482,42 @@ function PickRow({ product, onPress }: { product: ProductWithStock; onPress: () 
       </View>
       <Icon name="chevron-right" size={18} color={colors.textFaint} />
     </Pressable>
+  );
+}
+
+/**
+ * A big two-way counter with the running figure between the buttons.
+ *
+ * Counting a shelf is done one unit at a time with one hand, so the targets are
+ * deliberately oversized — a 28px circle is fine for a cart line you tap twice
+ * and wrong for a stock count you tap forty times.
+ */
+function Tally({
+  label,
+  value,
+  onChange,
+  min,
+  resultLabel,
+  result,
+}: {
+  label: string;
+  value: number;
+  onChange: (next: number) => void;
+  min?: number;
+  resultLabel: string;
+  result: number;
+}) {
+  return (
+    <View style={styles.tally}>
+      <Text style={styles.tallyLabel}>{label}</Text>
+      <View style={styles.tallyRow}>
+        <QtyStepper size="lg" value={value} min={min ?? 0} onChange={onChange} />
+        <View style={styles.tallyResult}>
+          <Text style={styles.tallyResultLabel}>{resultLabel}</Text>
+          <Text style={styles.tallyResultValue}>{formatQty(result)}</Text>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -582,6 +643,35 @@ function signed(n: number): string {
 }
 
 const styles = StyleSheet.create({
+  tally: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderLeftColor: colors.border,
+    borderRightColor: colors.border,
+    padding: spacing.md,
+    gap: spacing.sm,
+    ...bevel.light,
+    ...shadow.tile,
+  },
+  tallyLabel: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    color: colors.textFaint,
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  tallyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
+  tallyResult: { alignItems: 'flex-end' },
+  tallyResultLabel: { fontFamily: font.medium, fontSize: 11, color: colors.textMuted },
+  tallyResultValue: {
+    fontFamily: font.extrabold,
+    fontSize: 22,
+    color: colors.text,
+    letterSpacing: -0.5,
+  },
+
   safe: { flex: 1, backgroundColor: colors.canvas },
 
   /* step 1 */

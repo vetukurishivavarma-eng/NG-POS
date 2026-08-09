@@ -12,6 +12,13 @@ import { findCachedByBarcode } from '../src/db';
 import { colors, font, radius, spacing } from '../src/theme';
 import { Button, Icon } from '../src/ui/components';
 import type { CatalogueResult } from '../src/hooks/useCatalogue';
+import type { ProductWithStock } from '../src/api/types';
+
+/** Read straight from the store: this runs inside a scan callback, not a render. */
+function alreadyAtStockLimit(product: ProductWithStock): boolean {
+  const line = useCart.getState().lines.find((l) => l.product.id === product.id);
+  return line != null && line.quantity >= product.quantity;
+}
 
 export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -53,6 +60,11 @@ export default function ScanScreen() {
         setMessage(`No product with barcode ${data}`);
       } else if (product.quantity <= 0) {
         setMessage(`${product.name} is out of stock`);
+      } else if (alreadyAtStockLimit(product)) {
+        // Without this the scanner would close on a scan that changed nothing —
+        // the cart silently caps at the stock on hand, and a cashier scanning a
+        // sixth unit of a five-unit product would have no way to tell.
+        setMessage(`All ${product.quantity} of ${product.name} are already on this sale`);
       } else {
         add(product);
         router.back();

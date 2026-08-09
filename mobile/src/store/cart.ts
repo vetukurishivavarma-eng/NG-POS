@@ -46,11 +46,15 @@ export const useCart = create<CartState>((set) => ({
       if (existing) {
         return {
           lines: s.lines.map((l) =>
-            l.product.id === product.id ? { ...l, quantity: l.quantity + quantity } : l
+            l.product.id === product.id
+              ? { ...l, quantity: capToStock(l.product, l.quantity + quantity) }
+              : l
           ),
         };
       }
-      return { lines: [...s.lines, { product, quantity, discount: 0 }] };
+      return {
+        lines: [...s.lines, { product, quantity: capToStock(product, quantity), discount: 0 }],
+      };
     }),
 
   setQuantity: (productId, quantity) =>
@@ -58,7 +62,9 @@ export const useCart = create<CartState>((set) => ({
       lines:
         quantity <= 0
           ? s.lines.filter((l) => l.product.id !== productId)
-          : s.lines.map((l) => (l.product.id === productId ? { ...l, quantity } : l)),
+          : s.lines.map((l) =>
+              l.product.id === productId ? { ...l, quantity: capToStock(l.product, quantity) } : l
+            ),
     })),
 
   setDiscount: (productId, discount) =>
@@ -75,6 +81,31 @@ export const useCart = create<CartState>((set) => ({
   setCustomer: (customerName, customerPhone = '') => set({ customerName, customerPhone }),
   setNotes: (notes) => set({ notes }),
 }));
+
+/**
+ * The most a line may hold: what the store has on the shelf.
+ *
+ * Nothing downstream enforces this. The server reprices from product ids and
+ * then lets the level go negative on purpose, because an offline till replaying
+ * yesterday's sales must not be rejected for stock it did not know about — so a
+ * basket of 50 units of a 3-unit product posts cleanly and the shortfall only
+ * surfaces at the next count. The sell screen already refuses to add anything
+ * with no stock at all; this is the same rule applied to the second tap
+ * onwards.
+ *
+ * `quantity` is as of the last catalogue sync. That is the number the cashier
+ * is looking at on the same screen, so capping to it can never contradict what
+ * they can see.
+ */
+export function capToStock(product: ProductWithStock, wanted: number): number {
+  const available = Number(product.quantity ?? 0);
+  // Zero, missing or nonsense stock is left uncapped rather than pinned to nil:
+  // a barcode scanned off an item that is physically in the shop must still
+  // sell, and capping to 0 would empty the line as fast as it was added. The
+  // sell grid is where a no-stock product is refused, deliberately and visibly.
+  if (!Number.isFinite(available) || available <= 0) return Math.max(0, wanted);
+  return Math.max(0, Math.min(wanted, available));
+}
 
 export interface CartTotals {
   subtotal: number;

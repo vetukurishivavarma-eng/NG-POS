@@ -90,6 +90,72 @@ export const shadow = {
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
+  /**
+   * A card that reads as a physical object rather than a rectangle.
+   *
+   * The depth comes from three things together, and dropping any one of them
+   * flattens it: a wider, softer shadow than `card`; the `bevel` highlight
+   * below drawn along the top edge; and the surface sinking on press. A bigger
+   * blur radius on its own just looks blurry.
+   */
+  tile: {
+    shadowColor: '#2C2519',
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
+  },
+  /** What a tile drops to while held down — travelling toward the page. */
+  sunken: {
+    shadowColor: '#2C2519',
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+} as const;
+
+/**
+ * Edge lighting.
+ *
+ * A lit top edge and a shaded bottom one are what separate a raised surface
+ * from a flat fill — the shadow underneath only says the object floats, not
+ * which way up it is. Applied as ordinary borders so there is no gradient
+ * dependency and nothing to fail on Android.
+ */
+export const bevel = {
+  /** For white/near-white surfaces on the bone canvas. */
+  light: {
+    borderTopColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderBottomColor: '#DFD8CA',
+    borderBottomWidth: 1.5,
+  },
+  /** For the deep-green and gold fills, where white would be too loud. */
+  dark: {
+    borderTopColor: 'rgba(255,255,255,0.22)',
+    borderTopWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.22)',
+    borderBottomWidth: 1.5,
+  },
+} as const;
+
+/**
+ * Motion.
+ *
+ * Everything is short. A till is used a few hundred times a day by someone who
+ * already knows what the button does, and an animation they have to wait for
+ * becomes the slowest part of the sale. These durations are on the edge of
+ * being felt rather than watched.
+ */
+export const motion = {
+  /** Press feedback — must feel simultaneous with the finger. */
+  instant: 90,
+  /** State changes: a count ticking, a badge appearing. */
+  quick: 160,
+  /** The arc of an item flying to the cart. Long enough to be followed. */
+  travel: 460,
+  spring: { damping: 15, stiffness: 220, mass: 0.7 },
 } as const;
 
 /** Zambian Kwacha, e.g. `K1,234.00`. */

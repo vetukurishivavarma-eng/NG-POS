@@ -1,5 +1,13 @@
-import React, { useMemo, useState } from 'react';
-import { Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  Animated,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -10,8 +18,9 @@ import { useSync } from '../../src/db/sync';
 import { useCatalogue, filterCatalogue } from '../../src/hooks/useCatalogue';
 import { useLayout } from '../../src/ui/responsive';
 import { CartPanel } from '../../src/ui/CartPanel';
-import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/theme';
-import { Badge, Button, EmptyState, Icon, Loading } from '../../src/ui/components';
+import { useFlyToCart } from '../../src/ui/flyToCart';
+import { bevel, colors, font, formatKwacha, motion, radius, shadow, spacing } from '../../src/theme';
+import { Badge, Button, EmptyState, Icon, Loading, QtyStepper } from '../../src/ui/components';
 import type { ProductWithStock } from '../../src/api/types';
 
 export default function SellScreen() {
@@ -26,6 +35,25 @@ export default function SellScreen() {
   const { data, isLoading, isError, refetch, isRefetching } = useCatalogue(store?.id ?? null);
   const lines = useCart((s) => s.lines);
   const add = useCart((s) => s.add);
+  const setQuantity = useCart((s) => s.setQuantity);
+  const { fly } = useFlyToCart();
+
+  /** Cart quantity by product id, so a tile can show its own count in one lookup. */
+  const inCart = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const l of lines) map.set(l.product.id, l.quantity);
+    return map;
+  }, [lines]);
+
+  // Told to the cashier when a stepper refuses to go further, because a button
+  // that silently does nothing reads as a broken button.
+  const [limitNote, setLimitNote] = useState<string | null>(null);
+  const limitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashLimit = useCallback((message: string) => {
+    setLimitNote(message);
+    if (limitTimer.current) clearTimeout(limitTimer.current);
+    limitTimer.current = setTimeout(() => setLimitNote(null), 2200);
+  }, []);
 
   const items = data?.items ?? [];
   const brands = useMemo(
@@ -131,13 +159,27 @@ export default function SellScreen() {
           ListEmptyComponent={
             <EmptyState icon="search" title="No matching products" hint="Try a different search or brand." />
           }
-          renderItem={({ item }) =>
-            layout.productColumns > 1 ? (
-              <ProductTile product={item} onAdd={() => add(item)} />
+          renderItem={({ item }) => {
+            const props = {
+              product: item,
+              quantity: inCart.get(item.id) ?? 0,
+              onAdd: (from: { x: number; y: number; width: number; height: number }) => {
+                add(item);
+                fly(from, item.name.charAt(0).toUpperCase());
+              },
+              onSetQuantity: (next: number) => setQuantity(item.id, next),
+              onLimit: (edge: 'min' | 'max') => {
+                if (edge === 'max') {
+                  flashLimit(`Only ${formatStock(item.quantity)} of ${item.name} in stock.`);
+                }
+              },
+            };
+            return layout.productColumns > 1 ? (
+              <ProductTile {...props} />
             ) : (
-              <ProductRow product={item} onAdd={() => add(item)} />
-            )
-          }
+              <ProductRow {...props} />
+            );
+          }}
         />
       )}
     </View>
@@ -170,6 +212,13 @@ export default function SellScreen() {
         </View>
       </View>
 
+      {limitNote ? (
+        <View style={styles.limitToast} pointerEvents="none">
+          <Icon name="alert-circle" size={15} color={colors.accentDeep} />
+          <Text style={styles.limitText}>{limitNote}</Text>
+        </View>
+      ) : null}
+
       {layout.isTablet ? (
         <View style={styles.split}>
           {productArea}
@@ -180,99 +229,235 @@ export default function SellScreen() {
       ) : (
         <>
           {productArea}
-          {lines.length > 0 ? (
-            <Pressable style={styles.cartBar} onPress={() => router.push('/cart')}>
-              <View style={styles.cartCount}>
-                <Text style={styles.cartCountText}>{totals.itemCount}</Text>
-              </View>
-              <Text style={styles.cartLabel}>View Cart</Text>
-              <Text style={styles.cartTotal}>{formatKwacha(totals.total)}</Text>
-              <Icon name="chevron-right" size={18} color="#fff" />
-            </Pressable>
-          ) : null}
+          {lines.length > 0 ? <CartBar itemCount={totals.itemCount} total={totals.total} /> : null}
         </>
       )}
     </SafeAreaView>
   );
 }
 
-function stockTone(p: ProductWithStock) {
-  if (p.quantity <= 0) return { label: 'Out of stock', tone: 'danger' as const };
-  if (p.quantity <= p.reorder_level) return { label: `${p.quantity} left`, tone: 'warning' as const };
-  return { label: `${p.quantity} in stock`, tone: 'success' as const };
-}
+/**
+ * The bar doubles as the flight's destination, so it reports its own position
+ * rather than the screen guessing at one. It is re-measured on every layout —
+ * the keyboard opening or a rotation moves it, and a token flying to where it
+ * used to be looks worse than no animation at all.
+ */
+function CartBar({ itemCount, total }: { itemCount: number; total: number }) {
+  const { setTarget, bump } = useFlyToCart();
+  const ref = useRef<View>(null);
+  const enter = useRef(new Animated.Value(0)).current;
 
-function ProductRow({ product, onAdd }: { product: ProductWithStock; onAdd: () => void }) {
-  const out = product.quantity <= 0;
-  const stock = stockTone(product);
+  React.useEffect(() => {
+    Animated.spring(enter, { toValue: 1, ...motion.spring, useNativeDriver: true }).start();
+    return () => setTarget(null);
+  }, [enter, setTarget]);
+
+  const measure = useCallback(() => {
+    ref.current?.measureInWindow((x, y, width, height) => setTarget({ x, y, width, height }));
+  }, [setTarget]);
 
   return (
-    <Pressable
-      onPress={onAdd}
-      disabled={out}
-      style={({ pressed }) => [styles.row, out && styles.dimmed, pressed && styles.pressed]}
+    <Animated.View
+      style={[
+        styles.cartBarWrap,
+        {
+          opacity: enter,
+          transform: [
+            { translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [80, 0] }) },
+          ],
+        },
+      ]}
     >
-      <View style={styles.thumb}>
-        <Text style={styles.thumbText}>{product.name.charAt(0).toUpperCase()}</Text>
-      </View>
+      <Pressable
+        ref={ref}
+        onLayout={measure}
+        style={styles.cartBar}
+        onPress={() => router.push('/cart')}
+      >
+        <Animated.View style={[styles.cartCount, { transform: [{ scale: bump }] }]}>
+          <Text style={styles.cartCountText}>{itemCount}</Text>
+        </Animated.View>
+        <Text style={styles.cartLabel}>View Cart</Text>
+        <Text style={styles.cartTotal}>{formatKwacha(total)}</Text>
+        <Icon name="chevron-right" size={18} color="#fff" />
+      </Pressable>
+    </Animated.View>
+  );
+}
 
-      <View style={styles.flex}>
-        <Text style={styles.itemName} numberOfLines={2}>
+function formatStock(n: number): string {
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(3)));
+}
+
+function stockTone(p: ProductWithStock) {
+  if (p.quantity <= 0) return { label: 'Out of stock', tone: 'danger' as const };
+  if (p.quantity <= p.reorder_level)
+    return { label: `${formatStock(p.quantity)} left`, tone: 'warning' as const };
+  return { label: `${formatStock(p.quantity)} in stock`, tone: 'success' as const };
+}
+
+type Rect = { x: number; y: number; width: number; height: number };
+
+interface ProductProps {
+  product: ProductWithStock;
+  quantity: number;
+  onAdd: (from: Rect) => void;
+  onSetQuantity: (next: number) => void;
+  onLimit: (edge: 'min' | 'max') => void;
+}
+
+/**
+ * Press physics shared by both card shapes.
+ *
+ * The card sinks toward the page under the finger and springs back — the same
+ * motion a real key makes. It is also what carries the depth: a raised surface
+ * that does not move when pressed just looks like a picture of one.
+ */
+function usePressDepth() {
+  const depth = useRef(new Animated.Value(0)).current;
+  const press = useCallback(
+    (down: boolean) =>
+      Animated.spring(depth, {
+        toValue: down ? 1 : 0,
+        ...motion.spring,
+        useNativeDriver: true,
+      }).start(),
+    [depth]
+  );
+  const style = {
+    transform: [
+      { scale: depth.interpolate({ inputRange: [0, 1], outputRange: [1, 0.972] }) },
+      { translateY: depth.interpolate({ inputRange: [0, 1], outputRange: [0, 2] }) },
+    ],
+  };
+  return { style, onPressIn: () => press(true), onPressOut: () => press(false) };
+}
+
+/**
+ * The flight has to start from where the product actually is on screen, which
+ * only the native view knows. `measureInWindow` is asynchronous, so the add is
+ * done inside the callback — the token and the count then change together.
+ */
+function useFlightOrigin(onAdd: (from: Rect) => void) {
+  const ref = useRef<View>(null);
+  const launch = useCallback(() => {
+    const node = ref.current;
+    if (!node) return;
+    node.measureInWindow((x, y, width, height) => onAdd({ x, y, width, height }));
+  }, [onAdd]);
+  return { ref, launch };
+}
+
+function ProductRow({ product, quantity, onAdd, onSetQuantity, onLimit }: ProductProps) {
+  const out = product.quantity <= 0;
+  const stock = stockTone(product);
+  const depth = usePressDepth();
+  const { ref, launch } = useFlightOrigin(onAdd);
+  const inCart = quantity > 0;
+
+  return (
+    <Animated.View style={depth.style}>
+      <Pressable
+        ref={ref}
+        onPress={launch}
+        onPressIn={depth.onPressIn}
+        onPressOut={depth.onPressOut}
+        disabled={out}
+        style={[styles.row, out && styles.dimmed, inCart && styles.rowInCart]}
+      >
+        <View style={[styles.thumb, inCart && styles.thumbInCart]}>
+          <Text style={[styles.thumbText, inCart && styles.thumbTextInCart]}>
+            {product.name.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+
+        <View style={styles.flex}>
+          <Text style={styles.itemName} numberOfLines={2}>
+            {product.name}
+          </Text>
+          <Text style={styles.itemMeta} numberOfLines={1}>
+            {product.brand ?? '—'}
+          </Text>
+          <View style={{ marginTop: 5 }}>
+            <Badge label={stock.label} tone={stock.tone} dot />
+          </View>
+        </View>
+
+        <View style={styles.rowRight}>
+          <Text style={styles.price}>{formatKwacha(product.selling_price)}</Text>
+          {out ? null : inCart ? (
+            // Once it is in the basket the tile stops being a button and becomes
+            // the line itself — correcting a miscount no longer means opening
+            // the cart, which was three taps to undo one.
+            <QtyStepper
+              size="sm"
+              value={quantity}
+              max={product.quantity}
+              onChange={onSetQuantity}
+              onLimit={onLimit}
+            />
+          ) : (
+            <View style={styles.addBtn}>
+              <Icon name="plus" size={17} color="#fff" />
+            </View>
+          )}
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function ProductTile({ product, quantity, onAdd, onSetQuantity, onLimit }: ProductProps) {
+  const out = product.quantity <= 0;
+  const stock = stockTone(product);
+  const depth = usePressDepth();
+  const { ref, launch } = useFlightOrigin(onAdd);
+  const inCart = quantity > 0;
+
+  return (
+    <Animated.View style={[styles.tileWrap, depth.style]}>
+      <Pressable
+        ref={ref}
+        onPress={launch}
+        onPressIn={depth.onPressIn}
+        onPressOut={depth.onPressOut}
+        disabled={out}
+        style={[styles.tile, out && styles.dimmed, inCart && styles.tileInCart]}
+      >
+        <View style={styles.tileTop}>
+          <View style={[styles.thumb, inCart && styles.thumbInCart]}>
+            <Text style={[styles.thumbText, inCart && styles.thumbTextInCart]}>
+              {product.name.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+          <Badge label={stock.label} tone={stock.tone} dot />
+        </View>
+
+        <Text style={styles.tileName} numberOfLines={2}>
           {product.name}
         </Text>
         <Text style={styles.itemMeta} numberOfLines={1}>
           {product.brand ?? '—'}
         </Text>
-        <View style={{ marginTop: 5 }}>
-          <Badge label={stock.label} tone={stock.tone} dot />
+
+        <View style={styles.tileFooter}>
+          <Text style={styles.price}>{formatKwacha(product.selling_price)}</Text>
+          {out ? null : inCart ? (
+            <QtyStepper
+              size="sm"
+              value={quantity}
+              max={product.quantity}
+              onChange={onSetQuantity}
+              onLimit={onLimit}
+            />
+          ) : (
+            <View style={styles.addBtn}>
+              <Icon name="plus" size={17} color="#fff" />
+            </View>
+          )}
         </View>
-      </View>
-
-      <View style={styles.rowRight}>
-        <Text style={styles.price}>{formatKwacha(product.selling_price)}</Text>
-        {!out ? (
-          <View style={styles.addBtn}>
-            <Icon name="plus" size={17} color="#fff" />
-          </View>
-        ) : null}
-      </View>
-    </Pressable>
-  );
-}
-
-function ProductTile({ product, onAdd }: { product: ProductWithStock; onAdd: () => void }) {
-  const out = product.quantity <= 0;
-  const stock = stockTone(product);
-
-  return (
-    <Pressable
-      onPress={onAdd}
-      disabled={out}
-      style={({ pressed }) => [styles.tile, out && styles.dimmed, pressed && styles.pressed]}
-    >
-      <View style={styles.tileTop}>
-        <View style={styles.thumb}>
-          <Text style={styles.thumbText}>{product.name.charAt(0).toUpperCase()}</Text>
-        </View>
-        <Badge label={stock.label} tone={stock.tone} dot />
-      </View>
-
-      <Text style={styles.tileName} numberOfLines={2}>
-        {product.name}
-      </Text>
-      <Text style={styles.itemMeta} numberOfLines={1}>
-        {product.brand ?? '—'}
-      </Text>
-
-      <View style={styles.tileFooter}>
-        <Text style={styles.price}>{formatKwacha(product.selling_price)}</Text>
-        {!out ? (
-          <View style={styles.addBtn}>
-            <Icon name="plus" size={17} color="#fff" />
-          </View>
-        ) : null}
-      </View>
-    </Pressable>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -375,7 +560,6 @@ const styles = StyleSheet.create({
   cacheText: { flex: 1, fontFamily: font.medium, fontSize: 11, color: colors.warning },
 
   dimmed: { opacity: 0.5 },
-  pressed: { transform: [{ scale: 0.98 }] },
 
   row: {
     flexDirection: 'row',
@@ -384,24 +568,35 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     margin: 4,
     padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadow.card,
+    borderRadius: radius.lg,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderLeftColor: colors.border,
+    borderRightColor: colors.border,
+    ...bevel.light,
+    ...shadow.tile,
   },
+  // A product already in the basket is tinted and outlined in the brand green,
+  // so a half-built cart is legible from the grid without opening it.
+  rowInCart: { borderLeftColor: colors.primary, borderLeftWidth: 3, backgroundColor: '#FCFDFC' },
   rowRight: { alignItems: 'flex-end', gap: spacing.sm },
 
+  tileWrap: { flex: 1 },
   tile: {
     flex: 1,
     backgroundColor: colors.surface,
     margin: 4,
     padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderLeftColor: colors.border,
+    borderRightColor: colors.border,
     gap: 3,
-    ...shadow.card,
+    ...bevel.light,
+    ...shadow.tile,
   },
+  tileInCart: { borderLeftColor: colors.primary, borderLeftWidth: 3, backgroundColor: '#FCFDFC' },
   tileTop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -419,30 +614,55 @@ const styles = StyleSheet.create({
   thumb: {
     width: 42,
     height: 42,
-    borderRadius: radius.sm,
+    borderRadius: radius.md,
     backgroundColor: colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
+    ...bevel.light,
   },
+  thumbInCart: { backgroundColor: colors.primary },
   thumbText: { fontFamily: font.bold, fontSize: 17, color: colors.primary },
+  thumbTextInCart: { color: '#fff' },
 
   itemName: { fontFamily: font.semibold, fontSize: 15, color: colors.text, lineHeight: 20 },
   itemMeta: { fontFamily: font.regular, fontSize: 12, color: colors.textMuted },
   price: { fontFamily: font.bold, fontSize: 16, color: colors.text, letterSpacing: -0.3 },
   addBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    ...bevel.dark,
+    ...shadow.card,
   },
 
-  cartBar: {
+  limitToast: {
+    position: 'absolute',
+    left: spacing.lg,
+    right: spacing.lg,
+    bottom: 92,
+    zIndex: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    ...bevel.light,
+    ...shadow.raised,
+  },
+  limitText: { flex: 1, fontFamily: font.semibold, fontSize: 12, color: colors.accentDeep },
+
+  cartBarWrap: {
     position: 'absolute',
     left: spacing.md,
     right: spacing.md,
     bottom: spacing.md,
+  },
+  cartBar: {
     height: 62,
     borderRadius: radius.lg,
     backgroundColor: colors.primary,
@@ -450,6 +670,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
     gap: spacing.md,
+    ...bevel.dark,
     ...shadow.raised,
   },
   cartCount: {

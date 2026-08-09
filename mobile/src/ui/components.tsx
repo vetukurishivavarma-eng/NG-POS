@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,7 +16,7 @@ import {
 } from 'react-native';
 import Feather from '@expo/vector-icons/Feather';
 
-import { colors, font, radius, shadow, spacing } from '../theme';
+import { bevel, colors, font, motion, radius, shadow, spacing } from '../theme';
 
 export type IconName = React.ComponentProps<typeof Feather>['name'];
 
@@ -322,6 +323,174 @@ export function Toggle({
   );
 }
 
+/* ------------------------------------------------------------------ steppers */
+
+/**
+ * One control that both adds and takes away, with the running count between the
+ * two halves.
+ *
+ * It exists once because the alternative is three of them: the cart had this
+ * shape, the sell grid had a bare `+` that could only ever go up, and stock
+ * corrections made you pick a direction from a dropdown before typing a number.
+ * Same gesture everywhere now.
+ *
+ * `max` is not decoration. On the sell screen it is the stock on hand, and it
+ * is the only thing standing between a cashier and a basket holding more units
+ * than the shop owns — the server will happily let stock go negative, because
+ * offline replay depends on that, so nothing downstream catches it.
+ */
+export function QtyStepper({
+  value,
+  onChange,
+  min = 0,
+  max,
+  size = 'md',
+  tone = 'light',
+  /** Shown in place of the number when the count is zero, e.g. "Add". */
+  zeroLabel,
+  disabled,
+  onLimit,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+  min?: number;
+  max?: number;
+  size?: 'sm' | 'md' | 'lg';
+  tone?: 'light' | 'dark';
+  zeroLabel?: string;
+  disabled?: boolean;
+  /** Called instead of `onChange` when a press would cross `min`/`max`. */
+  onLimit?: (edge: 'min' | 'max') => void;
+}) {
+  const dims = STEPPER_SIZES[size];
+  const dark = tone === 'dark';
+  const atMin = value <= min;
+  const atMax = max != null && value >= max;
+
+  // The number pops when it changes, so a tap registers even when the finger is
+  // covering the digits — which on a phone it usually is.
+  const pop = React.useRef(new Animated.Value(1)).current;
+  const first = React.useRef(true);
+  React.useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    Animated.sequence([
+      Animated.timing(pop, { toValue: 1.22, duration: 70, useNativeDriver: true }),
+      Animated.spring(pop, { toValue: 1, ...motion.spring, useNativeDriver: true }),
+    ]).start();
+  }, [value, pop]);
+
+  function step(by: 1 | -1) {
+    if (disabled) return;
+    const next = value + by;
+    if (by < 0 && atMin) return onLimit?.('min');
+    if (by > 0 && atMax) return onLimit?.('max');
+    onChange(Math.min(max ?? Infinity, Math.max(min, next)));
+  }
+
+  const fg = dark ? '#fff' : colors.text;
+  const faded = dark ? 'rgba(255,255,255,0.35)' : colors.textFaint;
+
+  return (
+    <View
+      style={[
+        styles.stepper,
+        { height: dims.h, borderRadius: dims.h / 2, padding: dims.pad },
+        dark ? styles.stepperDark : styles.stepperLight,
+        disabled && styles.stepperDisabled,
+      ]}
+    >
+      <StepButton
+        icon="minus"
+        dims={dims}
+        dark={dark}
+        color={atMin ? faded : fg}
+        disabled={disabled || atMin}
+        onPress={() => step(-1)}
+      />
+
+      <Animated.View style={{ transform: [{ scale: pop }] }}>
+        <Text
+          style={[
+            styles.stepperValue,
+            { fontSize: dims.font, minWidth: dims.valueWidth, color: fg },
+            value === 0 && zeroLabel ? styles.stepperZero : null,
+          ]}
+          numberOfLines={1}
+        >
+          {value === 0 && zeroLabel ? zeroLabel : formatCount(value)}
+        </Text>
+      </Animated.View>
+
+      <StepButton
+        icon="plus"
+        dims={dims}
+        dark={dark}
+        color={atMax ? faded : fg}
+        disabled={disabled || atMax}
+        onPress={() => step(1)}
+      />
+    </View>
+  );
+}
+
+function StepButton({
+  icon,
+  dims,
+  dark,
+  color,
+  disabled,
+  onPress,
+}: {
+  icon: IconName;
+  dims: StepperDims;
+  dark: boolean;
+  color: string;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      // Generous, because these are small circles pressed with a thumb across a
+      // counter, often one-handed while the other hand holds the goods.
+      hitSlop={10}
+      style={({ pressed }) => [
+        styles.stepBtn,
+        { width: dims.btn, height: dims.btn, borderRadius: dims.btn / 2 },
+        dark ? styles.stepBtnDark : styles.stepBtnLight,
+        pressed && !disabled && styles.stepBtnPressed,
+        disabled && styles.stepBtnDisabled,
+      ]}
+    >
+      <Icon name={icon} size={dims.icon} color={color} />
+    </Pressable>
+  );
+}
+
+interface StepperDims {
+  h: number;
+  btn: number;
+  pad: number;
+  icon: number;
+  font: number;
+  valueWidth: number;
+}
+
+const STEPPER_SIZES: Record<'sm' | 'md' | 'lg', StepperDims> = {
+  sm: { h: 34, btn: 28, pad: 3, icon: 14, font: 14, valueWidth: 30 },
+  md: { h: 40, btn: 34, pad: 3, icon: 16, font: 16, valueWidth: 38 },
+  lg: { h: 56, btn: 48, pad: 4, icon: 22, font: 24, valueWidth: 72 },
+};
+
+/** Whole numbers stay whole; fractional stock (weights) keeps up to 3 places. */
+function formatCount(n: number): string {
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(3)));
+}
+
 /* --------------------------------------------------------------------- lists */
 
 /** Generic tappable list row: leading icon, title, subtitle, trailing slot. */
@@ -401,6 +570,38 @@ export function StatRow({
 }
 
 const styles = StyleSheet.create({
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 2,
+  },
+  // The track is recessed and the two buttons sit proud of it — the inverse of
+  // the bevel used on cards, which is what makes it read as a physical rocker.
+  stepperLight: {
+    backgroundColor: colors.surfaceSunken,
+    borderTopWidth: 1,
+    borderTopColor: '#D9D2C4',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FFFFFF',
+  },
+  stepperDark: {
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.18)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.14)',
+  },
+  stepperDisabled: { opacity: 0.45 },
+  stepperValue: { fontFamily: font.bold, textAlign: 'center', letterSpacing: -0.3 },
+  stepperZero: { fontFamily: font.semibold, fontSize: 12, letterSpacing: 0.2 },
+
+  stepBtn: { alignItems: 'center', justifyContent: 'center' },
+  stepBtnLight: { backgroundColor: colors.surface, ...bevel.light, ...shadow.sunken },
+  stepBtnDark: { backgroundColor: 'rgba(255,255,255,0.16)', ...bevel.dark },
+  stepBtnPressed: { transform: [{ scale: 0.9 }], opacity: 0.85 },
+  stepBtnDisabled: { backgroundColor: 'transparent', borderWidth: 0, elevation: 0, shadowOpacity: 0 },
+
   title: { fontFamily: font.bold, fontSize: 26, color: colors.text, letterSpacing: -0.5 },
   subtitle: { fontFamily: font.regular, fontSize: 13, color: colors.textMuted, marginTop: 2 },
   sectionLabel: {
@@ -422,22 +623,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   btnLg: { height: 58, borderRadius: radius.lg },
-  btnPrimary: { backgroundColor: colors.primary },
-  btnAccent: { backgroundColor: colors.accentDeep },
-  btnSecondary: { backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.border },
-  btnDanger: { backgroundColor: colors.danger },
+  btnPrimary: { backgroundColor: colors.primary, ...bevel.dark, ...shadow.tile },
+  btnAccent: { backgroundColor: colors.accentDeep, ...bevel.dark, ...shadow.tile },
+  btnSecondary: {
+    backgroundColor: colors.surface,
+    borderLeftWidth: 1.5,
+    borderRightWidth: 1.5,
+    borderLeftColor: colors.border,
+    borderRightColor: colors.border,
+    ...bevel.light,
+    ...shadow.card,
+  },
+  btnDanger: { backgroundColor: colors.danger, ...bevel.dark, ...shadow.tile },
   btnGhost: { backgroundColor: 'transparent' },
-  btnDisabled: { opacity: 0.4 },
-  btnPressed: { transform: [{ scale: 0.985 }], opacity: 0.9 },
+  btnDisabled: { opacity: 0.4, elevation: 0, shadowOpacity: 0 },
+  // Sinks rather than just fading: with the lit top edge above, losing the
+  // shadow and dropping 1px is the whole illusion of a key being pushed in.
+  btnPressed: {
+    transform: [{ scale: 0.985 }, { translateY: 1 }],
+    ...shadow.sunken,
+  },
   btnText: { fontFamily: font.semibold, fontSize: 15 },
   btnTextLg: { fontSize: 17, fontFamily: font.bold },
 
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadow.card,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderLeftColor: colors.border,
+    borderRightColor: colors.border,
+    ...bevel.light,
+    ...shadow.tile,
   },
   cardPadded: { padding: spacing.lg },
 
