@@ -43,7 +43,25 @@ const schema = z.object({
   /** Minutes a reset code stays valid. Short — it is read off a phone in a shop. */
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().min(5).max(1440).default(30),
 
-  /** SMTP. All five must be present for mail to be sent at all. */
+  /**
+   * Resend's HTTP API key, and the preferred transport when set.
+   *
+   * Render's free plan blocks outbound traffic to ports 25, 465 and 587, so
+   * SMTP from a free web service hangs rather than fails. Resend goes out over
+   * HTTPS on 443 instead. Until a sending domain is verified with them, `from`
+   * must be `onboarding@resend.dev` and mail only reaches the account owner's
+   * own address — which is all this feature needs, since every code goes to one
+   * administrator.
+   */
+  RESEND_API_KEY: z.string().optional(),
+
+  /**
+   * The From address, for whichever transport is in use. Falls back to
+   * SMTP_FROM so an existing SMTP-only deployment keeps working unchanged.
+   */
+  MAIL_FROM: z.string().optional(),
+
+  /** SMTP, for local development and for hosts that allow outbound mail. */
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().default(587),
   SMTP_USER: z.string().optional(),
@@ -81,20 +99,25 @@ export const env = parsed.data;
 export const corsOrigins =
   env.CORS_ORIGINS === '*' ? true : env.CORS_ORIGINS.split(',').map((o) => o.trim());
 
+/** The From address, whichever transport ends up carrying the mail. */
+export const mailFrom = env.MAIL_FROM ?? env.SMTP_FROM;
+
+/** Either transport will do, but one of them must be complete. */
+const resendReady = Boolean(env.RESEND_API_KEY);
+const smtpReady = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASSWORD);
+
 /** True only when a reset mail can actually be delivered to a real mailbox. */
 export const passwordResetConfigured = Boolean(
-  env.PASSWORD_RESET_NOTIFY_EMAIL &&
-    env.SMTP_HOST &&
-    env.SMTP_USER &&
-    env.SMTP_PASSWORD &&
-    env.SMTP_FROM
+  env.PASSWORD_RESET_NOTIFY_EMAIL && mailFrom && (resendReady || smtpReady)
 );
 
 // A production deployment that half-configured this would look fine until the
 // first person forgot their password, so say it at boot instead.
 if (env.NODE_ENV === 'production' && env.PASSWORD_RESET_NOTIFY_EMAIL && !passwordResetConfigured) {
   console.warn(
-    '[startup] PASSWORD_RESET_NOTIFY_EMAIL is set but SMTP_HOST/USER/PASSWORD/FROM are not. ' +
-      'Password reset is disabled until all of them are present.'
+    '[startup] PASSWORD_RESET_NOTIFY_EMAIL is set, but no usable mail transport is. ' +
+      'Set RESEND_API_KEY (preferred on Render — its free plan blocks SMTP ports), ' +
+      'or SMTP_HOST/USER/PASSWORD, and a MAIL_FROM address. ' +
+      'Password reset stays disabled until then.'
   );
 }

@@ -258,7 +258,21 @@ authRouter.post(
         timeZone: env.REPORT_TIMEZONE,
       }).format(new Date());
 
-      await sendMail({
+      // Deliberately not awaited.
+      //
+      // Two reasons, and the second is the serious one. The app gives up after
+      // 20 seconds (mobile client.ts), while a mail round trip against a host
+      // that drops SMTP takes minutes. But awaiting also made this endpoint an
+      // account oracle by stopwatch: a real address paid for the whole send, an
+      // unknown one returned instantly, and the identical wording below stopped
+      // hiding anything at all. The send now runs behind the response, and its
+      // outcome is logged, because the caller is told nothing either way.
+      //
+      // (Creating the code above still costs a bcrypt hash that an unknown
+      // address does not pay. That is a ~100ms difference rather than a
+      // two-minute one, and levelling it would mean hashing a throwaway code
+      // for every stranger who posts an address.)
+      void sendMail({
         to: env.PASSWORD_RESET_NOTIFY_EMAIL as string,
         subject: `${env.APP_NAME}: password reset requested by ${user.fullName}`,
         text: [
@@ -278,7 +292,16 @@ authRouter.post(
           'If you were not expecting this request, do nothing — the code is useless',
           'on its own and will expire by itself.',
         ].join('\n'),
-      });
+      })
+        .then((result) => {
+          // The only place a delivery failure is visible. Without this line the
+          // administrator simply never gets a mail and nobody finds out why.
+          if (!result.sent) console.error('[mail] reset code not delivered:', result.error);
+        })
+        // sendMail already swallows its own failures; this is here so a future
+        // change to it can never take the process down with an unhandled
+        // rejection on a path nothing is awaiting.
+        .catch((err: unknown) => console.error('[mail] sender threw:', err));
     }
 
     res.json({

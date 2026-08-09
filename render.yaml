@@ -59,7 +59,20 @@ services:
         value: "30"
       - key: APP_NAME
         value: NG POS
-      # Gmail needs an App Password here, not the account password.
+      # Mail leaves over Resend's HTTPS API, not SMTP. This plan blocks outbound
+      # traffic to ports 25, 465 and 587 (all regions, since Sept 2025), and it
+      # blocks them by dropping packets — so nodemailer does not fail, it hangs
+      # until its socket times out. Upgrading to any paid instance would unblock
+      # 465 and 587; port 25 stays blocked everywhere because Render is on EC2.
+      - key: RESEND_API_KEY
+        sync: false
+      # Must be onboarding@resend.dev until a sending domain is verified, and
+      # until then Resend only delivers to the account owner's own address.
+      - key: MAIL_FROM
+        sync: false
+      # SMTP is the fallback transport, used only when RESEND_API_KEY is unset —
+      # local development, or a host that allows outbound mail. Gmail needs an
+      # App Password here, not the account password.
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
