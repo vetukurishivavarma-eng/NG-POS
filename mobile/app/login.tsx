@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -22,6 +22,7 @@ import {
   isNetworkError,
   resetApiBaseUrl,
   setApiBaseUrl,
+  takeSessionEndedReason,
 } from '../src/api/client';
 import { Button, Icon } from '../src/ui/components';
 import { colors, font, radius, shadow, spacing } from '../src/theme';
@@ -48,6 +49,14 @@ export default function LoginScreen() {
   const [serverBusy, setServerBusy] = useState(false);
   const [unreachable, setUnreachable] = useState(false);
   const [deviceBlocked, setDeviceBlocked] = useState(false);
+
+  // Landing here because the session ended mid-shift looks identical to landing
+  // here on purpose. Say which it was — the server's reason is the only clue to
+  // a removed device or a password changed on another handset.
+  useEffect(() => {
+    const reason = takeSessionEndedReason();
+    if (reason) setError(reason);
+  }, []);
 
   async function submit() {
     if (!email.trim() || !password) {

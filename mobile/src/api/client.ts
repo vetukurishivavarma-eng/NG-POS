@@ -139,10 +139,66 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
+/**
+ * Requests where a 401 is an *answer*, not an expired session.
+ *
+ * A wrong password answers 401. Running the global handler on that signs the
+ * user out and calls `router.replace('/login')`, which remounts the login
+ * screen and wipes the "Incorrect email or password." the screen sets a moment
+ * later in its catch — so the person is told nothing about why it failed and
+ * loses what they typed. Any future endpoint where 401 means "you got that
+ * wrong" rather than "your session ended" belongs in this list too.
+ */
+const EXPECTS_401 = [
+  '/auth/login',
+  // Signing out is the one request that *must* not restart a sign-out. The
+  // handler below clears the token before calling `onUnauthorized`, so the
+  // `/auth/logout` that `signOut()` then sends carries no Authorization header
+  // and is answered 401 — which used to re-enter the handler, sign out again,
+  // and post logout again, forever, calling `router.replace('/login')` on every
+  // pass. That is the login screen flickering in a loop.
+  '/auth/logout',
+];
+
+/**
+ * True while a sign-out is already under way.
+ *
+ * The app fires several queries at once when a screen lands, so an expired
+ * session produces a burst of 401s rather than one. Without this, each of them
+ * separately signs out and redirects, and the screen flickers once per failed
+ * request. Cleared by the next successful response, i.e. once a session works
+ * again.
+ */
+let handlingUnauthorized = false;
+
+/**
+ * Why the last session ended, for the login screen to show.
+ *
+ * Being thrown back to sign-in with nothing on screen is indistinguishable
+ * from the app losing the password, and the server always says something
+ * useful — "This device was removed by an administrator", "Your password was
+ * changed". Read once, then forgotten, so it can't reappear on a later visit.
+ */
+let sessionEndedReason: string | null = null;
+
+export function takeSessionEndedReason(): string | null {
+  const reason = sessionEndedReason;
+  sessionEndedReason = null;
+  return reason;
+}
+
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    handlingUnauthorized = false;
+    return res;
+  },
   async (error: AxiosError) => {
-    if (error.response?.status === 401) {
+    const url = error.config?.url ?? '';
+    const answered401 = EXPECTS_401.some((path) => url.startsWith(path));
+
+    if (error.response?.status === 401 && !answered401 && !handlingUnauthorized) {
+      handlingUnauthorized = true;
+      sessionEndedReason = errorMessage(error);
       await clearToken();
       onUnauthorized?.();
     }
