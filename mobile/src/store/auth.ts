@@ -119,8 +119,25 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'refunds.issue': ['admin', 'manager'],
 };
 
+/**
+ * What this account may do.
+ *
+ * The server now decides — permissions depend on which store someone works at
+ * and, for product entry, on a date — and sends the answer with the account.
+ * The role table below is only the fallback for a token issued by a server old
+ * enough not to send one, so the app still behaves if the two are out of step.
+ */
 export function can(user: User | null, permission: Permission): boolean {
+  if (user?.capabilities) return user.capabilities.includes(permission);
   return PERMISSIONS[permission].includes(roleLevel(user));
+}
+
+/**
+ * Why a control is missing, when the reason is a closed window rather than the
+ * person's role — worth saying out loud on the screen that lost the button.
+ */
+export function productEntryClosed(user: User | null): boolean {
+  return Boolean(user?.capabilities) && user?.product_entry_open === false;
 }
 
 /** Hook form, for use inside screens. */

@@ -186,6 +186,17 @@ export interface User {
   role: string;
   assigned_stores: string[] | null;
   is_active: boolean;
+  /**
+   * What this account may do, decided by the server from role *and* the store
+   * it works at. Sent only with your own account (login and `/auth/me`), so it
+   * is absent on the users list and on tokens from an older server.
+   */
+  capabilities?: string[];
+  /** True when this account works at a store flagged as the warehouse. */
+  warehouse_staff?: boolean;
+  /** Shop staff may add products until this date; null means no limit. */
+  product_entry_open?: boolean;
+  product_entry_until?: string | null;
 }
 
 /** The three roles the backend accepts. `User.role` stays a string for tolerance. */
