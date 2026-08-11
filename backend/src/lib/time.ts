@@ -88,3 +88,57 @@ export function previousDateKey(dateKey: string): string {
   const { year, month, day } = parseDateKey(dateKey);
   return dateKeyIn(new Date(Date.UTC(year, month - 1, day - 1, 12)), 'UTC');
 }
+
+/** The date key `n` days after `dateKey`; negative `n` goes back. */
+export function shiftDateKey(dateKey: string, n: number): string {
+  const { year, month, day } = parseDateKey(dateKey);
+  return dateKeyIn(new Date(Date.UTC(year, month - 1, day + n, 12)), 'UTC');
+}
+
+export const REPORT_PERIODS = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
+export type ReportPeriod = (typeof REPORT_PERIODS)[number];
+
+/**
+ * The first date of the *calendar* period `instant` falls in.
+ *
+ * Calendar, not trailing: "this month" means the 1st onwards, not the last 30
+ * days. A shopkeeper comparing the app against their own book is counting from
+ * the 1st, and a trailing window silently moves its own start every morning,
+ * so two people reading the same screen an hour apart can disagree.
+ *
+ * The week starts on Monday.
+ */
+export function periodStartKey(
+  period: ReportPeriod,
+  timeZone: string,
+  instant: Date = new Date()
+): string {
+  const todayKey = dateKeyIn(instant, timeZone);
+  const { year, month, day } = parseDateKey(todayKey);
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  switch (period) {
+    case 'daily':
+      return todayKey;
+    case 'weekly': {
+      // getUTCDay is 0 for Sunday, so Sunday sits at the end of its week.
+      const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+      return shiftDateKey(todayKey, -((weekday + 6) % 7));
+    }
+    case 'monthly':
+      return `${year}-${pad(month)}-01`;
+    case 'quarterly':
+      return `${year}-${pad(Math.floor((month - 1) / 3) * 3 + 1)}-01`;
+    case 'yearly':
+      return `${year}-01-01`;
+  }
+}
+
+/** The instant a calendar period began, for use as a query lower bound. */
+export function periodStartIn(
+  period: ReportPeriod,
+  timeZone: string,
+  instant: Date = new Date()
+): Date {
+  return startOfDayIn(periodStartKey(period, timeZone, instant), timeZone);
+}

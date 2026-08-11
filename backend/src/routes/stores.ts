@@ -5,7 +5,7 @@ import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
 import { serializeStore } from '../lib/serialize.js';
-import { notFound } from '../lib/errors.js';
+import { conflict, notFound } from '../lib/errors.js';
 
 export const storesRouter = Router();
 storesRouter.use(authenticate);
@@ -23,10 +23,16 @@ const addressSchema = z
 
 const storeSchema = z.object({
   name: z.string().min(1),
+  /**
+   * Optional: opening a shop should only ask for its name. Left out, the code
+   * is derived from the name — it is plumbing (the front of every receipt
+   * number here), not something an owner should have to invent.
+   */
   code: z
     .string()
     .min(1)
-    .transform((c) => c.toUpperCase().replace(/\s+/g, '')),
+    .transform((c) => c.toUpperCase().replace(/[^A-Z0-9-]/g, ''))
+    .optional(),
   address: addressSchema,
   location: z
     .object({ latitude: z.number().nullable(), longitude: z.number().nullable() })
@@ -70,16 +76,50 @@ storesRouter.get(
   })
 );
 
+/**
+ * A shop code that is unique within the organisation.
+ *
+ * Receipt numbers are `CODE-YYYYMMDD-NNNNNN` and their counters are keyed on the
+ * store, so two shops sharing a code would print receipts that look identical
+ * on paper. Hence the suffix rather than a rejection: two shops may legitimately
+ * be named after the same place.
+ */
+async function uniqueCode(organizationId: string, name: string): Promise<string> {
+  const base = name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'SHOP';
+
+  for (let n = 1; n < 100; n += 1) {
+    const candidate = n === 1 ? base : `${base}-${n}`;
+    const taken = await prisma.store.findFirst({
+      where: { organizationId, code: candidate },
+      select: { id: true },
+    });
+    if (!taken) return candidate;
+  }
+
+  throw conflict('Could not derive a shop code from that name. Enter one yourself.');
+}
+
 storesRouter.post(
   '/',
   requireRole('ORG_ADMIN'),
   asyncHandler(async (req, res) => {
     const body = storeSchema.parse(req.body);
+    const organizationId = currentUser(req).organizationId;
+
+    const code = body.code || (await uniqueCode(organizationId, body.name));
+    if (body.code) {
+      const clash = await prisma.store.findFirst({
+        where: { organizationId, code },
+        select: { name: true },
+      });
+      if (clash) throw conflict(`${clash.name} already uses the code ${code}.`, 'STORE_CODE_TAKEN');
+    }
+
     const store = await prisma.store.create({
       data: {
-        organizationId: currentUser(req).organizationId,
+        organizationId,
         name: body.name,
-        code: body.code,
+        code,
         street: body.address?.street ?? '',
         city: body.address?.city ?? '',
         province: body.address?.province ?? '',
@@ -107,6 +147,15 @@ storesRouter.put(
       where: { id: req.params.id, organizationId: user.organizationId },
     });
     if (!existing) throw notFound('Store not found.');
+
+    if (body.code && body.code !== existing.code) {
+      const clash = await prisma.store.findFirst({
+        where: { organizationId: user.organizationId, code: body.code, id: { not: existing.id } },
+        select: { name: true },
+      });
+      if (clash)
+        throw conflict(`${clash.name} already uses the code ${body.code}.`, 'STORE_CODE_TAKEN');
+    }
 
     const store = await prisma.store.update({
       where: { id: existing.id },
