@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import { stores as storesApi } from '../api/endpoints';
 import { isNetworkError } from '../api/client';
+import { useAuth } from './auth';
 import type { Store } from '../api/types';
 
 const KEY = 'pos_selected_store';
@@ -48,9 +49,6 @@ export const useStoreSelection = create<StoreSelectionState>((set, get) => ({
    * shop instead of silently dropping to no selection.
    */
   reconcile: async () => {
-    const current = get().selected;
-    if (!current) return;
-
     let list: Store[];
     try {
       list = await storesApi.list();
@@ -63,18 +61,45 @@ export const useStoreSelection = create<StoreSelectionState>((set, get) => ({
       return;
     }
 
-    const match = list.find((s) => s.id === current.id) ?? list.find((s) => s.code === current.code);
+    const current = get().selected;
 
-    if (!match) {
+    if (current) {
+      const match =
+        list.find((s) => s.id === current.id) ?? list.find((s) => s.code === current.code);
+
+      if (match) {
+        // Also refreshes a renamed or deactivated store's cached fields.
+        if (JSON.stringify(match) !== JSON.stringify(current)) {
+          await SecureStore.setItemAsync(KEY, JSON.stringify(match));
+          set({ selected: match });
+        }
+        return;
+      }
+
+      // The saved shop is gone from the server. Drop it, then fall through —
+      // there may be exactly one left to bind to.
       await SecureStore.deleteItemAsync(KEY);
       set({ selected: null });
-      return;
     }
 
-    // Also refreshes a renamed or deactivated store's cached fields.
-    if (JSON.stringify(match) !== JSON.stringify(current)) {
-      await SecureStore.setItemAsync(KEY, JSON.stringify(match));
-      set({ selected: match });
+    /**
+     * Nothing selected, and one shop is not a choice.
+     *
+     * Someone assigned to a single shop was being shown "No store selected"
+     * and a picker with one row in it, every time they signed in. Only the
+     * stores this account can actually use count: an unassigned account
+     * conventionally has them all, so it only auto-binds where the whole
+     * organisation is one shop.
+     */
+    const assigned = useAuth.getState().user?.assigned_stores;
+    const usable = list.filter(
+      (s) => s.is_active && (!assigned || assigned.length === 0 || assigned.includes(s.id))
+    );
+
+    if (usable.length === 1) {
+      const only = usable[0] as Store;
+      await SecureStore.setItemAsync(KEY, JSON.stringify(only));
+      set({ selected: only });
     }
   },
 
