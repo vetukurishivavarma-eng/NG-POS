@@ -64,12 +64,16 @@ describe('forgotten passwords', () => {
     expect(sentMail[0]!.text).toContain(world.emails.cashier);
   });
 
-  it('answers identically for an unknown address, and mails nobody', async () => {
+  // Anti-enumeration was traded away deliberately: staff are sent to a code
+  // screen they can never satisfy otherwise. Rate limiting is what now keeps
+  // bulk probing impractical, so the wording here is meant to be unambiguous.
+  it('says plainly that an unknown address has no account, and mails nobody', async () => {
     const real = await forgot(world.emails.cashier);
     const fake = await forgot('nobody-at-all@test.local');
 
-    expect(fake.status).toBe(real.status);
-    expect(fake.body.detail).toBe(real.body.detail);
+    expect(real.status).toBe(200);
+    expect(fake.status).toBe(404);
+    expect(fake.body.detail).toMatch(/no account exists/i);
     expect(sentMail).toHaveLength(1);
   });
 

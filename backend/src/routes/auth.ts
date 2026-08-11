@@ -8,7 +8,7 @@ import { env, passwordResetConfigured } from '../env.js';
 import { asyncHandler } from '../middleware/error.js';
 import { authenticate, currentUser, signToken } from '../middleware/auth.js';
 import { serializeDevice, serializeUser } from '../lib/serialize.js';
-import { badRequest, conflict, unauthorized } from '../lib/errors.js';
+import { badRequest, conflict, notFound, unauthorized } from '../lib/errors.js';
 import { sendMail } from '../lib/mailer.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { revokeOwnSession } from './devices.js';
@@ -373,84 +373,88 @@ authRouter.post(
 
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
 
-    // Everything below is best-effort and deliberately invisible to the caller:
-    // the response is identical for a real address, an unknown one, and a
-    // deactivated account, so this endpoint cannot enumerate staff.
-    if (user?.isActive) {
-      const code = generateResetCode();
-      const expiresAt = new Date(Date.now() + env.PASSWORD_RESET_TTL_MINUTES * 60_000);
-
-      await prisma.$transaction(async (tx) => {
-        // Only the newest code should ever work, or an old mail stays live.
-        await tx.passwordResetRequest.updateMany({
-          where: { userId: user.id, consumedAt: null },
-          data: { consumedAt: new Date() },
-        });
-        await tx.passwordResetRequest.create({
-          data: {
-            userId: user.id,
-            codeHash: await bcrypt.hash(code, 10),
-            expiresAt,
-            requestIp: req.ip ?? '',
-          },
-        });
-      });
-
-      const when = new Intl.DateTimeFormat('en-GB', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-        timeZone: env.REPORT_TIMEZONE,
-      }).format(new Date());
-
-      // Deliberately not awaited.
-      //
-      // Two reasons, and the second is the serious one. The app gives up after
-      // 20 seconds (mobile client.ts), while a mail round trip against a host
-      // that drops SMTP takes minutes. But awaiting also made this endpoint an
-      // account oracle by stopwatch: a real address paid for the whole send, an
-      // unknown one returned instantly, and the identical wording below stopped
-      // hiding anything at all. The send now runs behind the response, and its
-      // outcome is logged, because the caller is told nothing either way.
-      //
-      // (Creating the code above still costs a bcrypt hash that an unknown
-      // address does not pay. That is a ~100ms difference rather than a
-      // two-minute one, and levelling it would mean hashing a throwaway code
-      // for every stranger who posts an address.)
-      void sendMail({
-        to: env.PASSWORD_RESET_NOTIFY_EMAIL as string,
-        subject: `${env.APP_NAME}: password reset requested by ${user.fullName}`,
-        text: [
-          `A password reset was requested for a ${env.APP_NAME} account.`,
-          '',
-          `  Name:      ${user.fullName}`,
-          `  Account:   ${user.email}`,
-          `  Role:      ${user.role}`,
-          `  Requested: ${when} (${env.REPORT_TIMEZONE})`,
-          `  From IP:   ${req.ip ?? 'unknown'}`,
-          '',
-          `One-time code: ${code}`,
-          '',
-          `This code expires in ${env.PASSWORD_RESET_TTL_MINUTES} minutes and can be used once.`,
-          'Give it only to this person, and only once you are satisfied they are who they say.',
-          '',
-          'If you were not expecting this request, do nothing — the code is useless',
-          'on its own and will expire by itself.',
-        ].join('\n'),
-      })
-        .then((result) => {
-          // The only place a delivery failure is visible. Without this line the
-          // administrator simply never gets a mail and nobody finds out why.
-          if (!result.sent) console.error('[mail] reset code not delivered:', result.error);
-        })
-        // sendMail already swallows its own failures; this is here so a future
-        // change to it can never take the process down with an unhandled
-        // rejection on a path nothing is awaiting.
-        .catch((err: unknown) => console.error('[mail] sender threw:', err));
+    // This endpoint used to answer identically for a real address, an unknown
+    // one, and a deactivated account, so it could not be used to enumerate
+    // staff. That protection is deliberately given up here: these are internal
+    // shop accounts on addresses no public mailbox answers, and sending someone
+    // to a code screen for an address that can never produce a code wastes a
+    // trip to the administrator. The endpoint is still rate limited by IP and
+    // address, which is what keeps bulk probing impractical.
+    if (!user) {
+      throw notFound('No account exists for that email address.');
     }
+    if (!user.isActive) {
+      throw badRequest(
+        'That account has been deactivated. Ask your administrator to reactivate it.',
+        'ACCOUNT_INACTIVE'
+      );
+    }
+
+    const code = generateResetCode();
+    const expiresAt = new Date(Date.now() + env.PASSWORD_RESET_TTL_MINUTES * 60_000);
+
+    await prisma.$transaction(async (tx) => {
+      // Only the newest code should ever work, or an old mail stays live.
+      await tx.passwordResetRequest.updateMany({
+        where: { userId: user.id, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
+      await tx.passwordResetRequest.create({
+        data: {
+          userId: user.id,
+          codeHash: await bcrypt.hash(code, 10),
+          expiresAt,
+          requestIp: req.ip ?? '',
+        },
+      });
+    });
+
+    const when = new Intl.DateTimeFormat('en-GB', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: env.REPORT_TIMEZONE,
+    }).format(new Date());
+
+    // Deliberately not awaited: the app gives up after 20 seconds (mobile
+    // client.ts), while a mail round trip against a host that drops SMTP takes
+    // minutes. The send runs behind the response and its outcome is logged.
+    //
+    // (The timing-oracle reason for this is gone now that the answers above
+    // differ openly, but the timeout reason on its own is enough.)
+    void sendMail({
+      to: env.PASSWORD_RESET_NOTIFY_EMAIL as string,
+      subject: `${env.APP_NAME}: password reset requested by ${user.fullName}`,
+      text: [
+        `A password reset was requested for a ${env.APP_NAME} account.`,
+        '',
+        `  Name:      ${user.fullName}`,
+        `  Account:   ${user.email}`,
+        `  Role:      ${user.role}`,
+        `  Requested: ${when} (${env.REPORT_TIMEZONE})`,
+        `  From IP:   ${req.ip ?? 'unknown'}`,
+        '',
+        `One-time code: ${code}`,
+        '',
+        `This code expires in ${env.PASSWORD_RESET_TTL_MINUTES} minutes and can be used once.`,
+        'Give it only to this person, and only once you are satisfied they are who they say.',
+        '',
+        'If you were not expecting this request, do nothing — the code is useless',
+        'on its own and will expire by itself.',
+      ].join('\n'),
+    })
+      .then((result) => {
+        // The only place a delivery failure is visible. Without this line the
+        // administrator simply never gets a mail and nobody finds out why.
+        if (!result.sent) console.error('[mail] reset code not delivered:', result.error);
+      })
+      // sendMail already swallows its own failures; this is here so a future
+      // change to it can never take the process down with an unhandled
+      // rejection on a path nothing is awaiting.
+      .catch((err: unknown) => console.error('[mail] sender threw:', err));
 
     res.json({
       detail:
-        'If that account exists, your administrator has been sent a one-time code. Ask them for it, then enter it here.',
+        'Your administrator has been sent a one-time code. Ask them for it, then enter it here.',
     });
   })
 );
