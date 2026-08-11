@@ -8,6 +8,7 @@ import type {
   DashboardAnalytics,
   InventoryRow,
   LoginResponse,
+  MarginSummary,
   Organization,
   OrganizationUpdate,
   Product,
@@ -334,6 +335,13 @@ export const analytics = {
   salesSummary: (storeId: string | null, period: AnalyticsPeriod = 'monthly') =>
     api
       .get<SalesSummary>('/analytics/sales-summary', {
+        params: { ...(storeId ? { store_id: storeId } : {}), period },
+      })
+      .then((r) => r.data),
+  /** Cost of goods, VAT and gross profit — the three parts of the selling price. */
+  marginSummary: (storeId: string | null, period: AnalyticsPeriod = 'monthly') =>
+    api
+      .get<MarginSummary>('/analytics/margin-summary', {
         params: { ...(storeId ? { store_id: storeId } : {}), period },
       })
       .then((r) => r.data),

@@ -403,12 +403,19 @@ export interface TransferDraft {
 
 /* ----------------------------------------------------------------- analytics */
 
-export type AnalyticsPeriod = 'daily' | 'weekly' | 'monthly';
+export type AnalyticsPeriod = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 
+/**
+ * Every period is calendar-aligned in `REPORT_TIMEZONE`, not a trailing window:
+ * "this month" runs from the 1st, and the week starts on Monday. The labels say
+ * "this" rather than "last 30 days" because that is what the figures mean.
+ */
 export const PERIOD_LABELS: Record<AnalyticsPeriod, string> = {
   daily: 'Today',
   weekly: 'This week',
   monthly: 'This month',
+  quarterly: 'This quarter',
+  yearly: 'This year',
 };
 
 export interface SalesTrendPoint {
@@ -434,7 +441,11 @@ export interface SalesPerProductRow {
 }
 
 export interface ProfitPerProductRow extends SalesPerProductRow {
-  /** Net of tax and the cost price captured on the line at sale time. */
+  /** What the goods cost, captured on the line at sale time. */
+  cost: number;
+  /** VAT charged on the line — it belongs to ZRA, not to the shop. */
+  tax: number;
+  /** `sales - tax - cost`. Net of tax and the cost price captured at sale time. */
   profit: number;
 }
 
@@ -449,7 +460,29 @@ export interface ProfitPerBranchRow {
   store_id: string;
   branch: string;
   sales: number;
+  cost: number;
+  tax: number;
   profit: number;
+}
+
+/**
+ * What a period's takings were actually made of. `cost_price + tax +
+ * gross_profit === selling_price` exactly, which is what makes it drawable as
+ * one ring — cost and profit are parts of the selling price, not peers of it.
+ */
+export interface MarginSummary {
+  period: AnalyticsPeriod;
+  /** First day of the period, YYYY-MM-DD in `timezone`. */
+  period_start: string;
+  timezone: string;
+  selling_price: number;
+  cost_price: number;
+  tax: number;
+  gross_profit: number;
+  /** Gross profit as a share of the selling price; null when nothing sold. */
+  margin_percent: number | null;
+  units: number;
+  transactions: number;
 }
 
 export interface SalesSummary {
