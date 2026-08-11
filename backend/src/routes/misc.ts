@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireCapability, requireRole } from '../middleware/auth.js';
+import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { num, serializeProduct, serializeUser } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { revokeAllSessions } from './devices.js';
@@ -38,7 +38,7 @@ const userSchema = z.object({
 
 usersRouter.post(
   '/',
-  requireRole('ORG_ADMIN'),
+  requireCapability('users.write'),
   asyncHandler(async (req, res) => {
     const body = userSchema.parse(req.body);
     const user = await prisma.user.create({
@@ -58,7 +58,7 @@ usersRouter.post(
 
 usersRouter.put(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('users.write'),
   asyncHandler(async (req, res) => {
     const body = userSchema.partial().parse(req.body);
     const organizationId = currentUser(req).organizationId;
@@ -97,7 +97,7 @@ usersRouter.put(
 
 usersRouter.delete(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('users.write'),
   asyncHandler(async (req, res) => {
     const me = currentUser(req);
     if (me.id === req.params.id) throw badRequest('You cannot deactivate your own account.');

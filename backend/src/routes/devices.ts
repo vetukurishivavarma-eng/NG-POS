@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { authenticate, currentUser, requireRole } from '../middleware/auth.js';
+import { authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeDevice } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 
@@ -33,7 +33,7 @@ const listQuery = z.object({
  */
 devicesRouter.get(
   '/',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('users.view'),
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
     const { user_id, include_revoked } = listQuery.parse(req.query);
@@ -84,7 +84,7 @@ const revokeBody = z.object({ reason: z.string().max(200).optional() });
  */
 devicesRouter.delete(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('devices.remove'),
   asyncHandler(async (req, res) => {
     const admin = currentUser(req);
     const { reason } = revokeBody.parse(req.body ?? {});

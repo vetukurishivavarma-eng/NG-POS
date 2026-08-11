@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { authenticate, currentUser, requireRole } from '../middleware/auth.js';
+import { authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { num } from '../lib/serialize.js';
 
 export const organizationsRouter = Router();
@@ -58,7 +58,7 @@ const updateSchema = z.object({
 
 organizationsRouter.put(
   '/current',
-  requireRole('ORG_ADMIN'),
+  requireCapability('settings.write'),
   asyncHandler(async (req, res) => {
     const body = updateSchema.parse(req.body);
 

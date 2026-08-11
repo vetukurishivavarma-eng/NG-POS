@@ -31,6 +31,9 @@ export const CAPABILITIES = [
   'users.write',
   'settings.write',
   'refunds.issue',
+  'transactions.void',
+  'reports.rebuild',
+  'devices.remove',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -51,17 +54,6 @@ const ROLE_CAPABILITIES: Record<string, Capability[]> = {
   CASHIER: [],
 };
 
-/**
- * Running the organisation is not the same as running its stock.
- *
- * Warehouse staff get everything operational, but not the three that would let
- * them reshape the organisation itself — opening or closing shops, creating
- * accounts and handing out roles, or changing organisation settings. Those stay
- * with the administrator, so the account that grants this privilege cannot have
- * it taken away by the people it was granted to.
- */
-const NOT_DELEGATED: Capability[] = ['stores.write', 'users.write', 'settings.write'];
-
 /** The permanent half of what shop staff were given. */
 const SHOP_STAFF_GRANT: Capability[] = ['pricing.write', 'transfers.create'];
 
@@ -79,14 +71,14 @@ export interface CapabilityInput {
 export function capabilitiesFor(input: CapabilityInput): Capability[] {
   if (input.role === 'ORG_ADMIN') return [...CAPABILITIES];
 
-  const granted = new Set<Capability>(ROLE_CAPABILITIES[input.role] ?? []);
+  // Warehouse staff are administrators in everything but the name on the
+  // account: every capability, including managing accounts, opening and closing
+  // shops, and organisation settings. Asked for explicitly, and it cuts both
+  // ways — anyone here can change the owner's own password or deactivate their
+  // account, so this list is granted by assignment and taken away the same way.
+  if (input.warehouseStaff) return [...CAPABILITIES];
 
-  if (input.warehouseStaff) {
-    for (const capability of CAPABILITIES) {
-      if (!NOT_DELEGATED.includes(capability)) granted.add(capability);
-    }
-    return CAPABILITIES.filter((c) => granted.has(c));
-  }
+  const granted = new Set<Capability>(ROLE_CAPABILITIES[input.role] ?? []);
 
   for (const capability of SHOP_STAFF_GRANT) granted.add(capability);
   if (input.productEntryOpen) {

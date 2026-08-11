@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireCapability, requireRole } from '../middleware/auth.js';
+import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeTransaction } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { createSale } from '../services/sales.js';
@@ -263,7 +263,7 @@ transactionsRouter.post(
 
 transactionsRouter.post(
   '/:id/void',
-  requireRole('ORG_ADMIN'),
+  requireCapability('transactions.void'),
   asyncHandler(async (req, res) => {
     const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body);
     const user = currentUser(req);
@@ -358,7 +358,7 @@ transactionsRouter.get(
  */
 transactionsRouter.post(
   '/reports/daily/rebuild',
-  requireRole('ORG_ADMIN'),
+  requireCapability('reports.rebuild'),
   asyncHandler(async (req, res) => {
     const body = z
       .object({

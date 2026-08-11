@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
+import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeStore } from '../lib/serialize.js';
 import { conflict, notFound } from '../lib/errors.js';
 
@@ -101,7 +101,7 @@ async function uniqueCode(organizationId: string, name: string): Promise<string>
 
 storesRouter.post(
   '/',
-  requireRole('ORG_ADMIN'),
+  requireCapability('stores.write'),
   asyncHandler(async (req, res) => {
     const body = storeSchema.parse(req.body);
     const organizationId = currentUser(req).organizationId;
@@ -138,7 +138,7 @@ storesRouter.post(
 
 storesRouter.put(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('stores.write'),
   asyncHandler(async (req, res) => {
     const body = storeSchema.partial().parse(req.body);
     const user = currentUser(req);
@@ -185,7 +185,7 @@ storesRouter.put(
  */
 storesRouter.delete(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('stores.write'),
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
     const existing = await prisma.store.findFirst({

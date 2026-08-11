@@ -96,7 +96,10 @@ export type Permission =
   | 'users.view'
   | 'users.write'
   | 'settings.write'
-  | 'refunds.issue';
+  | 'refunds.issue'
+  | 'transactions.void'
+  | 'reports.rebuild'
+  | 'devices.remove';
 
 const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'products.write': ['admin', 'manager'],
@@ -117,6 +120,9 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'users.write': ['admin'],
   'settings.write': ['admin'],
   'refunds.issue': ['admin', 'manager'],
+  'transactions.void': ['admin'],
+  'reports.rebuild': ['admin'],
+  'devices.remove': ['admin'],
 };
 
 /**
