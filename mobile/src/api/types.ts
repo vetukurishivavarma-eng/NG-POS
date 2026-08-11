@@ -312,13 +312,33 @@ export interface ProductDraft {
  * `purchase` for stock received, `adjustment` for a correction after a count.
  * The transfer types are written by the transfers endpoint, never posted directly.
  */
-export type MovementType = 'purchase' | 'adjustment' | 'transfer_in' | 'transfer_out';
+/**
+ * Every kind of movement the server can record — including the two it writes
+ * itself on every sale and every refund. Leaving those out is what made the
+ * movements screen crash: they are by far the most common rows in the table.
+ */
+export type MovementType =
+  | 'purchase'
+  | 'sale'
+  | 'adjustment'
+  | 'transfer_in'
+  | 'transfer_out'
+  | 'refund';
+
+/**
+ * The subset a client may post. `sale` and `refund` are consequences of a
+ * transaction and are refused by `POST /inventory/movements`, so they must not
+ * be offerable on the stock-adjustment form.
+ */
+export type PostableMovementType = 'purchase' | 'adjustment' | 'transfer_in' | 'transfer_out';
 
 export const MOVEMENT_LABELS: Record<MovementType, string> = {
   purchase: 'Stock received',
+  sale: 'Sale',
   adjustment: 'Adjustment',
   transfer_in: 'Transfer in',
   transfer_out: 'Transfer out',
+  refund: 'Refund',
 };
 
 /**
@@ -328,7 +348,7 @@ export const MOVEMENT_LABELS: Record<MovementType, string> = {
 export interface StockMovementDraft {
   store_id: string;
   product_id: string;
-  type: MovementType;
+  type: PostableMovementType;
   quantity: number;
   note?: string;
   reorder_level?: number;

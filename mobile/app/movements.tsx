@@ -53,10 +53,13 @@ export default function MovementsScreen() {
           onChange={setFilter}
           options={[
             { value: 'all', label: 'All' },
+            // Sales are the bulk of the audit trail, so they lead the filters.
+            { value: 'sale', label: MOVEMENT_LABELS.sale },
             { value: 'purchase', label: MOVEMENT_LABELS.purchase },
             { value: 'adjustment', label: MOVEMENT_LABELS.adjustment },
             { value: 'transfer_in', label: MOVEMENT_LABELS.transfer_in },
             { value: 'transfer_out', label: MOVEMENT_LABELS.transfer_out },
+            { value: 'refund', label: MOVEMENT_LABELS.refund },
           ]}
         />
       </View>
@@ -126,7 +129,7 @@ export default function MovementsScreen() {
 
 function MovementRow({ movement }: { movement: StockMovement }) {
   const up = movement.quantity >= 0;
-  const look = LOOK[movement.type];
+  const look = lookFor(movement.type);
 
   return (
     <View style={styles.row}>
@@ -174,12 +177,28 @@ function MovementRow({ movement }: { movement: StockMovement }) {
 }
 
 /** Warm tones only — the `info` blue would fight the bone-and-green palette. */
-const LOOK: Record<MovementType, { icon: IconName; tone: 'success' | 'warning' | 'accent' | 'neutral' }> = {
+type Look = { icon: IconName; tone: 'success' | 'warning' | 'accent' | 'neutral' };
+
+const LOOK: Record<MovementType, Look> = {
   purchase: { icon: 'download', tone: 'success' },
+  sale: { icon: 'shopping-bag', tone: 'neutral' },
   adjustment: { icon: 'edit-3', tone: 'warning' },
   transfer_in: { icon: 'arrow-down-left', tone: 'accent' },
   transfer_out: { icon: 'arrow-up-right', tone: 'neutral' },
+  refund: { icon: 'corner-up-left', tone: 'warning' },
 };
+
+/**
+ * The server's movement enum can gain a value without the app being rebuilt,
+ * and an unknown key here used to read `undefined.icon` — which in a release
+ * build closes the app rather than showing an error. A row we cannot name is
+ * still a row worth showing.
+ */
+const UNKNOWN_LOOK: Look = { icon: 'activity', tone: 'neutral' };
+
+function lookFor(type: MovementType): Look {
+  return LOOK[type] ?? UNKNOWN_LOOK;
+}
 
 /* ------------------------------------------------------------------ grouping */
 
