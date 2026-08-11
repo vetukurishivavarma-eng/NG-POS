@@ -309,6 +309,8 @@ transfersRouter.get(
         to_store_id: t.toStoreId,
         to_store: t.toStore?.name ?? null,
         status: t.status,
+        // Printed on the transfer note, so it has to come back out of the API.
+        notes: t.notes,
         items: t.items.map((i) => ({
           product_id: i.productId,
           product_name: i.product.name,
