@@ -4,6 +4,7 @@ import type {
   AnalyticsPeriod,
   BulkUploadRequest,
   BulkUploadResult,
+  CategorySummary,
   DailyReport,
   DashboardAnalytics,
   InventoryRow,
@@ -176,11 +177,16 @@ export const products = {
     search?: string;
     brand?: string;
     category?: string;
+    /** Products not yet filed under any head. */
+    uncategorized?: boolean;
   }) => api.get<Product[]>('/products', { params }).then((r) => r.data),
   get: (id: string) => api.get<Product>(`/products/${id}`).then((r) => r.data),
   withStock: (storeId: string) =>
     api.get<ProductWithStock[]>(`/products/with-stock/${storeId}`).then((r) => r.data),
   brands: () => api.get<string[]>('/products/brands').then((r) => r.data),
+  /** Every head with its product count, plus how many are still unfiled. */
+  categories: () =>
+    api.get<CategorySummary>('/products/categories').then((r) => r.data),
   create: (body: ProductDraft) => api.post<Product>('/products', body).then((r) => r.data),
   update: (id: string, body: Partial<ProductDraft>) =>
     api.put<Product>(`/products/${id}`, body).then((r) => r.data),

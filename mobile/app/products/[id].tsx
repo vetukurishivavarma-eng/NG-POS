@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { products as productsApi } from '../../src/api/endpoints';
+import { PRODUCT_CATEGORIES, normaliseCategory } from '../../src/api/categories';
 import { errorMessage } from '../../src/api/client';
 import { useCan } from '../../src/store/auth';
 import { useScanCapture } from '../../src/store/scanCapture';
@@ -68,7 +69,10 @@ export default function ProductFormScreen() {
     setSku(loaded.sku);
     setBarcode(loaded.barcode ?? '');
     setBrand(loaded.brand ?? '');
-    setCategory(loaded.category ?? '');
+    // Legacy spellings ("Fertilizers", "Tools") open with the head they belong
+    // to already selected; anything the list doesn't recognise opens as Not set,
+    // waiting to be filed, because the server would refuse to save it back.
+    setCategory(normaliseCategory(loaded.category) ?? '');
     setDescription(loaded.description ?? '');
     setCost(moneyToInput(loaded.cost_price));
     setSelling(moneyToInput(loaded.selling_price));
@@ -212,7 +216,10 @@ export default function ProductFormScreen() {
             <RowDivider />
             <StatRow label="Brand" value={loaded.brand || '—'} />
             <RowDivider />
-            <StatRow label="Category" value={loaded.category || '—'} />
+            <StatRow
+              label="Category"
+              value={normaliseCategory(loaded.category) ?? loaded.category ?? '—'}
+            />
             <RowDivider />
             <StatRow label="Unit" value={loaded.unit || '—'} />
             <RowDivider />
@@ -317,12 +324,17 @@ export default function ProductFormScreen() {
                 placeholder="e.g. Coopers"
                 autoCapitalize="words"
               />
-              <Field
+              {/* A fixed list, not a text box: the whole point is that every
+                  product ends up under one of the shop's heads. */}
+              <Select
                 label="Category"
                 value={category}
-                onChangeText={setCategory}
-                placeholder="e.g. Veterinary"
-                autoCapitalize="words"
+                onChange={setCategory}
+                options={[
+                  { value: '', label: 'Not set' },
+                  ...PRODUCT_CATEGORIES.map((c) => ({ value: c as string, label: c })),
+                ]}
+                hint="Used by the catalogue filter and by stock reports."
               />
               <Field
                 label="Unit"
