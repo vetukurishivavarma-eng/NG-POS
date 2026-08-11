@@ -6,9 +6,25 @@ import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
 import { serializeProduct, serializeProductWithStock } from '../lib/serialize.js';
 import { notFound } from '../lib/errors.js';
+import {
+  CATEGORY_LIST_HINT,
+  PRODUCT_CATEGORIES,
+  normaliseCategory,
+} from '../lib/categories.js';
 
 export const productsRouter = Router();
 productsRouter.use(authenticate);
+
+/**
+ * Accepts any spelling of a known head and stores the canonical one; refuses a
+ * value that isn't one of them, so the taxonomy can't be widened by a typo.
+ */
+const categoryField = z
+  .string()
+  .nullable()
+  .optional()
+  .transform((value) => normaliseCategory(value))
+  .refine((value) => value !== undefined, { message: `Unknown category. ${CATEGORY_LIST_HINT}` });
 
 const productSchema = z.object({
   name: z.string().min(1),
@@ -16,7 +32,7 @@ const productSchema = z.object({
   sku: z.string().min(1),
   barcode: z.string().nullable().optional(),
   brand: z.string().nullable().optional(),
-  category: z.string().nullable().optional(),
+  category: categoryField,
   cost_price: z.number().min(0).default(0),
   selling_price: z.number().min(0).default(0),
   tax_type: z.enum(['exempt', 'vat']).default('exempt'),
@@ -29,9 +45,36 @@ const listQuery = z.object({
   search: z.string().optional(),
   brand: z.string().optional(),
   category: z.string().optional(),
+  /**
+   * The "still needs filing" view — products no one has put under a head yet.
+   *
+   * Not `z.coerce.boolean()`: that is `Boolean("false")`, which is `true`, so
+   * `?uncategorized=false` would switch the filter *on*.
+   */
+  uncategorized: z
+    .enum(['true', 'false', '1', '0'])
+    .optional()
+    .transform((value) => value === 'true' || value === '1'),
   limit: z.coerce.number().min(1).max(1000).default(200),
   offset: z.coerce.number().min(0).default(0),
 });
+
+/**
+ * Which stored spellings belong to a head, read from the catalogue itself.
+ *
+ * Filtering can't just compare against the canonical string: a product saved
+ * before the list existed still reads "Fertilizers", and `/categories` counts
+ * it under **Fertilizer**. Matching the raw values the same way the counter
+ * does is what keeps the chip's number and the list it opens in agreement.
+ */
+async function storedCategories(organizationId: string) {
+  const rows = await prisma.product.findMany({
+    where: { organizationId },
+    distinct: ['category'],
+    select: { category: true },
+  });
+  return rows.map((r) => r.category).filter((c): c is string => Boolean(c));
+}
 
 productsRouter.get(
   '/',
@@ -39,11 +82,32 @@ productsRouter.get(
     const q = listQuery.parse(req.query);
     const organizationId = currentUser(req).organizationId;
 
+    // One extra query, and only when a category filter is actually on.
+    const stored = q.category || q.uncategorized ? await storedCategories(organizationId) : [];
+    const head = q.category ? normaliseCategory(q.category) : null;
+
     const products = await prisma.product.findMany({
       where: {
         organizationId,
         ...(q.brand ? { brand: q.brand } : {}),
-        ...(q.category ? { category: q.category } : {}),
+        ...(q.category
+          ? { category: { in: stored.filter((c) => normaliseCategory(c) === head) } }
+          : {}),
+        // "Unfiled" means the same here as it does in the counts: never set, or
+        // set to something the list no longer recognises.
+        ...(q.uncategorized
+          ? {
+              AND: [
+                {
+                  OR: [
+                    { category: null },
+                    { category: '' },
+                    { category: { in: stored.filter((c) => !normaliseCategory(c)) } },
+                  ],
+                },
+              ],
+            }
+          : {}),
         ...(q.search
           ? {
               OR: [
@@ -74,6 +138,45 @@ productsRouter.get(
       orderBy: { brand: 'asc' },
     });
     res.json(rows.map((r) => r.brand).filter((b): b is string => Boolean(b)));
+  })
+);
+
+/**
+ * The category picker and filter chips.
+ *
+ * Every head is returned whether or not anything is filed under it — the list
+ * is fixed, so a category with no products is information ("nothing is filed
+ * under Equipment yet"), not an empty result to hide. `uncategorized` is what
+ * tells the shop how much of the catalogue still needs doing.
+ */
+productsRouter.get(
+  '/categories',
+  asyncHandler(async (req, res) => {
+    const organizationId = currentUser(req).organizationId;
+
+    const grouped = await prisma.product.groupBy({
+      by: ['category'],
+      where: { organizationId, isActive: true },
+      _count: { _all: true },
+    });
+
+    const counts = new Map<string, number>();
+    let uncategorized = 0;
+    for (const row of grouped) {
+      const canonical = normaliseCategory(row.category);
+      if (!canonical) {
+        // Both "never set" and "set to something we no longer recognise" need
+        // filing, so they count as the same job.
+        uncategorized += row._count._all;
+        continue;
+      }
+      counts.set(canonical, (counts.get(canonical) ?? 0) + row._count._all);
+    }
+
+    res.json({
+      categories: PRODUCT_CATEGORIES.map((name) => ({ name, count: counts.get(name) ?? 0 })),
+      uncategorized,
+    });
   })
 );
 

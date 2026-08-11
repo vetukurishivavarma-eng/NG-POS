@@ -10,6 +10,7 @@ import { assertStoreAccess, authenticate, currentUser, requireRole } from '../mi
 import { num } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { parseCsvObjects } from '../lib/csv.js';
+import { CATEGORY_LIST_HINT, normaliseCategory } from '../lib/categories.js';
 
 export const inventoryRouter = Router();
 inventoryRouter.use(authenticate);
@@ -187,11 +188,12 @@ const HEADER_ALIASES: Record<string, string> = {
 
 const TEMPLATE_CSV = [
   TEMPLATE_COLUMNS.join(','),
-  'AGV-0001,Dairy Meal 50kg,6009123456789,Novatek,Feed,bag,320.00,395.00,exempt,40,10',
-  'AGV-0002,Layers Mash 50kg,6009123456796,Novatek,Feed,bag,305.50,375.00,exempt,25,10',
+  // The category column teaches the fixed list — see lib/categories.ts.
+  'AGV-0001,Dairy Meal 50kg,6009123456789,Novatek,Animal Feed,bag,320.00,395.00,exempt,40,10',
+  'AGV-0002,Layers Mash 50kg,6009123456796,Novatek,Animal Feed,bag,305.50,375.00,exempt,25,10',
   'AGV-0003,Newcastle Vaccine 100ml,,Kepro,Veterinary,bottle,48.00,72.50,vat,12,6',
   'AGV-0004,Knapsack Sprayer 16L,6009123456819,Jembe,Equipment,piece,410.00,540.00,vat,6,2',
-  'AGV-0005,Maize Seed SC627 10kg,,Seedco,Seed,bag,255.00,320.00,exempt,18,5',
+  'AGV-0005,Maize Seed SC627 10kg,,Seedco,Maize Seed,bag,255.00,320.00,exempt,18,5',
 ].join('\r\n');
 
 const bulkUploadSchema = z
@@ -340,13 +342,21 @@ inventoryRouter.post(
         else fail(`Tax type must be "vat" or "exempt", not "${record.tax_type}".`);
       }
 
+      // Same fixed list the app's picker offers. A spreadsheet is exactly where
+      // a stray head like "Chemicals" would get in, so an unknown value fails
+      // the row rather than being filed under "Other".
+      const category = normaliseCategory(record.category);
+      if (category === undefined) {
+        fail(`Unknown category "${(record.category ?? '').trim()}". ${CATEGORY_LIST_HINT}`);
+      }
+
       parsedRows.push({
         line,
         sku,
         name: (record.name ?? '').trim(),
         barcode: (record.barcode ?? '').trim() || null,
         brand: (record.brand ?? '').trim() || null,
-        category: (record.category ?? '').trim() || null,
+        category: category ?? null,
         unit: (record.unit ?? '').trim() || null,
         costPrice: numeric(record.cost_price, 'Cost price'),
         sellingPrice: numeric(record.selling_price, 'Selling price'),

@@ -1,11 +1,11 @@
 sku,name,barcode,brand,category,unit,cost_price,selling_price,tax_type,quantity,reorder_level
-AGV-0001,Dairy Meal 50kg,6009123456789,Novatek,Feed,bag,320.00,395.00,exempt,40,10
-AGV-0002,Layers Mash 50kg,6009123456796,Novatek,Feed,bag,305.50,375.00,exempt,25,10
+AGV-0001,Dairy Meal 50kg,6009123456789,Novatek,Animal Feed,bag,320.00,395.00,exempt,40,10
+AGV-0002,Layers Mash 50kg,6009123456796,Novatek,Animal Feed,bag,305.50,375.00,exempt,25,10
 AGV-0003,Newcastle Vaccine 100ml,,Kepro,Veterinary,bottle,48.00,72.50,vat,12,6
 AGV-0004,Knapsack Sprayer 16L,6009123456819,Jembe,Equipment,piece,410.00,540.00,vat,6,2
-AGV-0005,Maize Seed SC627 10kg,,Seedco,Seed,bag,255.00,320.00,exempt,18,5
-AGV-0006,Broiler Starter 50kg,6009123456826,Tiger,Feed,bag,340.00,415.00,exempt,30,8
+AGV-0005,Maize Seed SC627 10kg,,Seedco,Maize Seed,bag,255.00,320.00,exempt,18,5
+AGV-0006,Broiler Starter 50kg,6009123456826,Tiger,Animal Feed,bag,340.00,415.00,exempt,30,8
 AGV-0007,Dewormer Bolus 12s,,Kepro,Veterinary,packet,62.00,89.00,vat,20,10
-AGV-0008,Compound D Fertiliser 50kg,6009123456833,Nitrogen Chemicals,Fertiliser,bag,480.00,585.00,exempt,50,12
-AGV-0009,Glyphosate 1L,,Syngenta,Chemicals,bottle,95.00,135.00,vat,24,10
+AGV-0008,Compound D Fertiliser 50kg,6009123456833,Nitrogen Chemicals,Fertilizer,bag,480.00,585.00,exempt,50,12
+AGV-0009,Glyphosate 1L,,Syngenta,Herbicides,bottle,95.00,135.00,vat,24,10
 AGV-0010,Poultry Drinker 5L,6009123456840,Jembe,Equipment,piece,55.00,85.00,vat,15,5

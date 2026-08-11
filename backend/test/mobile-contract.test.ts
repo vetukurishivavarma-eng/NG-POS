@@ -199,6 +199,66 @@ describe('mobile API contract', () => {
     expect(res.body.every((b: unknown) => typeof b === 'string')).toBe(true);
   });
 
+  it('products.categories returns every head, counted, plus the backlog', async () => {
+    const res = await get('/api/products/categories', world.tokens.admin);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('uncategorized');
+    expect(typeof res.body.uncategorized).toBe('number');
+
+    // The app renders its own copy of this list before the request comes back,
+    // so the two have to stay identical — order included.
+    expect(res.body.categories.map((c: { name: string }) => c.name)).toEqual([
+      'Herbicides',
+      'Pesticides',
+      'Fungicides',
+      'Insecticides',
+      'Fertilizer',
+      'Maize Seed',
+      'Veg Seed',
+      'Other Seed',
+      'Equipment',
+      'Animal Feed',
+      'Veterinary',
+      'Other',
+    ]);
+    expect(res.body.categories.every((c: { count: unknown }) => typeof c.count === 'number')).toBe(
+      true
+    );
+  });
+
+  it('products.list filters by category and by the unfiled backlog', async () => {
+    const sku = `CAT-${Date.now()}`;
+    await post('/api/products', world.tokens.admin, {
+      name: 'Roundup 1L',
+      sku,
+      // Deliberately a legacy spelling: the server stores the canonical head.
+      category: 'herbicide',
+      cost_price: 100,
+      selling_price: 150,
+    });
+
+    const filtered = await get('/api/products?category=Herbicides', world.tokens.admin);
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.find((p: { sku: string }) => p.sku === sku)?.category).toBe('Herbicides');
+
+    const unfiled = await get('/api/products?uncategorized=true', world.tokens.admin);
+    expect(unfiled.status).toBe(200);
+    expect(unfiled.body.every((p: { category: string | null }) => !p.category)).toBe(true);
+  });
+
+  it('products.create rejects a category outside the list', async () => {
+    const res = await post('/api/products', world.tokens.admin, {
+      name: 'Mystery Tonic',
+      sku: `BAD-${Date.now()}`,
+      category: 'Chemicals',
+      cost_price: 10,
+      selling_price: 20,
+    });
+
+    expect(res.status).toBe(422);
+  });
+
   it('products.create accepts the ProductDraft the form builds', async () => {
     const res = await post('/api/products', world.tokens.manager, {
       name: 'Copper Oxychloride',
