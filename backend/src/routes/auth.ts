@@ -7,6 +7,7 @@ import { prisma } from '../prisma.js';
 import { env, passwordResetConfigured } from '../env.js';
 import { asyncHandler } from '../middleware/error.js';
 import { authenticate, currentUser, signToken } from '../middleware/auth.js';
+import { capabilitySummary } from '../lib/capabilities.js';
 import { serializeDevice, serializeUser } from '../lib/serialize.js';
 import { badRequest, conflict, notFound, unauthorized } from '../lib/errors.js';
 import { sendMail } from '../lib/mailer.js';
@@ -83,7 +84,7 @@ authRouter.post(
     res.json({
       access_token: signToken(user.id, user.organizationId, session.id),
       token_type: 'bearer',
-      user: serializeUser(user),
+      user: { ...serializeUser(user), ...(await capabilitySummary(user)) },
       device: serializeDevice(session),
     });
   })
@@ -232,8 +233,8 @@ authRouter.get(
   authenticate,
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
-    res.json(
-      serializeUser({
+    res.json({
+      ...serializeUser({
         id: user.id,
         organizationId: user.organizationId,
         email: user.email,
@@ -241,8 +242,12 @@ authRouter.get(
         role: user.role,
         assignedStores: user.assignedStores,
         isActive: true,
-      })
-    );
+      }),
+      // The app hides what it cannot do from this list rather than deciding for
+      // itself, so the screen and the server can never disagree about who may
+      // add a product.
+      ...(await capabilitySummary(user)),
+    });
   })
 );
 

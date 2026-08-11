@@ -101,6 +101,9 @@ model Organization {
   invoiceLogoBase64 String?  @map("invoice_logo_base64")
   vatRate           Decimal  @default(0.16) @map("vat_rate") @db.Decimal(5, 4)
   currencySymbol    String   @default("K") @map("currency_symbol")
+  /// While this is in the future, shop staff may add products. Entering the
+  /// catalogue is a finite job, so the grant closes on its own. Null = no limit.
+  staffProductAddUntil DateTime? @map("staff_product_add_until")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -235,6 +238,9 @@ model Store {
   phone          String    @default("")
   email          String    @default("")
   isActive       Boolean   @default(true) @map("is_active")
+  /// The warehouse. Anyone explicitly assigned here runs the business rather
+  /// than a till, so they get the whole operational set whatever their role.
+  staffFullAccess Boolean  @default(false) @map("staff_full_access")
   lastSyncAt     DateTime? @map("last_sync_at")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")

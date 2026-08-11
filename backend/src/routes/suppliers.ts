@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
+import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { num } from '../lib/serialize.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 
@@ -82,7 +82,7 @@ suppliersRouter.get(
 
 suppliersRouter.post(
   '/',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('suppliers.write'),
   asyncHandler(async (req, res) => {
     const body = supplierSchema.parse(req.body);
     const organizationId = currentUser(req).organizationId;
@@ -112,7 +112,7 @@ suppliersRouter.post(
 
 suppliersRouter.put(
   '/:id',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('suppliers.write'),
   asyncHandler(async (req, res) => {
     const body = supplierSchema.partial().parse(req.body);
     const organizationId = currentUser(req).organizationId;
@@ -143,7 +143,7 @@ suppliersRouter.put(
 /** Soft delete: past invoices still point at the supplier. */
 suppliersRouter.delete(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('suppliers.delete'),
   asyncHandler(async (req, res) => {
     const organizationId = currentUser(req).organizationId;
     const existing = await prisma.supplier.findFirst({
@@ -403,7 +403,7 @@ supplierInvoicesRouter.get(
  */
 supplierInvoicesRouter.post(
   '/',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('purchases.write'),
   asyncHandler(async (req, res) => {
     const body = invoiceSchema.parse(req.body);
     const user = currentUser(req);
@@ -564,7 +564,7 @@ supplierInvoicesRouter.post(
  */
 supplierInvoicesRouter.post(
   '/:id/payments',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('purchases.write'),
   asyncHandler(async (req, res) => {
     const body = paymentSchema.parse(req.body);
     const user = currentUser(req);
@@ -627,7 +627,7 @@ supplierInvoicesRouter.post(
 /** Only the paperwork fields; the money and the stock are settled events. */
 supplierInvoicesRouter.put(
   '/:id',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('purchases.write'),
   asyncHandler(async (req, res) => {
     const body = z
       .object({
@@ -666,7 +666,7 @@ supplierInvoicesRouter.put(
  */
 supplierInvoicesRouter.delete(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('purchases.delete'),
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
 

@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
+import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeProduct, serializeProductWithStock } from '../lib/serialize.js';
 import { notFound } from '../lib/errors.js';
 import {
@@ -232,7 +232,7 @@ productsRouter.get(
 
 productsRouter.post(
   '/',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('products.write'),
   asyncHandler(async (req, res) => {
     const body = productSchema.parse(req.body);
     const product = await prisma.product.create({
@@ -258,7 +258,7 @@ productsRouter.post(
 
 productsRouter.put(
   '/:id',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('products.write'),
   asyncHandler(async (req, res) => {
     const body = productSchema.partial().parse(req.body);
     const organizationId = currentUser(req).organizationId;
@@ -293,7 +293,7 @@ productsRouter.put(
 /** Soft delete: past receipts still reference the product. */
 productsRouter.delete(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('products.delete'),
   asyncHandler(async (req, res) => {
     const organizationId = currentUser(req).organizationId;
     const existing = await prisma.product.findFirst({
@@ -316,7 +316,7 @@ const importSchema = z.object({
  */
 productsRouter.post(
   '/import',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('products.import'),
   asyncHandler(async (req, res) => {
     const { products } = importSchema.parse(req.body);
     const organizationId = currentUser(req).organizationId;

@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
+import { assertStoreAccess, authenticate, currentUser, requireCapability, requireRole } from '../middleware/auth.js';
 import { serializeTransaction } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { createSale } from '../services/sales.js';
@@ -142,7 +142,7 @@ const refundSchema = z.object({
  */
 transactionsRouter.post(
   '/:id/refund',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('refunds.issue'),
   asyncHandler(async (req, res) => {
     const body = refundSchema.parse(req.body);
     const user = currentUser(req);

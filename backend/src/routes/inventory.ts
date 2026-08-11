@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
+import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { num } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { parseCsvObjects } from '../lib/csv.js';
@@ -65,7 +65,7 @@ const movementSchema = z.object({
  */
 inventoryRouter.post(
   '/movements',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('stock.adjust'),
   asyncHandler(async (req, res) => {
     const body = movementSchema.parse(req.body);
     const user = currentUser(req);
@@ -244,7 +244,7 @@ function parseNumber(raw: string | undefined): number | null {
  */
 inventoryRouter.post(
   '/bulk-upload',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('products.import'),
   asyncHandler(async (req, res) => {
     const body = bulkUploadSchema.parse(req.body);
     const user = currentUser(req);

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '../env.js';
 import { prisma } from '../prisma.js';
 import { forbidden, notFound, unauthorized } from '../lib/errors.js';
+import { capabilityContext, type Capability } from '../lib/capabilities.js';
 
 export interface AuthUser {
   id: string;
@@ -155,6 +156,37 @@ export function requireRole(...roles: AuthUser['role'][]) {
       return next(forbidden('Your role does not allow this action.'));
     }
     next();
+  };
+}
+
+/**
+ * Guards an action by capability rather than by role.
+ *
+ * Role alone can no longer answer "may this person do this": a till operator at
+ * the warehouse may, and a manager's product entry closes on a date. Reads the
+ * rule from the database on each guarded call — only on guarded calls, so an
+ * ordinary read is not taxed with two extra queries.
+ */
+export function requireCapability(capability: Capability) {
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      const user = currentUser(req);
+      const context = await capabilityContext(user);
+
+      if (!context.capabilities.includes(capability)) {
+        // A window that has closed is not the same as never being allowed, and
+        // saying so saves the shop ringing to ask why the button stopped working.
+        if (capability === 'products.write' && !context.productEntryOpen) {
+          throw forbidden(
+            `Adding and editing products was open until ${context.productEntryUntil?.toDateString()}. Ask your administrator to extend it.`
+          );
+        }
+        throw forbidden('Your role does not allow this action.');
+      }
+      next();
+    } catch (err) {
+      next(err);
+    }
   };
 }
 

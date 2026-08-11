@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireRole } from '../middleware/auth.js';
+import { assertStoreAccess, authenticate, currentUser, requireCapability, requireRole } from '../middleware/auth.js';
 import { num, serializeProduct, serializeUser } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { revokeAllSessions } from './devices.js';
@@ -17,7 +17,7 @@ usersRouter.use(authenticate);
 
 usersRouter.get(
   '/',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('users.view'),
   asyncHandler(async (req, res) => {
     const users = await prisma.user.findMany({
       where: { organizationId: currentUser(req).organizationId },
@@ -147,7 +147,7 @@ storePricingRouter.get(
 
 storePricingRouter.post(
   '/',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('pricing.write'),
   asyncHandler(async (req, res) => {
     const body = z
       .object({
@@ -180,7 +180,7 @@ storePricingRouter.post(
 
 storePricingRouter.delete(
   '/:id',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('pricing.write'),
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
 
@@ -232,7 +232,7 @@ warehousesRouter.get(
 
 warehousesRouter.post(
   '/',
-  requireRole('ORG_ADMIN'),
+  requireCapability('warehouses.write'),
   asyncHandler(async (req, res) => {
     const body = z
       .object({ name: z.string().min(1), code: z.string().min(1) })
@@ -271,7 +271,7 @@ warehousesRouter.get(
 
 warehousesRouter.delete(
   '/:id',
-  requireRole('ORG_ADMIN'),
+  requireCapability('warehouses.write'),
   asyncHandler(async (req, res) => {
     await prisma.warehouse.update({
       where: { id: req.params.id as string },
@@ -338,7 +338,7 @@ const transferSchema = z.object({
  */
 transfersRouter.post(
   '/',
-  requireRole('ORG_ADMIN', 'STORE_MANAGER'),
+  requireCapability('transfers.create'),
   asyncHandler(async (req, res) => {
     const body = transferSchema.parse(req.body);
     const user = currentUser(req);
