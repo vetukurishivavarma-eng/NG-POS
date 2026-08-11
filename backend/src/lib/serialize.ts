@@ -27,6 +27,7 @@ type StoreRow = {
   phone: string;
   email: string;
   isActive: boolean;
+  staffFullAccess: boolean;
   lastSyncAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -49,6 +50,10 @@ export function serializeStore(s: StoreRow) {
     phone: s.phone,
     email: s.email,
     is_active: s.isActive,
+    // Which shop is the warehouse. Whoever is assigned here gets every
+    // administrator capability, so it needs to be visible rather than a fact
+    // buried in a migration.
+    staff_full_access: s.staffFullAccess,
     last_sync_at: s.lastSyncAt,
     created_at: s.createdAt,
     updated_at: s.updatedAt,

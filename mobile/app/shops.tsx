@@ -169,6 +169,9 @@ function ShopCard({
           <Badge label={store.code} tone={store.is_active ? 'accent' : 'neutral'} />
           {!store.is_active ? <Badge label="CLOSED" tone="danger" /> : null}
           {current ? <Badge label="SELLING HERE" tone="success" dot /> : null}
+          {/* Anyone assigned here gets every administrator capability, which is
+              too consequential to be visible only in the database. */}
+          {store.staff_full_access ? <Badge label="WAREHOUSE" tone="accent" dot /> : null}
         </View>
       </View>
 

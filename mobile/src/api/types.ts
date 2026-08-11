@@ -50,6 +50,8 @@ export interface Store {
   phone: string;
   email: string;
   is_active: boolean;
+  /** The warehouse: everyone assigned here gets every administrator capability. */
+  staff_full_access?: boolean;
   last_sync_at: string | null;
 }
 
