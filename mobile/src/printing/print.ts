@@ -4,6 +4,12 @@ import { organizations } from '../api/endpoints';
 import { formatKwacha } from '../theme';
 import { buildDayReport, buildReceipt, type DayReportInput } from './receipt';
 import { printBlockedReason, sendToPrinter, usePrinter } from './printer';
+import { shareHtmlAsPdf } from './pdf';
+import {
+  buildTransferNote,
+  transferNoteHtml,
+  type TransferNoteData,
+} from './transferNote';
 import type { Store, Transaction } from '../api/types';
 
 /**
@@ -58,6 +64,75 @@ export async function printTransaction(tx: Transaction, store: Store): Promise<v
     );
   } catch (err) {
     Alert.alert('Print failed', err instanceof Error ? err.message : 'The printer did not respond.');
+  }
+}
+
+/* ---------------------------------------------------------- transfer notes */
+
+/**
+ * Both ways of printing a transfer, offered together.
+ *
+ * The Bluetooth option is shown even when it can't run, because the reason it
+ * can't (Bluetooth off, no printer paired, Expo Go) is worth telling someone
+ * who is standing at a till expecting paper — quietly hiding the button would
+ * leave them with no idea what to fix.
+ */
+export function offerTransferPrint(data: TransferNoteData) {
+  Alert.alert(
+    `Transfer ${data.reference}`,
+    'Print the transfer note for the driver and the receiving shop.',
+    [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Save as PDF', onPress: () => void shareTransferPdf(data) },
+      { text: 'Print on Bluetooth', onPress: () => void printTransferNote(data) },
+    ]
+  );
+}
+
+/** Thermal roll, over the till's paired Bluetooth printer. */
+export async function printTransferNote(data: TransferNoteData): Promise<void> {
+  const blocked = printBlockedReason();
+  if (blocked) {
+    Alert.alert(
+      "Can't print",
+      `${blocked}\n\nSet up a printer under More → Receipt Printer, or save the note as a PDF instead.`
+    );
+    return;
+  }
+
+  const config = usePrinter.getState().config;
+  if (!config) return; // Unreachable: printBlockedReason() already covers it.
+
+  try {
+    await sendToPrinter(
+      buildTransferNote(data, {
+        organizationName: await organizationName(data.from_store ?? 'NG POS'),
+        width: config.width,
+      }),
+      config.address
+    );
+  } catch (err) {
+    Alert.alert('Print failed', err instanceof Error ? err.message : 'The printer did not respond.');
+  }
+}
+
+/** A4 PDF, out through the share sheet — WhatsApp, email, Drive, or a real printer. */
+export async function shareTransferPdf(data: TransferNoteData): Promise<void> {
+  try {
+    const html = transferNoteHtml(data, {
+      organizationName: await organizationName(data.from_store ?? 'NG POS'),
+    });
+    const { uri, shared } = await shareHtmlAsPdf(
+      html,
+      `Transfer-${data.reference}`,
+      `Transfer ${data.reference}`
+    );
+    if (!shared) Alert.alert('PDF saved', `The transfer note was saved to ${uri}`);
+  } catch (err) {
+    Alert.alert(
+      "Couldn't make the PDF",
+      err instanceof Error ? err.message : 'The transfer note could not be rendered.'
+    );
   }
 }
 

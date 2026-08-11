@@ -14,6 +14,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { stores as storesApi, transfers as transfersApi } from '../../src/api/endpoints';
 import { errorMessage } from '../../src/api/client';
+import { printTransferNote, shareTransferPdf } from '../../src/printing/print';
+import type { TransferNoteData } from '../../src/printing/transferNote';
 import { filterCatalogue, useCatalogue } from '../../src/hooks/useCatalogue';
 import { useAuth, useCan, roleLevel } from '../../src/store/auth';
 import { useStoreSelection } from '../../src/store/storeSelection';
@@ -169,12 +171,37 @@ export default function NewTransferScreen() {
       // Stock moved at both ends, so neither store's catalogue is current.
       void queryClient.invalidateQueries({ queryKey: ['catalogue'] });
 
+      // The POST answers with the reference only, so the note is assembled from
+      // what this screen already knows. `created_at` is the device clock rather
+      // than the server's — a reprint from the history list carries the exact
+      // server time, and the two are seconds apart.
+      const note: TransferNoteData = {
+        reference: result.reference,
+        from_store: fromStore.name,
+        to_store: toStore.name,
+        status: result.status,
+        created_at: new Date().toISOString(),
+        notes: notes.trim() || undefined,
+        issued_by: user?.full_name ?? null,
+        items: lines.map((l) => ({
+          product_id: l.product_id,
+          product_name: l.name,
+          sku: l.sku,
+          quantity: parseQuantity(l.quantity) ?? 0,
+        })),
+      };
+
       router.back();
       Alert.alert(
         'Transfer sent',
         `${result.reference}\n\n${lines.length} product${lines.length === 1 ? '' : 's'} · ${totalUnits} unit${
           totalUnits === 1 ? '' : 's'
-        } moved from ${fromStore.name} to ${toStore.name}.`
+        } moved from ${fromStore.name} to ${toStore.name}.`,
+        [
+          { text: 'Done', style: 'cancel' },
+          { text: 'Save as PDF', onPress: () => void shareTransferPdf(note) },
+          { text: 'Print', onPress: () => void printTransferNote(note) },
+        ]
       );
     } catch (err) {
       Alert.alert('Transfer failed', errorMessage(err));

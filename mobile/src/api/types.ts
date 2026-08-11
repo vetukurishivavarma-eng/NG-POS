@@ -272,6 +272,12 @@ export interface DashboardAnalytics {
 /* ------------------------------------------------------------------ products */
 
 /** What POST/PUT `/products` accepts. `id` and timestamps are server-owned. */
+/** `GET /products/categories` — the fixed heads, counted, plus the backlog. */
+export interface CategorySummary {
+  categories: { name: string; count: number }[];
+  uncategorized: number;
+}
+
 export interface ProductDraft {
   name: string;
   description?: string | null;
@@ -390,6 +396,8 @@ export interface Transfer {
   to_store_id: string;
   to_store: string | null;
   status: string;
+  /** Free text typed when the transfer was made; printed on the transfer note. */
+  notes?: string;
   items: TransferItem[];
   created_at: string;
 }

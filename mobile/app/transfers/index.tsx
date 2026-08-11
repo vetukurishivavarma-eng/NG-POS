@@ -5,10 +5,12 @@ import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 
 import { transfers as transfersApi } from '../../src/api/endpoints';
+import { printTransferNote, shareTransferPdf } from '../../src/printing/print';
 import { useCan } from '../../src/store/auth';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../../src/theme';
 import { Badge, Button, EmptyState, Icon, Loading } from '../../src/ui/components';
+import type { IconName } from '../../src/ui/components';
 import type { Transfer } from '../../src/api/types';
 
 export default function TransfersScreen() {
@@ -145,6 +147,41 @@ function TransferCard({ transfer }: { transfer: Transfer }) {
           ))}
         </View>
       ) : null}
+
+      {/* Both ways out, side by side: paper for the driver, a PDF for the office. */}
+      <View style={styles.actions}>
+        <PrintChip
+          icon="file-text"
+          label="PDF"
+          onPress={() => void shareTransferPdf(transfer)}
+        />
+        <PrintChip
+          icon="printer"
+          label="Print"
+          onPress={() => void printTransferNote(transfer)}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
+function PrintChip({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={6}
+      style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
+    >
+      <Icon name={icon} size={15} color={colors.primary} />
+      <Text style={styles.chipLabel}>{label}</Text>
     </Pressable>
   );
 }
@@ -216,6 +253,22 @@ const styles = StyleSheet.create({
   meta: { flex: 1, fontFamily: font.regular, fontSize: 12, color: colors.textMuted },
   disclosure: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   disclosureText: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted },
+
+  actions: { flexDirection: 'row', gap: spacing.sm },
+  chip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.primarySoft,
+  },
+  chipPressed: { opacity: 0.7 },
+  chipLabel: { fontFamily: font.semibold, fontSize: 13, color: colors.primary },
 
   lines: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, gap: spacing.sm },
   line: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
