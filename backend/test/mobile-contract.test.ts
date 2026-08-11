@@ -680,7 +680,7 @@ describe('mobile API contract', () => {
     expect(profitProduct.status).toBe(200);
     expectShape(
       profitProduct.body[0],
-      ['product_id', 'product_name', 'brand', 'quantity', 'sales', 'profit'],
+      ['product_id', 'product_name', 'brand', 'quantity', 'sales', 'cost', 'tax', 'profit'],
       'ProfitPerProductRow'
     );
 
@@ -694,7 +694,11 @@ describe('mobile API contract', () => {
       period: 'monthly',
     });
     expect(profitBranch.status).toBe(200);
-    expectShape(profitBranch.body[0], ['store_id', 'branch', 'sales', 'profit'], 'ProfitPerBranchRow');
+    expectShape(
+      profitBranch.body[0],
+      ['store_id', 'branch', 'sales', 'cost', 'tax', 'profit'],
+      'ProfitPerBranchRow'
+    );
 
     const summary = await get('/api/analytics/sales-summary', world.tokens.manager, {
       store_id: world.storeId,
@@ -712,6 +716,50 @@ describe('mobile API contract', () => {
     // The analytics screen's "All stores" scope omits the param entirely.
     const res = await get('/api/analytics/sales-summary', world.tokens.admin, { period: 'monthly' });
     expect(res.status).toBe(200);
+  });
+
+  it('analytics.marginSummary returns three parts that add up to the selling price', async () => {
+    await makeSale();
+
+    const res = await get('/api/analytics/margin-summary', world.tokens.manager, {
+      store_id: world.storeId,
+      period: 'monthly',
+    });
+
+    expect(res.status).toBe(200);
+    expectShape(
+      res.body,
+      [
+        'period',
+        'period_start',
+        'timezone',
+        'selling_price',
+        'cost_price',
+        'tax',
+        'gross_profit',
+        'margin_percent',
+        'units',
+        'transactions',
+      ],
+      'MarginSummary'
+    );
+
+    // The whole point of the donut: the slices are parts of the takings, so
+    // they must reconstitute them exactly. If this drifts, the chart is a lie.
+    const { selling_price, cost_price, tax, gross_profit } = res.body;
+    expect(cost_price + tax + gross_profit).toBeCloseTo(selling_price, 2);
+    expect(selling_price).toBeGreaterThan(0);
+    expect(res.body.period_start).toMatch(/^\d{4}-\d{2}-01$/);
+  });
+
+  it('analytics accepts every period the app can ask for', async () => {
+    // PERIOD_LABELS in the app is the list; a period it offers and the server
+    // rejects is a 422 the user cannot do anything about.
+    for (const period of ['daily', 'weekly', 'monthly', 'quarterly', 'yearly']) {
+      const res = await get('/api/analytics/margin-summary', world.tokens.admin, { period });
+      expect(res.status, `period ${period}`).toBe(200);
+      expect(res.body.period).toBe(period);
+    }
   });
 
   /* -------------------------------------------------------------- suppliers */
