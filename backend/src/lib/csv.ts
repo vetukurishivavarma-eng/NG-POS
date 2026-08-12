@@ -80,21 +80,53 @@ export function parseCsv(text: string): string[][] {
   return rows;
 }
 
+/** Lowercase, fold separators to underscores, drop everything else. */
+function slug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s.\-]+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
 /**
  * Turns a header cell into a canonical key: lowercased, trimmed, and with
  * spaces, hyphens and dots folded to underscores. `Selling Price (K)` and
  * `selling_price` are the same column as far as an import is concerned.
  */
 export function normaliseHeader(header: string): string {
-  return header
-    .trim()
-    .toLowerCase()
-    .replace(/\(.*?\)/g, '')
-    .trim()
-    .replace(/[\s.\-]+/g, '_')
-    .replace(/[^a-z0-9_]/g, '')
-    .replace(/_+/g, '_')
-    .replace(/^_|_$/g, '');
+  return slug(header.replace(/\(.*?\)/g, ''));
+}
+
+/**
+ * The same key with the bracketed part kept: `Cost (USD)` → `cost_usd`.
+ *
+ * Dropping the brackets is right for a unit that restates the column (`Selling
+ * Price (K)`), and wrong when it is the only thing telling two columns apart —
+ * a sheet carrying both `COST (USD)` and `COST` collapses to one key, and
+ * whichever comes last silently wins. Callers try the full key against their
+ * alias table first, so those pairs can be separated or ignored by name, and
+ * fall back to the stripped key when nothing claims it.
+ */
+export function normaliseHeaderFull(header: string): string {
+  return slug(header);
+}
+
+/**
+ * Resolves one header cell to the key its values will be filed under, given an
+ * alias table. An alias may map to the empty string to mean "ignore this
+ * column", which is how a spreadsheet's working columns are kept out of the
+ * import without being mistaken for unknown ones.
+ */
+export function resolveHeader(header: string, aliases: Record<string, string> = {}): string {
+  const full = normaliseHeaderFull(header);
+  if (full in aliases) return aliases[full] as string;
+
+  const short = normaliseHeader(header);
+  if (short in aliases) return aliases[short] as string;
+  return short;
 }
 
 /**
@@ -105,14 +137,31 @@ export function normaliseHeader(header: string): string {
 export function parseCsvObjects(
   text: string,
   aliases: Record<string, string> = {}
-): { headers: string[]; rows: Record<string, string>[] } {
-  const table = parseCsv(text);
-  if (table.length === 0) return { headers: [], rows: [] };
+): TableObjects {
+  return tableToObjects(parseCsv(text), aliases);
+}
 
-  const headers = (table[0] as string[]).map((h) => {
-    const key = normaliseHeader(h);
-    return aliases[key] ?? key;
-  });
+export interface TableObjects {
+  /** The resolved key of each column, in file order. Empty where ignored. */
+  headers: string[];
+  /** The header row exactly as written, for reporting a column back by name. */
+  rawHeaders: string[];
+  rows: Record<string, string>[];
+}
+
+/**
+ * The same header-mapping step for a table that did not come from CSV — the
+ * .xlsx reader hands over rows of strings in the same shape, and an import must
+ * behave identically whichever file the operator happened to pick.
+ */
+export function tableToObjects(
+  table: string[][],
+  aliases: Record<string, string> = {}
+): TableObjects {
+  if (table.length === 0) return { headers: [], rawHeaders: [], rows: [] };
+
+  const rawHeaders = (table[0] as string[]).map((h) => h.trim());
+  const headers = rawHeaders.map((h) => resolveHeader(h, aliases));
 
   const rows = table.slice(1).map((cells) => {
     const record: Record<string, string> = {};
@@ -123,5 +172,5 @@ export function parseCsvObjects(
     return record;
   });
 
-  return { headers, rows };
+  return { headers, rawHeaders, rows };
 }

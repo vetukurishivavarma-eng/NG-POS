@@ -1,0 +1,155 @@
+import { describe, expect, it } from 'vitest';
+
+import { normaliseHeader, normaliseHeaderFull, resolveHeader, tableToObjects } from '../../src/lib/csv.js';
+import {
+  HEADER_ALIASES,
+  identityOf,
+  productNameFrom,
+  readCostPrice,
+  synthesiseSku,
+} from '../../src/lib/productSheet.js';
+
+/** The price master's header row, exactly as the buyer's file writes it. */
+const PRICE_MASTER_HEADERS = [
+  'COMPANY',
+  'PRODUCT',
+  'PACKSIZE',
+  'MATCH STATUS',
+  'MATCHED AP NAME',
+  'MATCH SCORE',
+  'COST (USD)',
+  'COST',
+  'Transport & Others',
+  'Landing',
+  'MARK UP',
+  'GP',
+  'SP',
+  'QTY',
+  'Katende',
+  'Kanakantapa',
+  'Chinkuli',
+  'Kempekete',
+  'Chilyabale',
+  'Lwimba',
+];
+
+const CARROT_ROW = [
+  'STARKE AYRES', 'carrots', '100g', 'Review - check pack size', 'Carrot nantes (100g)', '70',
+  '', '201.6', '3', '205', '0.15', '31', '236', '15',
+  '235', '245', '245', '245', '250', '250',
+];
+
+describe('header resolution', () => {
+  it('separates COST (USD) from COST instead of collapsing both to one key', () => {
+    // Both strip to `cost`; only the bracket-preserving form tells them apart.
+    expect(normaliseHeader('COST (USD)')).toBe('cost');
+    expect(normaliseHeader('COST')).toBe('cost');
+    expect(normaliseHeaderFull('COST (USD)')).toBe('cost_usd');
+
+    expect(resolveHeader('COST (USD)', HEADER_ALIASES)).toBe('');
+    expect(resolveHeader('COST', HEADER_ALIASES)).toBe('cost_price');
+  });
+
+  it('still ignores a bracketed unit that only restates the column', () => {
+    expect(resolveHeader('Selling Price (K)', HEADER_ALIASES)).toBe('selling_price');
+    expect(resolveHeader('Cost Price (ZMW)', HEADER_ALIASES)).toBe('cost_price');
+  });
+
+  it('reads the price master into the fields the importer expects', () => {
+    const { rows } = tableToObjects([PRICE_MASTER_HEADERS, CARROT_ROW], HEADER_ALIASES);
+    const row = rows[0] as Record<string, string>;
+
+    expect(row.company).toBe('STARKE AYRES');
+    expect(row.name).toBe('carrots');
+    expect(row.pack_size).toBe('100g');
+    expect(row.selling_price).toBe('236');
+    expect(row.quantity).toBe('15');
+    expect(row.landing).toBe('205');
+    expect(row.cost_price).toBe('201.6');
+
+    // Provenance and working columns are read and thrown away, not left to be
+    // reported to the operator as mystery columns.
+    expect(row).not.toHaveProperty('match_status');
+    expect(row).not.toHaveProperty('match_score');
+    expect(row).not.toHaveProperty('mark_up');
+    expect(row).not.toHaveProperty('gp');
+  });
+
+  it('leaves the shop columns under their own keys', () => {
+    const { rows } = tableToObjects([PRICE_MASTER_HEADERS, CARROT_ROW], HEADER_ALIASES);
+    const row = rows[0] as Record<string, string>;
+
+    expect(row.katende).toBe('235');
+    expect(row.chilyabale).toBe('250');
+  });
+
+  it('keeps the raw headings so a column can be named back to the operator', () => {
+    const { rawHeaders } = tableToObjects([PRICE_MASTER_HEADERS, CARROT_ROW], HEADER_ALIASES);
+    expect(rawHeaders[14]).toBe('Katende');
+  });
+});
+
+describe('cost price', () => {
+  it('prefers the landed cost over the bare cost', () => {
+    expect(readCostPrice({ landing: '205', cost_price: '201.6' })).toBe('205');
+  });
+
+  it('falls back to cost when there is no landing column at all', () => {
+    // Our own template has no Landing column, and must keep working.
+    expect(readCostPrice({ cost_price: '320.00' })).toBe('320.00');
+    expect(readCostPrice({ landing: '', cost_price: '320.00' })).toBe('320.00');
+  });
+});
+
+describe('synthesised product codes', () => {
+  it('is stable across runs, so a re-upload updates rather than duplicates', () => {
+    const first = synthesiseSku('STARKE AYRES', 'carrots', '100g');
+    const second = synthesiseSku('STARKE AYRES', 'carrots', '100g');
+    expect(first).toBe(second);
+    expect(first).toMatch(/^STAR-[0-9A-F]{8}$/);
+  });
+
+  it('separates the same product in different pack sizes', () => {
+    expect(synthesiseSku('STARKE AYRES', 'carrots', '100g')).not.toBe(
+      synthesiseSku('STARKE AYRES', 'carrots', '25g')
+    );
+  });
+
+  it('treats a stray trailing space or a case change as the same supplier', () => {
+    // `RAINBOW ` / `RAINBOW` and `Zamseed` / `ZAMSEED` are both in the real
+    // file; left distinct they would build the catalogue twice.
+    expect(synthesiseSku('RAINBOW ', 'Fighter', '1ltr')).toBe(
+      synthesiseSku('RAINBOW', 'Fighter', '1ltr')
+    );
+    expect(synthesiseSku('Zamseed', '608j', '2kg')).toBe(synthesiseSku('ZAMSEED', '608j', '2kg'));
+  });
+
+  it('falls back to a readable prefix when the company is blank', () => {
+    expect(synthesiseSku('', 'Tent', '5*6m')).toMatch(/^PROD-[0-9A-F]{8}$/);
+  });
+
+  it('builds the identity from all three columns', () => {
+    expect(identityOf('SEED-CO', 'Maize Seed SC627', '10kg')).toBe('seed co|maize seed sc627|10kg');
+  });
+});
+
+describe('product names', () => {
+  it('joins the pack size on, because it is what tells two rows apart', () => {
+    expect(productNameFrom('carrots', '100g')).toBe('Carrots 100g');
+    expect(productNameFrom('carrots', '25g')).toBe('Carrots 25g');
+  });
+
+  it('capitalises the first letter and leaves the rest of the typing alone', () => {
+    expect(productNameFrom('Ideal red carrots', '25g')).toBe('Ideal red carrots 25g');
+    expect(productNameFrom('mult-k', '2kg')).toBe('Mult-k 2kg');
+  });
+
+  it('does not repeat a pack size the name already ends with', () => {
+    expect(productNameFrom('Maize Seed SC627 10kg', '10kg')).toBe('Maize Seed SC627 10kg');
+  });
+
+  it('copes with a missing pack size', () => {
+    expect(productNameFrom('Land slide', '')).toBe('Land slide');
+    expect(productNameFrom('Macro source D.compound', '50kg ')).toBe('Macro source D.compound 50kg');
+  });
+});

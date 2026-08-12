@@ -1011,11 +1011,23 @@ describe('mobile API contract', () => {
     expectShape(rejected.body.errors[0], ['row', 'sku', 'message'], 'bulk upload row error');
   });
 
-  it('inventory.bulkUploadTemplate serves a CSV the importer accepts', async () => {
+  it('inventory.bulkUploadTemplate defaults to the price list, columned by shop', async () => {
     const res = await get('/api/inventory/bulk-upload/template', world.tokens.admin);
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
+
+    const header = res.text.split(/\r?\n/)[0] as string;
+    expect(header).toContain('PRODUCT');
+    expect(header).toContain('PACKSIZE');
+    // One column per shop, taken from the organisation's own shops.
+    expect(header).toContain('Test Store');
+  });
+
+  it('inventory.bulkUploadTemplate still serves the coded sheet on request', async () => {
+    const res = await get('/api/inventory/bulk-upload/template?format=sku', world.tokens.admin);
+
+    expect(res.status).toBe(200);
     expect(res.text.split(/\r?\n/)[0]).toContain('sku');
   });
 

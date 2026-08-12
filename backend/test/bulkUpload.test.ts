@@ -257,10 +257,10 @@ describe('stock bulk upload', () => {
     await expect(stockOf(world.storeId, product.id)).resolves.toBe(6);
   });
 
-  it('refuses a file with no sku column', async () => {
+  it('refuses a file that neither codes nor names its products', async () => {
     const res = await asAdmin('post', '/api/inventory/bulk-upload').send({
       store_id: world.storeId,
-      csv: 'name,quantity\nDairy Meal,5\n',
+      csv: 'quantity,cost_price\n5,10\n',
     });
 
     expect(res.status).toBe(400);
@@ -287,12 +287,15 @@ describe('stock bulk upload', () => {
     expect(res.status).toBe(403);
   });
 
-  it('serves a template whose own columns import cleanly', async () => {
-    const template = await asAdmin('get', '/api/inventory/bulk-upload/template');
+  // The template is the instructions. If it cannot be imported as it stands,
+  // everyone who follows it gets an error on their first attempt.
+  it.each([
+    ['price-master', 3],
+    ['sku', 5],
+  ])('serves a %s template whose own columns import cleanly', async (format, rows) => {
+    const template = await asAdmin('get', `/api/inventory/bulk-upload/template?format=${format}`);
     expect(template.status).toBe(200);
 
-    // The template is the instructions. If it cannot be imported as it stands,
-    // everyone who follows it gets an error on their first attempt.
     const res = await asAdmin('post', '/api/inventory/bulk-upload').send({
       store_id: world.storeId,
       csv: template.text,
@@ -300,6 +303,6 @@ describe('stock bulk upload', () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.body.total_rows).toBe(5);
+    expect(res.body.total_rows).toBe(rows);
   });
 });

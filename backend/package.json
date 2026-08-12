@@ -17,6 +17,7 @@
     "seed": "tsx prisma/seed.ts",
     "studio": "prisma studio",
     "test": "vitest run",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
