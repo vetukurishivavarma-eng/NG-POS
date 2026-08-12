@@ -54,8 +54,16 @@ const ROLE_CAPABILITIES: Record<string, Capability[]> = {
   CASHIER: [],
 };
 
-/** The permanent half of what shop staff were given. */
-const SHOP_STAFF_GRANT: Capability[] = ['pricing.write', 'transfers.create'];
+/**
+ * The permanent half of what shop staff were given.
+ *
+ * `products.import` sits here rather than in the closing grant below, even
+ * though loading a catalogue is the finite job that grant exists for. What the
+ * shops actually upload is the buyer's price master, and prices are reissued
+ * every time they move — so this is recurring work, and a window that shut
+ * would take the monthly repricing with it.
+ */
+const SHOP_STAFF_GRANT: Capability[] = ['pricing.write', 'transfers.create', 'products.import'];
 
 /** The half that closes on a date: entering the catalogue is a finite job. */
 const SHOP_STAFF_GRANT_WHILE_OPEN: Capability[] = ['products.write'];

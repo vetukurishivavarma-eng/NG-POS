@@ -63,6 +63,36 @@ storesRouter.get(
   })
 );
 
+/**
+ * Every shop in the organisation, as name and code only.
+ *
+ * `GET /stores` deliberately narrows to the caller's own shops, which is right
+ * for a store picker and wrong for the far end of a transfer: someone at
+ * Katende has to be able to send stock to Chinkuli without working there, and
+ * with the narrowed list the screen had nowhere to send to at all.
+ *
+ * So this is a directory, not a second way to read a store. It returns the
+ * three fields a picker needs and nothing else — no address, phone, email or
+ * sync state — because needing to know a sister shop exists is not the same as
+ * being entitled to its details.
+ *
+ * Declared above `/:id`, or Express matches "directory" as a store id.
+ */
+storesRouter.get(
+  '/directory',
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+
+    const stores = await prisma.store.findMany({
+      where: { organizationId: user.organizationId, isActive: true },
+      select: { id: true, name: true, code: true },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(stores);
+  })
+);
+
 storesRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {

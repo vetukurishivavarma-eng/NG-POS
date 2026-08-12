@@ -26,6 +26,7 @@ import type {
   StockMovement,
   StockMovementDraft,
   Store,
+  StoreDirectoryEntry,
   StoreDraft,
   StorePriceRow,
   Supplier,
@@ -108,7 +109,15 @@ export const organizations = {
 };
 
 export const stores = {
+  /** The caller's own shops — what a store picker should offer. */
   list: () => api.get<Store[]>('/stores').then((r) => r.data),
+  /**
+   * Every shop in the organisation, name and code only.
+   *
+   * For the far end of a transfer: a shop has to be able to send stock to a
+   * sister shop nobody there is assigned to, so `list()` is the wrong list.
+   */
+  directory: () => api.get<StoreDirectoryEntry[]>('/stores/directory').then((r) => r.data),
   get: (id: string) => api.get<Store>(`/stores/${id}`).then((r) => r.data),
   /** Admin only. `code` is uppercased and stripped of spaces by the server. */
   create: (body: StoreDraft) => api.post<Store>('/stores', body).then((r) => r.data),

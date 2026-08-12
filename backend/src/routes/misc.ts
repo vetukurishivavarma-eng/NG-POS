@@ -5,7 +5,13 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
+import {
+  assertStoreAccess,
+  assertStoreInOrganization,
+  authenticate,
+  currentUser,
+  requireCapability,
+} from '../middleware/auth.js';
 import { num, serializeProduct, serializeUser } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { revokeAllSessions } from './devices.js';
@@ -346,11 +352,13 @@ transfersRouter.post(
     if (body.from_store_id === body.to_store_id) {
       throw badRequest('Source and destination must be different stores.');
     }
+    // Stock only leaves a shop the sender works at.
     await assertStoreAccess(user, body.from_store_id);
-    // The destination needs checking too. Only the source was verified, so stock
-    // could be transferred *out* of this organisation into another one's store —
-    // it left our shelves and landed somewhere the sender cannot even see.
-    await assertStoreAccess(user, body.to_store_id);
+    // The destination is checked for tenancy but not for assignment. Sending to
+    // a sister shop is what a transfer *is* — nobody at Katende is assigned to
+    // Chinkuli — and requiring one there left every single-shop user with
+    // nowhere to send to. Crossing organisations is still refused.
+    await assertStoreInOrganization(user, body.to_store_id);
 
     const transfer = await prisma.$transaction(async (tx) => {
       const reference = `TRF-${Date.now().toString(36).toUpperCase()}`;

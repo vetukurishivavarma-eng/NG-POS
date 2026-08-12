@@ -278,13 +278,34 @@ describe('stock bulk upload', () => {
     expect(res.status).toBe(404);
   });
 
-  it('is closed to cashiers', async () => {
+  /**
+   * Deliberately open to shop staff, where it used to be manager-and-above.
+   *
+   * What the shops upload is the buyer's price master, reissued every time
+   * prices move, and at an agrovet this size the person on the till is the
+   * person who loads it. The blast radius is real — an import can rewrite the
+   * catalogue and reset stock levels — so it is mitigated by the import itself
+   * rather than by the role: the dry run reports every row before anything is
+   * written, and one unreadable line rejects the whole file.
+   */
+  it('is open to shop staff, not just managers', async () => {
     const res = await request(app)
       .post('/api/inventory/bulk-upload')
       .set('Authorization', `Bearer ${world.tokens.cashier}`)
       .send({ store_id: world.storeId, csv: [header, 'NEW-11,Thing,,,,1,2,exempt,5,1'].join('\n') });
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(201);
+  });
+
+  it("still will not import into another organisation's store, whoever asks", async () => {
+    const theirs = await seedWorld(app);
+
+    const res = await request(app)
+      .post('/api/inventory/bulk-upload')
+      .set('Authorization', `Bearer ${world.tokens.cashier}`)
+      .send({ store_id: theirs.storeId, csv: [header, 'NEW-12,Thing,,,,1,2,exempt,5,1'].join('\n') });
+
+    expect(res.status).toBe(404);
   });
 
   // The template is the instructions. If it cannot be imported as it stands,

@@ -51,9 +51,15 @@ export default function NewTransferScreen() {
   const [busy, setBusy] = useState(false);
 
   const storesQuery = useQuery({ queryKey: ['stores'], queryFn: storesApi.list });
+  // Two lists on purpose. `/stores` narrows to the shops this person works at,
+  // which is what may be sent *from*; the directory is every shop in the
+  // organisation, which is what may be sent *to*. Using the narrow one for both
+  // left anyone assigned to a single shop with nowhere to transfer.
+  const directoryQuery = useQuery({ queryKey: ['store-directory'], queryFn: storesApi.directory });
   const catalogue = useCatalogue(fromStoreId || null);
 
   const allStores = useMemo(() => storesQuery.data ?? [], [storesQuery.data]);
+  const directory = useMemo(() => directoryQuery.data ?? [], [directoryQuery.data]);
 
   // The backend runs `assertStoreAccess` on the source, so a manager posting from
   // a store they aren't assigned to gets a 403 after building the whole basket.
@@ -89,7 +95,9 @@ export default function NewTransferScreen() {
   }, [sourceIsFixed, sourceStores, fromStoreId]);
 
   const fromStore = allStores.find((s) => s.id === fromStoreId) ?? selectedStore ?? null;
-  const toStore = allStores.find((s) => s.id === toStoreId) ?? null;
+  // From the directory, not `allStores`: the destination is by definition a
+  // shop this person may not be assigned to, so it is not in the narrow list.
+  const toStore = directory.find((s) => s.id === toStoreId) ?? null;
 
   const items = catalogue.data?.items ?? [];
 
@@ -245,7 +253,7 @@ export default function NewTransferScreen() {
     );
   }
 
-  if (storesQuery.isLoading) {
+  if (storesQuery.isLoading || directoryQuery.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
         <Loading label="Loading stores" />
@@ -253,7 +261,10 @@ export default function NewTransferScreen() {
     );
   }
 
-  if (allStores.length < 2) {
+  // Counted against the organisation, not against this person's own shops.
+  // Someone assigned to one shop has one entry in `allStores` and is still
+  // perfectly able to send stock to the other five.
+  if (directory.length < 2) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
         <EmptyState
@@ -266,7 +277,7 @@ export default function NewTransferScreen() {
   }
 
   const sourceOptions = sourceStores.map((s: Store) => ({ value: s.id, label: s.name }));
-  const destinationOptions = allStores
+  const destinationOptions = directory
     // Same-to-same is rejected by the server; don't let the UI build it.
     .filter((s) => s.id !== fromStoreId)
     .map((s) => ({ value: s.id, label: s.name }));

@@ -207,6 +207,30 @@ export function currentUser(req: Request): AuthUser {
  * organisation's data by guessing an id, on this route or a future one.
  */
 export async function assertStoreAccess(user: AuthUser, storeId: string): Promise<void> {
+  await assertStoreInOrganization(user, storeId);
+
+  if (user.role === 'ORG_ADMIN') return;
+  if (user.assignedStores.length === 0) return;
+  if (!user.assignedStores.includes(storeId)) {
+    throw forbidden('You are not assigned to this store.');
+  }
+}
+
+/**
+ * The tenant half of `assertStoreAccess`, without the assignment half.
+ *
+ * For the far end of an operation that reaches between two shops — the
+ * destination of a transfer — "is this one of ours?" is the right question and
+ * "do you work there?" is not. Someone at Katende sending stock to Chinkuli
+ * does not work at Chinkuli; that is the entire point of a transfer, and
+ * requiring an assignment there means a shop can only send stock to itself.
+ *
+ * What must not be relaxed is the tenant check, which is why it lives here and
+ * is called by both: without it, stock could be transferred out of this
+ * organisation into another one's shop — off our shelves and into somewhere the
+ * sender cannot even see.
+ */
+export async function assertStoreInOrganization(user: AuthUser, storeId: string): Promise<void> {
   const store = await prisma.store.findFirst({
     where: { id: storeId, organizationId: user.organizationId },
     select: { id: true },
@@ -214,10 +238,4 @@ export async function assertStoreAccess(user: AuthUser, storeId: string): Promis
   // Not 403: another tenant's id must be indistinguishable from one that does
   // not exist, or the difference between the two answers maps their stores.
   if (!store) throw notFound('Store not found.');
-
-  if (user.role === 'ORG_ADMIN') return;
-  if (user.assignedStores.length === 0) return;
-  if (!user.assignedStores.includes(storeId)) {
-    throw forbidden('You are not assigned to this store.');
-  }
 }

@@ -34,6 +34,17 @@ export interface ProductWithStock extends Product {
   reorder_level: number;
 }
 
+/**
+ * A shop as it appears in a picker of *other* shops — the destination of a
+ * transfer, say. Name and code only: needing to know a sister shop exists is
+ * not the same as being entitled to its address, phone and sync state.
+ */
+export interface StoreDirectoryEntry {
+  id: string;
+  name: string;
+  code: string;
+}
+
 export interface Store {
   id: string;
   organization_id: string;
