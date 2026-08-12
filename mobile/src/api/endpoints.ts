@@ -221,10 +221,19 @@ export const inventory = {
   bulkUpload: (body: BulkUploadRequest) =>
     api.post<BulkUploadResult>('/inventory/bulk-upload', body).then((r) => r.data),
 
-  /** The blank spreadsheet, as CSV text, to save or share from the device. */
-  bulkUploadTemplate: () =>
+  /**
+   * The blank spreadsheet, as CSV text, to save or share from the device.
+   *
+   * `price-master` is the buyer's own sheet — company, product, pack size and
+   * a price column per shop, filled in from the organisation's real shops.
+   * `sku` is our coded template, for a shop that already has product codes.
+   */
+  bulkUploadTemplate: (format: 'price-master' | 'sku' = 'price-master') =>
     api
-      .get<string>('/inventory/bulk-upload/template', { responseType: 'text' })
+      .get<string>('/inventory/bulk-upload/template', {
+        params: { format },
+        responseType: 'text',
+      })
       .then((r) => r.data),
 };
 

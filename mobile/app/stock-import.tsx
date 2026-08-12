@@ -31,13 +31,44 @@ import type {
 
 type RowError = BulkUploadRejection['errors'][number];
 
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/**
+ * The file, however it arrived. An .xlsx goes up as bytes and is read on the
+ * server; anything else is treated as text.
+ *
+ * Both are kept in one shape so the rest of the screen — check, apply, the row
+ * count — does not care which was picked.
+ */
+type PickedFile =
+  | { kind: 'csv'; name: string; text: string }
+  | { kind: 'xlsx'; name: string; base64: string; sizeBytes: number };
+
+/** What the request body carries for this file. */
+function payloadFor(file: PickedFile): { csv: string } | { xlsx_base64: string } {
+  return file.kind === 'csv' ? { csv: file.text } : { xlsx_base64: file.base64 };
+}
+
+/**
+ * A line under the file name confirming we read what they think they picked.
+ *
+ * A workbook's rows cannot be counted without parsing it, which is the server's
+ * job — so it reports its size instead of guessing. The real row count comes
+ * back from the check a moment later either way.
+ */
+function describeFile(file: PickedFile): string {
+  if (file.kind === 'xlsx') return `Excel workbook · ${Math.max(1, Math.round(file.sizeBytes / 1024))} KB`;
+  const lines = file.text.split(/\r\n|\r|\n/).filter((l) => l.trim()).length - 1;
+  return `CSV · ${Math.max(0, lines)} data rows`;
+}
+
 /**
  * Loading a shop's whole catalogue and its opening stock from one spreadsheet.
  *
  * Three deliberate steps — pick, check, apply — because this writes hundreds of
  * rows at once and there is no undo. The check is a real server-side dry run,
  * not a guess made on the device: it reports the exact stock level every product
- * would move from and to, and changes nothing.
+ * would move from and to, which shop columns it recognised, and changes nothing.
  */
 export default function StockImportScreen() {
   const layout = useLayout();
@@ -46,8 +77,7 @@ export default function StockImportScreen() {
   const canImport = useCan('products.import');
   const storeId = store?.id ?? null;
 
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [csv, setCsv] = useState<string | null>(null);
+  const [file, setFile] = useState<PickedFile | null>(null);
   const [mode, setMode] = useState<BulkUploadMode>('set');
   const [checked, setChecked] = useState<BulkUploadResult | null>(null);
   const [errors, setErrors] = useState<RowError[] | null>(null);
@@ -55,8 +85,7 @@ export default function StockImportScreen() {
   const [busy, setBusy] = useState(false);
 
   function reset() {
-    setFileName(null);
-    setCsv(null);
+    setFile(null);
     setChecked(null);
     setErrors(null);
     setErrorDetail(null);
@@ -65,24 +94,58 @@ export default function StockImportScreen() {
   async function pickFile() {
     try {
       const picked = await DocumentPicker.getDocumentAsync({
-        // Android's file browser hands CSV files a range of MIME types depending
-        // on what created them, and a strict filter simply greys them out. Ask
-        // for anything and validate the contents instead.
-        type: ['text/csv', 'text/comma-separated-values', 'text/plain', '*/*'],
+        // Android's file browser hands spreadsheets a range of MIME types
+        // depending on what created them, and a strict filter simply greys them
+        // out. Ask for anything and work out what it is from the bytes.
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'text/csv',
+          'text/comma-separated-values',
+          'text/plain',
+          '*/*',
+        ],
         copyToCacheDirectory: true,
       });
       if (picked.canceled || !picked.assets?.[0]) return;
 
       const asset = picked.assets[0];
-      const text = await new File(asset.uri).text();
+      const handle = new File(asset.uri);
+      const name = asset.name.toLowerCase();
 
-      if (!text.trim()) {
-        Alert.alert('That file is empty', 'Pick the spreadsheet saved as CSV.');
+      if (name.endsWith('.xls')) {
+        Alert.alert(
+          'That is the older Excel format',
+          'Open it in Excel and use Save As → Excel Workbook (.xlsx), then pick it again.'
+        );
         return;
       }
 
-      setFileName(asset.name);
-      setCsv(text);
+      const asWorkbook = async () =>
+        setFile({
+          kind: 'xlsx',
+          name: asset.name,
+          base64: await handle.base64(),
+          sizeBytes: handle.size,
+        });
+
+      if (name.endsWith('.xlsx') || asset.mimeType === XLSX_MIME) {
+        await asWorkbook();
+      } else {
+        const text = await handle.text();
+
+        // An .xlsx is a zip, and every zip starts "PK". Files picked from Drive
+        // come back under names like `document/1234` with no useful extension
+        // or MIME type, so the bytes are the only reliable answer.
+        if (text.startsWith('PK')) {
+          await asWorkbook();
+        } else if (!text.trim()) {
+          Alert.alert('That file is empty', 'Pick the spreadsheet again.');
+          return;
+        } else {
+          setFile({ kind: 'csv', name: asset.name, text });
+        }
+      }
+
       setChecked(null);
       setErrors(null);
       setErrorDetail(null);
@@ -92,14 +155,14 @@ export default function StockImportScreen() {
   }
 
   async function check() {
-    if (!csv || !storeId) return;
+    if (!file || !storeId) return;
     setBusy(true);
     setErrors(null);
     setErrorDetail(null);
     try {
       const result = await inventoryApi.bulkUpload({
         store_id: storeId,
-        csv,
+        ...payloadFor(file),
         mode,
         validate_only: true,
       });
@@ -129,14 +192,14 @@ export default function StockImportScreen() {
   }
 
   async function apply() {
-    if (!csv || !storeId) return;
+    if (!file || !storeId) return;
     setBusy(true);
     try {
       const result = await inventoryApi.bulkUpload({
         store_id: storeId,
-        csv,
+        ...payloadFor(file),
         mode,
-        note: fileName ? `Imported from ${fileName}` : 'Bulk stock upload',
+        note: `Imported from ${file.name}`,
       });
 
       void queryClient.invalidateQueries({ queryKey: ['catalogue', storeId] });
@@ -169,25 +232,39 @@ export default function StockImportScreen() {
     Alert.alert("The import didn't run", errorMessage(err));
   }
 
-  async function shareTemplate() {
+  function chooseTemplate() {
+    Alert.alert(
+      'Which template?',
+      'The price list is the sheet the buyer keeps — company, product, pack size, and a price column for each of your shops. The coded sheet is for a catalogue that already has product codes.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Price list', onPress: () => void shareTemplate('price-master') },
+        { text: 'Coded sheet', onPress: () => void shareTemplate('sku') },
+      ]
+    );
+  }
+
+  async function shareTemplate(format: 'price-master' | 'sku') {
     setBusy(true);
     try {
-      const text = await inventoryApi.bulkUploadTemplate();
+      const text = await inventoryApi.bulkUploadTemplate(format);
       const dir = new Directory(Paths.cache, 'templates');
       if (!dir.exists) dir.create({ intermediates: true });
 
-      const file = new File(dir, 'ng-pos-stock-template.csv');
-      if (file.exists) file.delete();
-      file.create();
-      file.write(text);
+      const name =
+        format === 'sku' ? 'ng-pos-stock-template.csv' : 'ng-pos-price-list.csv';
+      const target = new File(dir, name);
+      if (target.exists) target.delete();
+      target.create();
+      target.write(text);
 
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(file.uri, {
+        await Sharing.shareAsync(target.uri, {
           mimeType: 'text/csv',
           dialogTitle: 'NG POS stock template',
         });
       } else {
-        Alert.alert('Template saved', `Saved to ${file.uri}`);
+        Alert.alert('Template saved', `Saved to ${target.uri}`);
       }
     } catch (err) {
       Alert.alert("Couldn't fetch the template", errorMessage(err));
@@ -237,8 +314,9 @@ export default function StockImportScreen() {
         <View>
           <Text style={styles.title}>Load stock from a spreadsheet</Text>
           <Text style={styles.lead}>
-            One file, one shop. Products are matched on their SKU, so a second upload of a corrected
-            file updates the same rows instead of duplicating them.
+            Excel or CSV. A sheet with no product codes is matched on company, product and pack
+            size, so a second upload of a corrected file updates the same rows instead of
+            duplicating them.
           </Text>
         </View>
 
@@ -251,40 +329,40 @@ export default function StockImportScreen() {
         <View style={{ gap: spacing.md }}>
           <SectionLabel>Step 1 · The file</SectionLabel>
 
-          {csv ? (
+          {file ? (
             <View style={styles.fileCard}>
               <View style={styles.fileIcon}>
                 <Icon name="file-text" size={19} color={colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.fileName} numberOfLines={1}>
-                  {fileName ?? 'Selected file'}
+                  {file.name}
                 </Text>
-                <Text style={styles.fileMeta}>
-                  {csv.split(/\r\n|\r|\n/).filter((l) => l.trim()).length - 1} data rows
-                </Text>
+                <Text style={styles.fileMeta}>{describeFile(file)}</Text>
               </View>
               <Button label="Change" variant="secondary" onPress={() => void pickFile()} />
             </View>
           ) : (
-            <Button label="Choose a CSV File" icon="upload" onPress={() => void pickFile()} />
+            <Button label="Choose Excel or CSV" icon="upload" onPress={() => void pickFile()} />
           )}
 
           <Button
-            label="Get the Blank Template"
+            label="Get a Blank Template"
             icon="download"
             variant="secondary"
-            loading={busy && !csv}
-            onPress={() => void shareTemplate()}
+            loading={busy && !file}
+            onPress={chooseTemplate}
           />
           <Text style={styles.hint}>
-            Save your spreadsheet as CSV. Keep the header row; the only column that must be filled in
-            on every line is <Text style={styles.mono}>sku</Text>.
+            An <Text style={styles.mono}>.xlsx</Text> goes up as it is — no need to save it as CSV
+            first. Keep the header row; every line needs a{' '}
+            <Text style={styles.mono}>PRODUCT</Text> (or an <Text style={styles.mono}>sku</Text>, on
+            a coded sheet).
           </Text>
         </View>
 
         {/* ------------------------------------------------------ 2. the mode */}
-        {csv ? (
+        {file ? (
           <View style={{ gap: spacing.md }}>
             <SectionLabel>Step 2 · What the quantity means</SectionLabel>
             <Select<BulkUploadMode>
@@ -307,7 +385,7 @@ export default function StockImportScreen() {
         ) : null}
 
         {/* ----------------------------------------------------- 3. dry run */}
-        {csv ? (
+        {file ? (
           <View style={{ gap: spacing.md }}>
             <SectionLabel>Step 3 · Check it</SectionLabel>
             <Button
@@ -344,6 +422,33 @@ export default function StockImportScreen() {
                 <StatRow label="New products" value={String(checked.products_to_create)} />
                 <StatRow label="Existing products updated" value={String(checked.products_to_update)} />
                 <StatRow label="Stock levels touched" value={String(checked.stock_rows)} />
+                {checked.shop_columns.length > 0 ? (
+                  <StatRow
+                    label="Shop prices to set"
+                    value={String(checked.shop_prices_to_write)}
+                  />
+                ) : null}
+
+                {/* Which shops the file prices, and which it cannot. A column
+                    that quietly did nothing is the worst way this can fail. */}
+                {checked.shop_columns.length > 0 ? (
+                  <>
+                    <View style={styles.previewDivider} />
+                    <Text style={styles.previewLabel}>Shop price columns</Text>
+                    {checked.shop_columns.map((column) => (
+                      <View key={column.column} style={styles.shopRow}>
+                        <Text style={styles.shopName} numberOfLines={1}>
+                          {column.column}
+                        </Text>
+                        <Text style={styles.shopCount}>{column.values} priced</Text>
+                        <Badge
+                          label={column.status === 'ok' ? 'WILL APPLY' : 'SKIPPED'}
+                          tone={column.status === 'ok' ? 'success' : 'warning'}
+                        />
+                      </View>
+                    ))}
+                  </>
+                ) : null}
 
                 {checked.warnings.length > 0 ? (
                   <View style={styles.warnBox}>
@@ -389,7 +494,7 @@ export default function StockImportScreen() {
           </View>
         ) : null}
 
-        {csv ? <Button label="Start Over" variant="ghost" onPress={reset} /> : null}
+        {file ? <Button label="Start Over" variant="ghost" onPress={reset} /> : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -513,6 +618,15 @@ const styles = StyleSheet.create({
   previewSku: { fontFamily: font.regular, fontSize: 10, color: colors.textFaint, marginTop: 1 },
   previewFrom: { fontFamily: font.medium, fontSize: 13, color: colors.textMuted },
   previewTo: { fontFamily: font.extrabold, fontSize: 15, color: colors.text, minWidth: 34, textAlign: 'right' },
+
+  shopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 6,
+  },
+  shopName: { flex: 1, fontFamily: font.semibold, fontSize: 13, color: colors.text },
+  shopCount: { fontFamily: font.regular, fontSize: 11, color: colors.textFaint },
 
   warnBox: {
     backgroundColor: colors.warningSoft,

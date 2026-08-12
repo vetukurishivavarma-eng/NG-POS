@@ -52,55 +52,78 @@ export function buildTransferNote(
     for (const line of wrap(opts.organizationName, w)) b.line(line);
   }
   b.line('STOCK TRANSFER NOTE');
-  b.bold(false).feed(1);
+  b.bold(false);
 
   b.align('left').rule('=');
-  b.columns('Reference', data.reference);
-  b.columns('Date', formatWhen(data.created_at));
-  b.columns('Status', data.status.replace(/_/g, ' ').toUpperCase());
-  if (data.issued_by) b.columns('Issued by', fit(data.issued_by, w - 11));
-  b.rule('=');
+  b.columns(data.reference, formatWhen(data.created_at));
+  b.columns(data.status.replace(/_/g, ' ').toUpperCase(), data.issued_by ? fit(data.issued_by, 24) : '');
 
-  // The route is the whole point of the document, so it gets its own block
-  // rather than being squeezed into a label/value column.
-  b.bold(true).line('FROM').bold(false).line(`  ${fit(data.from_store ?? 'Unknown store', w - 2)}`);
-  b.bold(true).line('TO').bold(false).line(`  ${fit(data.to_store ?? 'Unknown store', w - 2)}`);
-  b.rule('=');
-
-  b.bold(true).columns('ITEM', 'QTY').bold(false);
+  // The route is the whole point of the document. On 80mm it fits on one line;
+  // on 58mm it needs two, and it still gets them.
   b.rule('-');
-  for (const item of data.items) {
-    // Names wrap rather than truncate: the tail of an agro-vet product name is
-    // the pack size ("... 500ml", "... 50kg"), and a transfer note that loses it
-    // can't be checked against what actually came off the van.
-    for (const line of wrap(item.product_name, w)) b.line(line);
-    b.columns(`  ${fit(item.sku, w - 10)}`, qty(item.quantity));
+  const from = data.from_store ?? 'Unknown store';
+  const to = data.to_store ?? 'Unknown store';
+  b.bold(true);
+  if (b.wide) b.columns(`FROM ${fit(from, 18)}`, `TO ${fit(to, 18)}`);
+  else {
+    b.line(`FROM ${fit(from, w - 5)}`);
+    b.line(`TO   ${fit(to, w - 5)}`);
+  }
+  b.bold(false);
+  b.rule('=');
+
+  if (b.wide) {
+    b.bold(true).cells('ITEM', { text: 'SKU', width: 14 }, { text: 'QTY', width: 6 }).bold(false);
+    b.rule('-');
+    for (const item of data.items) {
+      b.cells(
+        item.product_name,
+        { text: item.sku, width: 14 },
+        { text: qty(item.quantity), width: 6 }
+      );
+    }
+  } else {
+    b.bold(true).columns('ITEM', 'QTY').bold(false);
+    b.rule('-');
+    for (const item of data.items) {
+      // Names wrap rather than truncate: the tail of an agro-vet product name is
+      // the pack size ("... 500ml", "... 50kg"), and a transfer note that loses it
+      // can't be checked against what actually came off the van.
+      for (const line of wrap(item.product_name, w)) b.line(line);
+      b.columns(`  ${fit(item.sku, w - 10)}`, qty(item.quantity));
+    }
   }
 
   b.rule('-');
   const units = data.items.reduce((sum, i) => sum + i.quantity, 0);
-  b.columns('Products', String(data.items.length));
-  b.bold(true).columns('TOTAL UNITS', qty(units)).bold(false);
+  b.bold(true)
+    .columns(`${data.items.length} product${data.items.length === 1 ? '' : 's'}`, `${qty(units)} units`)
+    .bold(false);
   b.rule('=');
 
   if (data.notes?.trim()) {
     b.bold(true).line('NOTES').bold(false);
     for (const line of wrap(data.notes.trim(), w)) b.line(line);
-    b.feed(1);
+    b.rule('-');
   }
 
   // Two signatures: the note is only evidence once both ends have signed it.
+  // Side by side on 80mm, which is where the paper saving actually shows.
   b.feed(1);
-  b.line('Issued by');
-  b.line('_'.repeat(w));
-  b.feed(1);
-  b.line('Received by');
-  b.line('_'.repeat(w));
-  b.feed(1);
-  b.line('Date');
-  b.line('_'.repeat(w));
+  if (b.wide) {
+    b.columns('_'.repeat(22), '_'.repeat(22));
+    b.columns('Issued by'.padEnd(22), 'Received by'.padEnd(22));
+    b.feed(1);
+    b.columns('_'.repeat(22), '_'.repeat(22));
+    b.columns('Date'.padEnd(22), 'Date'.padEnd(22));
+  } else {
+    for (const label of ['Issued by', 'Received by', 'Date']) {
+      b.line('_'.repeat(w));
+      b.line(label);
+    }
+  }
 
-  b.feed(1).align('center').line('Check every line before signing.');
+  b.align('center').line('Check every line before signing.');
   b.cut();
 
   return b.toBase64();

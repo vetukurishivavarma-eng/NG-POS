@@ -57,7 +57,9 @@ export default function PrinterScreen() {
       await save({
         address: device.address,
         name: device.name,
-        width: config?.width ?? 32,
+        // 80mm is the roll the shop's printers take. Still switchable below,
+        // and a printer already set up keeps whatever it was set to.
+        width: config?.width ?? 48,
         openDrawer: config?.openDrawer ?? false,
       });
       Alert.alert('Printer connected', `${device.name} is now the default printer.`);
@@ -137,7 +139,8 @@ export default function PrinterScreen() {
 
               <Text style={styles.fieldLabel}>Paper width</Text>
               <View style={styles.widthRow}>
-                {([32, 48] as PaperWidth[]).map((w) => {
+                {/* 80mm first: it is the default and the roll the shops use. */}
+                {([48, 32] as PaperWidth[]).map((w) => {
                   const active = config.width === w;
                   return (
                     <Pressable

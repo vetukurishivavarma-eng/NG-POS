@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -64,6 +64,29 @@ export default function NewTransferScreen() {
     if (!assigned || assigned.length === 0) return allStores;
     return allStores.filter((s) => assigned.includes(s.id));
   }, [allStores, user]);
+
+  /**
+   * A shop can only send its own stock, so for anyone who runs one shop the
+   * source is not a question — it is where they are standing. Showing them a
+   * picker with a single entry invites them to wonder what the other answer
+   * was, and leaves the screen unusable until they tap the only option.
+   */
+  const sourceIsFixed = sourceStores.length === 1;
+
+  // Pinned rather than merely defaulted, so switching shops elsewhere in the
+  // app cannot leave this screen pointed at one the user can no longer send
+  // from. Set directly rather than through `changeSource`, which asks before
+  // discarding a basket — there is nothing to discard on the way in, and a
+  // confirmation nobody asked for would be the first thing on screen.
+  useEffect(() => {
+    if (!sourceIsFixed) return;
+    const only = sourceStores[0];
+    if (!only || only.id === fromStoreId) return;
+    setFromStoreId(only.id);
+    setLines([]);
+    setSearch('');
+    setToStoreId((current) => (current === only.id ? '' : current));
+  }, [sourceIsFixed, sourceStores, fromStoreId]);
 
   const fromStore = allStores.find((s) => s.id === fromStoreId) ?? selectedStore ?? null;
   const toStore = allStores.find((s) => s.id === toStoreId) ?? null;
@@ -262,17 +285,33 @@ export default function NewTransferScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.routeCard}>
-          <Select
-            label="Send from"
-            value={fromStoreId}
-            options={sourceOptions}
-            onChange={changeSource}
-            hint={
-              sourceStores.length < allStores.length
-                ? 'Only the stores you are assigned to can send stock.'
-                : undefined
-            }
-          />
+          {sourceIsFixed ? (
+            <View>
+              <Text style={styles.fixedLabel}>Send from</Text>
+              <View style={styles.fixedStore}>
+                <Icon name="home" size={16} color={colors.primary} />
+                <Text style={styles.fixedStoreName} numberOfLines={1}>
+                  {fromStore?.name ?? sourceStores[0]?.name ?? 'Your shop'}
+                </Text>
+                <Icon name="lock" size={13} color={colors.textFaint} />
+              </View>
+              <Text style={styles.fixedHint}>
+                Stock can only leave the shop you work at.
+              </Text>
+            </View>
+          ) : (
+            <Select
+              label="Send from"
+              value={fromStoreId}
+              options={sourceOptions}
+              onChange={changeSource}
+              hint={
+                sourceStores.length < allStores.length
+                  ? 'Only the stores you are assigned to can send stock.'
+                  : undefined
+              }
+            />
+          )}
 
           <View style={styles.routeArrowRow}>
             <View style={styles.routeArrowLine} />
@@ -543,6 +582,31 @@ const styles = StyleSheet.create({
     color: colors.textFaint,
     letterSpacing: 1.1,
     textTransform: 'uppercase',
+  },
+
+  fixedLabel: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    color: colors.textFaint,
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    marginBottom: spacing.xs,
+  },
+  fixedStore: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+  },
+  fixedStoreName: { flex: 1, fontFamily: font.bold, fontSize: 15, color: colors.primary },
+  fixedHint: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.textFaint,
+    marginTop: spacing.xs,
   },
 
   routeCard: {

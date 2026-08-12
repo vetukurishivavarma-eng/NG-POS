@@ -684,13 +684,36 @@ export type BulkUploadMode = 'set' | 'add';
 
 export interface BulkUploadRequest {
   store_id: string;
-  csv: string;
+  /** The sheet as CSV text. Exactly one of `csv` or `xlsx_base64`. */
+  csv?: string;
+  /** The .xlsx itself, so nobody has to remember to save it as CSV first. */
+  xlsx_base64?: string;
+  /** Which sheet of a workbook to read. Defaults to the first visible one. */
+  sheet?: string;
   mode?: BulkUploadMode;
   create_missing_products?: boolean;
   update_existing_products?: boolean;
+  /** Whether the per-shop price columns are written. Server default is true. */
+  apply_shop_prices?: boolean;
   validate_only?: boolean;
   reference?: string;
   note?: string;
+}
+
+/**
+ * A spreadsheet column that named one of the organisation's shops.
+ *
+ * Anything other than `ok` has to reach the operator: a price column that
+ * quietly did nothing is the worst way this import can fail, because the shop
+ * believes the chain was repriced and finds out at the till.
+ */
+export interface BulkUploadShopColumn {
+  column: string;
+  store_id: string | null;
+  store_name: string | null;
+  status: 'ok' | 'unknown_shop' | 'no_access' | 'no_permission';
+  /** How many rows carry a price in this column. */
+  values: number;
 }
 
 export interface BulkUploadRowPreview {
@@ -712,6 +735,13 @@ export interface BulkUploadResult {
   products_to_create: number;
   products_to_update: number;
   stock_rows: number;
+  /** Every shop-named column found, applied or not, with the reason. */
+  shop_columns: BulkUploadShopColumn[];
+  /** Rows that price at least one shop. */
+  shop_price_rows: number;
+  shop_prices_to_write: number;
+  /** Headings that matched neither a field nor a shop, and were skipped. */
+  ignored_columns: string[];
   warnings: string[];
   /** Only on a dry run. */
   preview?: BulkUploadRowPreview[];
