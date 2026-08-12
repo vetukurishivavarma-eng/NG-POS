@@ -119,14 +119,19 @@ export default function RootLayout() {
     return stop;
   }, []);
 
-  // Route guard: unauthenticated users can only reach /login.
+  // Route guard: unauthenticated users can only reach the sign-in screens.
+  // Password recovery has to be in this set — the person using it cannot sign
+  // in by definition, so guarding it as a private route bounces them straight
+  // back to /login the moment the screen mounts.
   useEffect(() => {
     if (!hydrated || !storeHydrated) return;
-    const inAuthGroup = segments[0] === 'login';
+    const inAuthGroup = segments[0] === 'login' || segments[0] === 'forgot-password';
 
     if (!user && !inAuthGroup) {
       router.replace('/login');
-    } else if (user && inAuthGroup) {
+      // Only /login is wrong for a signed-in user; landing on recovery while
+      // signed in is a deliberate act, so let it be.
+    } else if (user && segments[0] === 'login') {
       router.replace('/');
     }
   }, [user, hydrated, storeHydrated, segments]);
