@@ -3,7 +3,7 @@ import { Stack, router, useSegments } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
 
 import { useFonts } from 'expo-font';
 import {
@@ -22,9 +22,11 @@ import { useStoreSelection } from '../src/store/storeSelection';
 import { startConnectivityWatcher, useSync } from '../src/db/sync';
 import { usePrinter } from '../src/printing/printer';
 import { useReminder } from '../src/notifications/reminder';
+import { LOCK_AFTER_BACKGROUND_MS, useScreenLock } from '../src/store/screenLock';
 import { colors } from '../src/theme';
 import { Loading } from '../src/ui/components';
 import { FlyToCartProvider } from '../src/ui/flyToCart';
+import { LockScreen } from '../src/ui/LockScreen';
 
 // A closing-time reminder is useless if it only appears while the app is open.
 Notifications.setNotificationHandler({
@@ -58,6 +60,9 @@ export default function RootLayout() {
   const storeHydrated = useStoreSelection((s) => s.hydrated);
   const restorePrinter = usePrinter((s) => s.restore);
   const restoreReminder = useReminder((s) => s.restore);
+  const restoreLock = useScreenLock((s) => s.restore);
+  const lockConfigured = useScreenLock((s) => s.configured);
+  const locked = useScreenLock((s) => s.locked);
   const segments = useSegments();
   const lastResponse = Notifications.useLastNotificationResponse();
   const handledResponse = useRef<string | null>(null);
@@ -79,7 +84,37 @@ export default function RootLayout() {
     void restoreStore();
     void restorePrinter();
     void restoreReminder();
-  }, [restore, restoreStore, restorePrinter, restoreReminder]);
+    void restoreLock();
+  }, [restore, restoreStore, restorePrinter, restoreReminder, restoreLock]);
+
+  /**
+   * Relock when the app has been away long enough.
+   *
+   * The gap is measured rather than locking on every `background`, because iOS
+   * and Android both send that for a notification shade pull, a permission
+   * dialog and an incoming call — none of which mean the phone left the
+   * counter. See `LOCK_AFTER_BACKGROUND_MS`.
+   */
+  useEffect(() => {
+    if (!lockConfigured) return;
+
+    let leftAt: number | null = null;
+
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        if (leftAt !== null && Date.now() - leftAt >= LOCK_AFTER_BACKGROUND_MS) {
+          useScreenLock.getState().lock();
+        }
+        leftAt = null;
+      } else if (next === 'background' || next === 'inactive') {
+        // Only the first of a run: iOS sends `inactive` then `background`, and
+        // resetting on the second would shorten the window it is measuring.
+        leftAt ??= Date.now();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [lockConfigured]);
 
   // The saved store is a snapshot of a server row and can outlive it (reseeded
   // database, build repointed at another server). Left unchecked, every
@@ -136,7 +171,10 @@ export default function RootLayout() {
     }
   }, [user, hydrated, storeHydrated, segments]);
 
-  if (!hydrated || !storeHydrated || !fontsLoaded || !apiReady) {
+  // `lockConfigured === null` means SecureStore has not been read yet. Waiting
+  // for it matters: render the app first and a locked till flashes its takings
+  // on screen for a frame before the lock lands over the top.
+  if (!hydrated || !storeHydrated || !fontsLoaded || !apiReady || lockConfigured === null) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.canvas, justifyContent: 'center' }}>
         <Loading />
@@ -168,6 +206,10 @@ export default function RootLayout() {
           <Stack.Screen
             name="printer"
             options={{ presentation: 'modal', headerShown: true, title: 'Receipt Printer' }}
+          />
+          <Stack.Screen
+            name="screen-lock"
+            options={{ presentation: 'modal', headerShown: true, title: 'Screen Lock' }}
           />
           <Stack.Screen name="sales" options={{ headerShown: true, title: 'Sales History' }} />
           <Stack.Screen name="transaction/[id]" options={{ headerShown: true, title: 'Receipt' }} />
@@ -222,6 +264,11 @@ export default function RootLayout() {
           <Stack.Screen name="analytics" options={{ headerShown: true, title: 'Analytics' }} />
           <Stack.Screen name="settings" options={{ headerShown: true, title: 'Settings' }} />
         </Stack>
+        {/* Over the navigator, not inside it. A route could be dismissed by a
+            back gesture or a deep link; a sibling that covers the screen cannot
+            be navigated away from. Only shown to someone already signed in —
+            the lock protects a live session, it does not replace the password. */}
+        {locked && user ? <LockScreen /> : null}
         </FlyToCartProvider>
       </SafeAreaProvider>
     </QueryClientProvider>

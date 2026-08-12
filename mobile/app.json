@@ -35,6 +35,12 @@
       "expo-secure-store",
       "expo-sqlite",
       [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "NG POS can use Face ID to unlock the till without retyping your PIN."
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "NG POS uses the camera to scan product barcodes at checkout.",

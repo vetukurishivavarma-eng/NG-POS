@@ -7,6 +7,7 @@ import { useAuth, roleLevel, useCan } from '../../src/store/auth';
 import { useStoreSelection } from '../../src/store/storeSelection';
 import { useSync, syncAll } from '../../src/db/sync';
 import { usePrinter } from '../../src/printing/printer';
+import { useScreenLock } from '../../src/store/screenLock';
 import { formatTime, useReminder } from '../../src/notifications/reminder';
 import { errorMessage } from '../../src/api/client';
 import { useLayout } from '../../src/ui/responsive';
@@ -24,6 +25,7 @@ export default function MoreScreen() {
   const pendingCount = useSync((s) => s.pendingCount);
   const lastSyncedAt = useSync((s) => s.lastSyncedAt);
   const printerName = usePrinter((s) => s.config?.name ?? null);
+  const lockConfigured = useScreenLock((s) => s.configured === true);
   const reminder = useReminder((s) => s.config);
 
   const [busy, setBusy] = useState(false);
@@ -302,6 +304,15 @@ export default function MoreScreen() {
               label="Receipt Printer"
               value={printerName ?? 'Not set up'}
               onPress={() => router.push('/printer')}
+            />
+            <View style={styles.divider} />
+            {/* Belongs to this handset and this person, like the printer above,
+                so it is not behind the administrator-only Settings screen. */}
+            <LinkRow
+              icon="lock"
+              label="Screen Lock"
+              value={lockConfigured ? 'PIN on' : 'Off'}
+              onPress={() => router.push('/screen-lock')}
             />
           </View>
         </View>

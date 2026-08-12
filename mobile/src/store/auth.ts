@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { auth as authApi } from '../api/endpoints';
 import { clearToken, setToken, getToken } from '../api/client';
 import { deviceIdentity } from './device';
+import { useScreenLock } from './screenLock';
 import type { User } from '../api/types';
 
 const USER_KEY = 'pos_user';
@@ -48,6 +49,13 @@ export const useAuth = create<AuthState>((set) => ({
     }
     await clearToken();
     await SecureStore.deleteItemAsync(USER_KEY);
+
+    // The PIN guards a signed-in session, so it dies with one. Kept, it would
+    // lock the next person out with a code belonging to whoever had the handset
+    // before them — and signing out is precisely the act of handing the device
+    // to the next shift.
+    await useScreenLock.getState().disable();
+
     set({ user: null });
   },
 }));
