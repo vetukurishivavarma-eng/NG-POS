@@ -6,6 +6,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeTransaction } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
+import { nextAuditAction } from '../lib/auditContext.js';
 import { createSale } from '../services/sales.js';
 import { readDailyReport, snapshotStoreDay, todayKey } from '../services/dailyReport.js';
 
@@ -275,6 +276,9 @@ transactionsRouter.post(
     if (!original) throw notFound('Transaction not found.');
     if (original.voidedAt) throw badRequest('Already voided.');
 
+    // A void is a status column moving, and to the shop it is the cancellation
+    // of a sale. Name it, or the history reads as somebody editing a field.
+    nextAuditAction('void');
     const updated = await prisma.transaction.update({
       where: { id: original.id },
       data: { status: 'voided', voidedAt: new Date(), voidReason: reason },

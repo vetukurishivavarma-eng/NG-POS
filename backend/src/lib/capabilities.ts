@@ -34,6 +34,8 @@ export const CAPABILITIES = [
   'transactions.void',
   'reports.rebuild',
   'devices.remove',
+  'audit.read',
+  'releases.publish',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -50,6 +52,11 @@ const ROLE_CAPABILITIES: Record<string, Capability[]> = {
     'purchases.write',
     'users.view',
     'refunds.issue',
+    // A manager can read the history of their own shops — the route narrows it
+    // to the stores they are assigned to. Who changed a price or corrected a
+    // stock figure is the question they are asked, and sending them to the
+    // owner for the answer is how the answer stops being asked for.
+    'audit.read',
   ],
   CASHIER: [],
 };

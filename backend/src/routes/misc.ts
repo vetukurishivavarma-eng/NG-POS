@@ -14,6 +14,7 @@ import {
 } from '../middleware/auth.js';
 import { num, serializeProduct, serializeUser } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
+import { nextAuditAction } from '../lib/auditContext.js';
 import { revokeAllSessions } from './devices.js';
 
 /* ------------------------------------------------------------------- users */
@@ -113,6 +114,7 @@ usersRouter.delete(
     });
     if (!existing) throw notFound('User not found.');
 
+    nextAuditAction('deactivate');
     await prisma.user.update({ where: { id: existing.id }, data: { isActive: false } });
     res.json({ detail: 'User deactivated.' });
   })
@@ -279,6 +281,7 @@ warehousesRouter.delete(
   '/:id',
   requireCapability('warehouses.write'),
   asyncHandler(async (req, res) => {
+    nextAuditAction('deactivate');
     await prisma.warehouse.update({
       where: { id: req.params.id as string },
       data: { isActive: false },

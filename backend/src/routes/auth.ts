@@ -8,6 +8,8 @@ import { env, passwordResetConfigured } from '../env.js';
 import { asyncHandler } from '../middleware/error.js';
 import { authenticate, currentUser, signToken } from '../middleware/auth.js';
 import { capabilitySummary } from '../lib/capabilities.js';
+import { recordAudit } from '../lib/audit.js';
+import { setAuditActor } from '../lib/auditContext.js';
 import { serializeDevice, serializeUser } from '../lib/serialize.js';
 import { badRequest, conflict, notFound, unauthorized } from '../lib/errors.js';
 import { sendMail } from '../lib/mailer.js';
@@ -76,10 +78,49 @@ authRouter.post(
     const hash = user?.passwordHash ?? '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva';
     const ok = await bcrypt.compare(password, hash);
 
-    if (!user || !ok) throw unauthorized('Incorrect email or password.');
-    if (!user.isActive) throw unauthorized('This account has been deactivated.');
+    if (!user || !ok || !user.isActive) {
+      // Recorded even though the request is about to fail, and deliberately
+      // not told apart from an unknown address in the log either — the address
+      // typed is in the entry, which is what somebody looking into a run of
+      // failed sign-ins actually needs. `force` survives the 401; see
+      // `flushAuditContext`.
+      recordAudit({
+        entity: 'auth',
+        entityId: user?.id ?? 'unknown',
+        action: 'login_failed',
+        label: email.toLowerCase(),
+        summary: user
+          ? user.isActive
+            ? 'Sign-in refused: wrong password'
+            : 'Sign-in refused: account deactivated'
+          : 'Sign-in refused: no such account',
+        organizationId: user?.organizationId ?? null,
+        details: { email: email.toLowerCase(), device: device?.device_name ?? null },
+        force: true,
+      });
+
+      if (!user || !ok) throw unauthorized('Incorrect email or password.');
+      throw unauthorized('This account has been deactivated.');
+    }
 
     const session = await claimDevice(user, device, req.ip ?? null);
+
+    // From here on, anything this request records is attributed to them —
+    // `authenticate` has not run on this route, so nothing else would set it.
+    setAuditActor(
+      { id: user.id, name: user.fullName || user.email, role: user.role },
+      user.organizationId,
+      { id: session.deviceId, name: session.deviceName }
+    );
+    recordAudit({
+      entity: 'auth',
+      entityId: user.id,
+      action: 'login',
+      label: user.fullName || user.email,
+      summary: `Signed in on ${session.deviceName}`,
+      organizationId: user.organizationId,
+      details: { device: session.deviceName, platform: session.platform, app_version: session.appVersion },
+    });
 
     res.json({
       access_token: signToken(user.id, user.organizationId, session.id),
@@ -262,7 +303,18 @@ authRouter.post(
   '/logout',
   authenticate,
   asyncHandler(async (req, res) => {
-    if (req.session) await revokeOwnSession(req.session.id);
+    const me = currentUser(req);
+    if (req.session) {
+      await revokeOwnSession(req.session.id);
+      recordAudit({
+        entity: 'auth',
+        entityId: me.id,
+        action: 'logout',
+        label: me.fullName || me.email,
+        summary: `Signed out of ${req.session.deviceName}`,
+        organizationId: me.organizationId,
+      });
+    }
     res.json({ detail: 'Signed out. This device has been released.' });
   })
 );
@@ -300,6 +352,17 @@ authRouter.post(
     await prisma.deviceSession.updateMany({
       where: { userId: me.id, revokedAt: null, ...(keep ? { NOT: { id: keep } } : {}) },
       data: { revokedAt: new Date(), revokedReason: 'Password changed' },
+    });
+
+    // The password hash itself is redacted in the audit trail, so the change to
+    // the `users` row records only that it moved. Say what happened in words.
+    recordAudit({
+      entity: 'auth',
+      entityId: me.id,
+      action: 'password_changed',
+      label: me.fullName || me.email,
+      summary: 'Changed their own password; other devices signed out',
+      organizationId: me.organizationId,
     });
 
     // Hand this device a fresh token so the person who *made* the change isn't

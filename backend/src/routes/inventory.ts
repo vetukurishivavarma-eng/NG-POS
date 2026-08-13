@@ -8,6 +8,7 @@ import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { capabilityContext } from '../lib/capabilities.js';
+import { recordAudit } from '../lib/audit.js';
 import { num } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { parseCsvObjects, tableToObjects, type TableObjects } from '../lib/csv.js';
@@ -843,6 +844,27 @@ inventoryRouter.post(
       // import back for no reason other than impatience.
       { timeout: 120_000, maxWait: 20_000 }
     );
+
+    // The one place the data layer's trail is genuinely thin: shop prices are
+    // written with `createMany`, which hands back a count and no rows, so there
+    // is nothing to snapshot per price. Three thousand entries would be the
+    // wrong answer anyway — what somebody looking into "who repriced the whole
+    // catalogue on Tuesday" needs is this one line, and the file's reference.
+    recordAudit({
+      entity: 'import',
+      entityId: reference,
+      action: 'import',
+      label: reference,
+      summary:
+        `Imported ${summary.total_rows} rows, reference ${reference}: ` +
+        `${summary.products_to_create} products created, ${summary.products_to_update} updated` +
+        (shopPriceWrites > 0
+          ? `, ${shopPriceWrites} shop prices set across ${writableShopColumns.length} shops`
+          : ''),
+      organizationId: user.organizationId,
+      storeId: body.store_id,
+      details: { ...summary, reference },
+    });
 
     return res.status(201).json({
       applied: true,

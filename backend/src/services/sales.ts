@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-import { prisma } from '../prisma.js';
+import { prisma, type TxClient } from '../prisma.js';
 import { env } from '../env.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { dateKeyIn } from '../lib/time.js';
@@ -41,7 +41,7 @@ export interface SaleInput {
  * uses, so every receipt number on a day report actually carries that date.
  */
 async function nextReceiptNumber(
-  tx: Prisma.TransactionClient,
+  tx: TxClient,
   storeId: string,
   storeCode: string,
   when: Date

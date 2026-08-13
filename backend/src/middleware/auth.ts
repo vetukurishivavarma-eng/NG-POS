@@ -5,6 +5,7 @@ import { env } from '../env.js';
 import { prisma } from '../prisma.js';
 import { forbidden, notFound, unauthorized } from '../lib/errors.js';
 import { capabilityContext, type Capability } from '../lib/capabilities.js';
+import { setAuditActor } from '../lib/auditContext.js';
 
 export interface AuthUser {
   id: string;
@@ -143,6 +144,16 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
       role: user.role,
       assignedStores: user.assignedStores,
     };
+
+    // Everything this request goes on to change is recorded against this person
+    // and this handset. Set here, once, rather than passed down through every
+    // service that might write something — see `lib/auditContext.ts`.
+    setAuditActor(
+      { id: user.id, name: user.fullName || user.email, role: user.role },
+      user.organizationId,
+      { id: session.deviceId, name: session.deviceName }
+    );
+
     next();
   } catch (err) {
     next(err);

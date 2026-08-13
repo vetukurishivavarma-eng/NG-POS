@@ -6,6 +6,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeProduct, serializeProductWithStock } from '../lib/serialize.js';
 import { notFound } from '../lib/errors.js';
+import { nextAuditAction } from '../lib/auditContext.js';
 import {
   CATEGORY_LIST_HINT,
   PRODUCT_CATEGORIES,
@@ -301,6 +302,7 @@ productsRouter.delete(
     });
     if (!existing) throw notFound('Product not found.');
 
+    nextAuditAction('deactivate');
     await prisma.product.update({ where: { id: existing.id }, data: { isActive: false } });
     res.json({ detail: 'Product deactivated.' });
   })

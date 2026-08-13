@@ -4,8 +4,12 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 
 import { corsOrigins, env } from './env.js';
+import { auditRequest } from './middleware/auditRequest.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { rateLimit } from './middleware/rateLimit.js';
+
+import { appRouter } from './routes/app.js';
+import { auditRouter } from './routes/audit.js';
 
 import { authRouter } from './routes/auth.js';
 import { organizationsRouter } from './routes/organizations.js';
@@ -36,6 +40,10 @@ export function createApp() {
 
   app.get('/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
+  // Above the routes and above the rate limiter, so that every change made by
+  // any of them is recorded against whoever made it. Costs nothing on a read.
+  app.use(auditRequest);
+
   /**
    * A ceiling on any one address, under which the sensitive endpoints keep their
    * own much tighter limits. Sized for a branch: several tills behind one NAT
@@ -58,7 +66,15 @@ export function createApp() {
     );
   }
 
+  // Unauthenticated on purpose: the app asks what the current build is before
+  // anybody has signed in, because a build too old to be trusted should not get
+  // as far as the login screen.
+  app.use('/api/app', appRouter);
+
   app.use('/api/auth', authRouter);
+  app.use('/api/audit-logs', auditRouter);
+  // What the client calls it in conversation.
+  app.use('/api/history', auditRouter);
   app.use('/api/organizations', organizationsRouter);
   app.use('/api/settings', organizationsRouter);
   app.use('/api/stores', storesRouter);

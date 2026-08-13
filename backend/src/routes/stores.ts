@@ -6,6 +6,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeStore } from '../lib/serialize.js';
 import { conflict, notFound } from '../lib/errors.js';
+import { nextAuditAction } from '../lib/auditContext.js';
 
 export const storesRouter = Router();
 storesRouter.use(authenticate);
@@ -223,6 +224,7 @@ storesRouter.delete(
     });
     if (!existing) throw notFound('Store not found.');
 
+    nextAuditAction('deactivate');
     await prisma.store.update({ where: { id: existing.id }, data: { isActive: false } });
     res.json({ detail: 'Store deactivated.' });
   })

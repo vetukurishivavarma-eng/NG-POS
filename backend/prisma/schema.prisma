@@ -630,6 +630,129 @@ model SupplierInvoiceItem {
   @@map("supplier_invoice_items")
 }
 
+/// Every change anybody made to anything, and who made it.
+///
+/// The shop's argument is never "what does the system say now" — it is "it said
+/// something else yesterday". A price that moved, a stock figure that was
+/// corrected, a sale that was voided: each of those is somebody's decision, and
+/// without a record of it the only thing left to blame is the software.
+///
+/// Three deliberate properties:
+///
+///  1. **No foreign keys.** Every other table cascades from `organizations`, and
+///     a log that is deleted along with the thing it describes is not a log.
+///     The ids here are plain columns; a row survives its subject.
+///  2. **Written by the data layer, not by each route.** `lib/audit.ts` hangs
+///     off the Prisma client, so a change is recorded because it reached the
+///     database — not because whoever wrote the endpoint remembered to say so.
+///     A route added next year is covered without being told about this table.
+///  3. **`before` and `after` are whole snapshots**, so a deleted row can still
+///     be read in full and a diff can be recomputed later against fields nobody
+///     thought to name today.
+model AuditLog {
+  id String @id @default(uuid())
+
+  /// Nullable on purpose: a failed sign-in has no organisation yet, and losing
+  /// that record is exactly the wrong trade.
+  organizationId String? @map("organization_id")
+  storeId        String? @map("store_id")
+
+  /// The model, in snake case: `transaction`, `product`, `store_price`.
+  entity   String
+  entityId String @map("entity_id")
+  /// `create` | `update` | `delete` | `void` | `refund` | `login` | … Text, not
+  /// an enum: this is a log, and a new kind of event should not need a
+  /// migration before it can be recorded.
+  action   String
+
+  /// What the record was called at the time — a receipt number, a product name.
+  /// Denormalised because the row it names may since have been renamed or gone.
+  entityLabel   String   @default("") @map("entity_label")
+  /// One line fit for a list: "Selling price K85.00 → K90.00".
+  summary       String   @default("")
+  changedFields String[] @default([]) @map("changed_fields")
+  before        Json?
+  after         Json?
+
+  actorId   String? @map("actor_id")
+  actorName String  @default("") @map("actor_name")
+  actorRole String  @default("") @map("actor_role")
+  /// Which handset, so a disputed change can be traced to the till it came from.
+  deviceId   String? @map("device_id")
+  deviceName String? @map("device_name")
+  ip         String?
+  /// `POST /api/products/:id`, for reading the log against the code.
+  route      String  @default("")
+
+  /// True for rows whose information is fully contained in another entry — the
+  /// inventory level behind a stock movement. Kept, because "everything is
+  /// recorded" has to mean everything, but hidden from the list by default or
+  /// one sale of five lines buries the day.
+  minor Boolean @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entity, createdAt])
+  @@index([entity, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([storeId, createdAt])
+  @@map("audit_logs")
+}
+
+/// A published build of the mobile app.
+///
+/// The app asks this table what the current build is every time it opens. That
+/// is the whole mechanism behind forced updates: a shop with a version too old
+/// to be trusted with money is stopped at the door, and the release that stops
+/// them is a row somebody inserts — not a backend deploy.
+///
+/// Deliberately not scoped to an organisation. The check has to answer before
+/// anyone signs in, so there is nobody to scope it by; and one APK is one APK.
+model AppRelease {
+  id       String @id @default(uuid())
+  platform String @default("android")
+
+  /// What a person reads: "1.2.0".
+  version String
+  /// What the app compares. Android's `versionCode` — an integer that only ever
+  /// goes up, because "1.10.0" vs "1.9.0" is a string comparison waiting to go
+  /// wrong on the one night it matters.
+  buildNumber Int @map("build_number")
+
+  /// Any build below this may not be used at all: the update is forced on the
+  /// first prompt, with no "Later". For the release that fixes something the
+  /// shop must not keep running — a pricing bug, a broken sync.
+  minimumBuild Int @default(0) @map("minimum_build")
+
+  /// Where the APK is. Opened in the browser; the shop installs it themselves.
+  downloadUrl String @map("download_url")
+  /// What changed, shown on the prompt.
+  notes       String @default("")
+
+  /// How many times "Later" may be tapped before this update is compulsory.
+  /// Two, so the third prompt is the wall — set per release, because some
+  /// releases deserve less patience than others.
+  graceCount Int     @default(2) @map("grace_count")
+  /// Skip the grace entirely: compulsory from the first prompt.
+  mandatory  Boolean @default(false)
+
+  isActive    Boolean  @default(true) @map("is_active")
+  publishedAt DateTime @default(now()) @map("published_at")
+
+  createdById   String? @map("created_by_id")
+  createdByName String  @default("") @map("created_by_name")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// One row per build. Publishing the same build twice is a mistake, not two
+  /// releases, and the shop would be told to update to what it already has.
+  @@unique([platform, buildNumber])
+  @@index([platform, isActive, buildNumber])
+  @@map("app_releases")
+}
+
 /// One instalment against an invoice. Part-payments are the normal case here —
 /// stock is taken on credit and settled over weeks — so each one is its own row
 /// with its own reference, and the running balance is the invoice total minus

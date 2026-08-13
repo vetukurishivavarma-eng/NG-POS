@@ -7,6 +7,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { num } from '../lib/serialize.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { nextAuditAction } from '../lib/auditContext.js';
 
 /* ---------------------------------------------------------------- suppliers */
 
@@ -152,6 +153,7 @@ suppliersRouter.delete(
     });
     if (!existing) throw notFound('Supplier not found.');
 
+    nextAuditAction('deactivate');
     await prisma.supplier.update({ where: { id: existing.id }, data: { isActive: false } });
     res.json({ detail: 'Supplier deactivated.' });
   })

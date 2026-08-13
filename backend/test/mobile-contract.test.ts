@@ -266,7 +266,11 @@ describe('mobile API contract', () => {
       sku: `COP-${Date.now()}`,
       barcode: '6001234567890',
       brand: 'Agrichem',
-      category: 'Crop protection',
+      // A head from the fixed taxonomy, not a description of one. This said
+      // "Crop protection" when categories were free text; `normaliseCategory`
+      // now refuses anything it cannot place, on purpose — an unrecognised head
+      // is a mis-typed column rather than a new category.
+      category: 'Fungicides',
       cost_price: 120,
       selling_price: 185.5,
       tax_type: 'vat',

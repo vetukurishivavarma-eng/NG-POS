@@ -6,6 +6,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeDevice } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
+import { recordAudit } from '../lib/audit.js';
 
 /**
  * Which device is holding which account.
@@ -103,6 +104,22 @@ devicesRouter.delete(
         revokedReason: reason?.trim() || null,
       },
       include: { user: { select: { id: true, fullName: true, email: true, role: true } } },
+    });
+
+    // Device sessions are not audited by the data layer — a row is created on
+    // every sign-in and that is already recorded as a sign-in. Taking somebody's
+    // till away from them is a different kind of event, and it is one the person
+    // it happened to will come asking about.
+    recordAudit({
+      entity: 'device',
+      entityId: updated.id,
+      action: 'device_removed',
+      label: updated.deviceName,
+      summary: `Removed ${updated.deviceName} from ${updated.user.fullName || updated.user.email}${
+        reason?.trim() ? ` — ${reason.trim()}` : ''
+      }`,
+      organizationId: admin.organizationId,
+      details: { user_id: updated.userId, device_name: updated.deviceName, reason: reason ?? null },
     });
 
     res.json(serializeDevice(updated));
