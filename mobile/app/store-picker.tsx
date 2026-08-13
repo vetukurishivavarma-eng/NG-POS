@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
 
 import { stores as storesApi } from '../src/api/endpoints';
+import { isWarehouse, warehouseFirst } from '../src/store/place';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { useCart } from '../src/store/cart';
 import { colors, font, radius, shadow, spacing } from '../src/theme';
@@ -41,7 +42,9 @@ export default function StorePicker() {
     );
   }
 
-  const active = (data ?? []).filter((s) => s.is_active);
+  // Warehouse at the top. Somebody who works there opens this list to find it,
+  // and it is one entry among however many shops they can also see.
+  const active = warehouseFirst((data ?? []).filter((s) => s.is_active));
   const visible = search.trim()
     ? active.filter((s) =>
         `${s.name} ${s.code}`.toLowerCase().includes(search.trim().toLowerCase())
@@ -78,13 +81,24 @@ export default function StorePicker() {
               ]}
             >
               <View style={[styles.mark, isCurrent && styles.markActive]}>
-                <Text style={[styles.markText, isCurrent && styles.markTextActive]}>
-                  {item.name.charAt(0).toUpperCase()}
-                </Text>
+                {isWarehouse(item) ? (
+                  <Icon
+                    name="package"
+                    size={17}
+                    color={isCurrent ? '#fff' : colors.textMuted}
+                  />
+                ) : (
+                  <Text style={[styles.markText, isCurrent && styles.markTextActive]}>
+                    {item.name.charAt(0).toUpperCase()}
+                  </Text>
+                )}
               </View>
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{item.name}</Text>
+                <View style={styles.nameRow}>
+                  <Text style={styles.name}>{item.name}</Text>
+                  {isWarehouse(item) ? <Badge label="Warehouse" tone="accent" /> : null}
+                </View>
                 <Text style={styles.code}>{item.code}</Text>
                 {item.address?.city ? (
                   <View style={styles.cityRow}>
@@ -150,6 +164,7 @@ const styles = StyleSheet.create({
   markText: { fontFamily: font.bold, fontSize: 18, color: colors.textMuted },
   markTextActive: { color: '#fff' },
 
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
   name: { fontFamily: font.semibold, fontSize: 15, color: colors.text },
   code: { fontFamily: font.regular, fontSize: 11, color: colors.textFaint, marginTop: 1 },
   cityRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },

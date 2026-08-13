@@ -218,7 +218,9 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen
             name="store-picker"
-            options={{ presentation: 'modal', headerShown: true, title: 'Select Store' }}
+            // Not "Select Store": the list holds the warehouse as well as the
+            // shops, and somebody who works at the warehouse is not picking one.
+            options={{ presentation: 'modal', headerShown: true, title: 'Shops & Warehouse' }}
           />
           <Stack.Screen
             name="cart"

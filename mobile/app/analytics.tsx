@@ -7,6 +7,7 @@ import { analytics, stores as storesApi } from '../src/api/endpoints';
 import { errorMessage } from '../src/api/client';
 import { PERIOD_LABELS } from '../src/api/types';
 import { useAuth } from '../src/store/auth';
+import { placeLabel, warehouseFirst } from '../src/store/place';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { useLayout } from '../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing, splitAmount } from '../src/theme';
@@ -110,7 +111,9 @@ export default function AnalyticsScreen() {
   const storeOptions = useMemo(
     () => [
       { value: ALL_SHOPS, label: 'All shops' },
-      ...visibleStores.map((s) => ({ value: s.id, label: s.name })),
+      // The warehouse is in this list too, and it reports very different
+      // figures — mostly stock moving, very little selling. Say which one it is.
+      ...warehouseFirst(visibleStores).map((s) => ({ value: s.id, label: placeLabel(s) })),
     ],
     [visibleStores]
   );

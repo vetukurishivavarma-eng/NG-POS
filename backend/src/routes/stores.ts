@@ -86,11 +86,23 @@ storesRouter.get(
 
     const stores = await prisma.store.findMany({
       where: { organizationId: user.organizationId, isActive: true },
-      select: { id: true, name: true, code: true },
+      // `staffFullAccess` is the warehouse flag, and it belongs in a picker.
+      // Without it a transfer screen lists six names with nothing to say which
+      // one is the warehouse — and "send it back to the warehouse" is the most
+      // common transfer a shop makes. It is a fact about how a place is used,
+      // not a detail of the place, so it does not breach the rule above.
+      select: { id: true, name: true, code: true, staffFullAccess: true },
       orderBy: { name: 'asc' },
     });
 
-    res.json(stores);
+    res.json(
+      stores.map((s) => ({
+        id: s.id,
+        name: s.name,
+        code: s.code,
+        staff_full_access: s.staffFullAccess,
+      }))
+    );
   })
 );
 

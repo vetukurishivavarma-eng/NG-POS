@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 
 import { analytics, transactions as txApi } from '../../src/api/endpoints';
+import { placeLabel } from '../../src/store/place';
 import { useStoreSelection } from '../../src/store/storeSelection';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing, splitAmount } from '../../src/theme';
@@ -38,7 +39,11 @@ export default function ReportsScreen() {
   if (!store) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <EmptyState icon="home" title="No store selected" hint="Choose a store from the Sell tab." />
+        <EmptyState
+          icon="home"
+          title="Nowhere selected yet"
+          hint="Pick your shop or the warehouse from the Sell tab and the day's figures appear here."
+        />
       </SafeAreaView>
     );
   }
@@ -64,7 +69,10 @@ export default function ReportsScreen() {
       >
         <View style={styles.header}>
           <Title>Dashboard</Title>
-          <Subtitle>{store.name}</Subtitle>
+          {/* The warehouse says so. It is a store row like any other in the
+              data, and somebody standing in it being shown a bare shop name is
+              the app failing to know where they are. */}
+          <Subtitle>{placeLabel(store)}</Subtitle>
         </View>
 
         {dash.isLoading ? (

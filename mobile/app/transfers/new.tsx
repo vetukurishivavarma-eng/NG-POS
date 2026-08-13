@@ -18,6 +18,7 @@ import { printTransferNote, shareTransferPdf } from '../../src/printing/print';
 import type { TransferNoteData } from '../../src/printing/transferNote';
 import { filterCatalogue, useCatalogue } from '../../src/hooks/useCatalogue';
 import { useAuth, useCan, roleLevel } from '../../src/store/auth';
+import { isWarehouse, placeLabel, warehouseFirst } from '../../src/store/place';
 import { useStoreSelection } from '../../src/store/storeSelection';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../../src/theme';
@@ -276,11 +277,19 @@ export default function NewTransferScreen() {
     );
   }
 
-  const sourceOptions = sourceStores.map((s: Store) => ({ value: s.id, label: s.name }));
-  const destinationOptions = directory
+  const sourceOptions = warehouseFirst(sourceStores as Store[]).map((s) => ({
+    value: s.id,
+    label: placeLabel(s),
+  }));
+
+  // Warehouse first, and labelled. Stock going out to the shops and stock coming
+  // back to the warehouse are the two transfers this business actually makes, so
+  // the warehouse is the entry being looked for in both directions — and a list
+  // of six bare shop names gives somebody no way to tell which one it is.
+  const destinationOptions = warehouseFirst(
     // Same-to-same is rejected by the server; don't let the UI build it.
-    .filter((s) => s.id !== fromStoreId)
-    .map((s) => ({ value: s.id, label: s.name }));
+    directory.filter((s) => s.id !== fromStoreId)
+  ).map((s) => ({ value: s.id, label: placeLabel(s) }));
 
   const catalogueReady = !catalogue.isLoading && !catalogue.isError && items.length > 0;
 
@@ -300,14 +309,20 @@ export default function NewTransferScreen() {
             <View>
               <Text style={styles.fixedLabel}>Send from</Text>
               <View style={styles.fixedStore}>
-                <Icon name="home" size={16} color={colors.primary} />
+                <Icon
+                  name={isWarehouse(fromStore) ? 'package' : 'home'}
+                  size={16}
+                  color={colors.primary}
+                />
                 <Text style={styles.fixedStoreName} numberOfLines={1}>
-                  {fromStore?.name ?? sourceStores[0]?.name ?? 'Your shop'}
+                  {fromStore ? placeLabel(fromStore) : (sourceStores[0]?.name ?? 'Your shop')}
                 </Text>
                 <Icon name="lock" size={13} color={colors.textFaint} />
               </View>
               <Text style={styles.fixedHint}>
-                Stock can only leave the shop you work at.
+                {isWarehouse(fromStore)
+                  ? 'Sending out from the warehouse. Any shop in the organisation can receive it.'
+                  : 'Stock can only leave the shop you work at.'}
               </Text>
             </View>
           ) : (
@@ -337,7 +352,13 @@ export default function NewTransferScreen() {
             value={toStoreId}
             options={destinationOptions}
             onChange={setToStoreId}
-            hint={toStoreId ? undefined : 'Pick the shop receiving the stock.'}
+            hint={
+              toStoreId
+                ? undefined
+                : isWarehouse(fromStore)
+                  ? 'Pick the shop receiving the stock.'
+                  : 'Any shop, or the warehouse — stock moves both ways.'
+            }
           />
         </View>
 

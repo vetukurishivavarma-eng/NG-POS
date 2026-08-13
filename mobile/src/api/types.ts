@@ -43,6 +43,11 @@ export interface StoreDirectoryEntry {
   id: string;
   name: string;
   code: string;
+  /**
+   * The warehouse. Optional because an older server does not send it — treat a
+   * missing value as "an ordinary shop", never as "unknown".
+   */
+  staff_full_access?: boolean;
 }
 
 export interface Store {

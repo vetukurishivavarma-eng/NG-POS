@@ -68,9 +68,11 @@ export default function SellScreen() {
       <SafeAreaView style={styles.safe} edges={['top']}>
         <EmptyState
           icon="home"
-          title="No store selected"
-          hint="Pick which store you're selling from to start a session."
-          action={<Button label="Select Store" icon="chevron-right" onPress={() => router.push('/store-picker')} />}
+          title="Nowhere selected yet"
+          hint="Pick your shop, or the warehouse, to start a session."
+          action={
+            <Button label="Choose" icon="chevron-right" onPress={() => router.push('/store-picker')} />
+          }
         />
       </SafeAreaView>
     );

@@ -47,7 +47,11 @@ export default function StockScreen() {
   if (!store) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <EmptyState icon="home" title="No store selected" hint="Choose a store from the Sell tab." />
+        <EmptyState
+          icon="home"
+          title="Nowhere selected yet"
+          hint="Pick your shop or the warehouse from the Sell tab to see what is on its shelves."
+        />
       </SafeAreaView>
     );
   }
