@@ -122,6 +122,7 @@ export type Permission =
   | 'warehouses.write'
   | 'transfers.create'
   | 'stores.write'
+  | 'stores.delete'
   | 'suppliers.write'
   | 'suppliers.delete'
   | 'purchases.write'
@@ -147,6 +148,9 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   // Opening a shop is an organisation-level act, so admin only — the same guard
   // the server puts on POST /stores.
   'stores.write': ['admin'],
+  // The one irreversible act in the app, so it stays with the owner's account —
+  // warehouse staff are given everything else but not this.
+  'stores.delete': ['admin'],
   'suppliers.write': ['admin', 'manager'],
   'suppliers.delete': ['admin'],
   'purchases.write': ['admin', 'manager'],

@@ -32,6 +32,7 @@ export default function ShopsScreen() {
   const layout = useLayout();
   const queryClient = useQueryClient();
   const canWrite = useCan('stores.write');
+  const canDelete = useCan('stores.delete');
   const selected = useStoreSelection((s) => s.selected);
 
   const [editing, setEditing] = useState<Store | 'new' | null>(null);
@@ -85,6 +86,40 @@ export default function ShopsScreen() {
               .update(store.id, { is_active: true })
               .then(refresh)
               .catch((err: unknown) => Alert.alert("Couldn't reopen the shop", errorMessage(err)));
+          },
+        },
+      ]
+    );
+  }
+
+  /**
+   * Deletes a shop outright.
+   *
+   * Only offered on a shop that is already closed — two deliberate acts for
+   * something that cannot be undone, and closing is the answer often enough
+   * that most people never reach this. The server has the real say: it refuses
+   * any shop that has ever traded, and names what it found, so the button
+   * cannot quietly take a year of sales with it.
+   */
+  function confirmDelete(store: Store) {
+    Alert.alert(
+      `Delete ${store.name}?`,
+      'This removes the shop completely and cannot be undone. It only works for a shop that has never traded — if it has any sales or stock history, the server will refuse and you should leave it closed instead.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete for good',
+          style: 'destructive',
+          onPress: () => {
+            void storesApi
+              .deletePermanently(store.id)
+              .then((r) => {
+                refresh();
+                Alert.alert('Deleted', r.detail);
+              })
+              .catch((err: unknown) =>
+                Alert.alert("Couldn't delete the shop", errorMessage(err))
+              );
           },
         },
       ]
@@ -160,6 +195,8 @@ export default function ShopsScreen() {
                 onEdit={() => setEditing(store)}
                 onDeactivate={() => confirmDeactivate(store)}
                 onReopen={() => reopen(store)}
+                onDelete={() => confirmDelete(store)}
+                canDelete={canDelete}
               />
             ))}
           </>
@@ -176,6 +213,8 @@ function ShopCard({
   onEdit,
   onDeactivate,
   onReopen,
+  onDelete,
+  canDelete,
 }: {
   store: Store;
   current: boolean;
@@ -183,6 +222,8 @@ function ShopCard({
   onEdit: () => void;
   onDeactivate: () => void;
   onReopen: () => void;
+  onDelete: () => void;
+  canDelete: boolean;
 }) {
   const where = [store.address.street, store.address.city, store.address.province]
     .map((p) => p.trim())
@@ -246,10 +287,21 @@ function ShopCard({
               <Text style={[styles.actionText, { color: colors.danger }]}>Close</Text>
             </Pressable>
           ) : (
-            <Pressable onPress={onReopen} style={styles.action} hitSlop={6}>
-              <Icon name="rotate-ccw" size={14} color={colors.success} />
-              <Text style={[styles.actionText, { color: colors.success }]}>Reopen</Text>
-            </Pressable>
+            <>
+              <Pressable onPress={onReopen} style={styles.action} hitSlop={6}>
+                <Icon name="rotate-ccw" size={14} color={colors.success} />
+                <Text style={[styles.actionText, { color: colors.success }]}>Reopen</Text>
+              </Pressable>
+              {/* Only on a shop that is already closed. Two deliberate acts for
+                  something with no undo, and closing is the right answer often
+                  enough that most people never see this. */}
+              {canDelete ? (
+                <Pressable onPress={onDelete} style={styles.action} hitSlop={6}>
+                  <Icon name="trash-2" size={14} color={colors.danger} />
+                  <Text style={[styles.actionText, { color: colors.danger }]}>Delete</Text>
+                </Pressable>
+              ) : null}
+            </>
           )}
         </View>
       ) : null}

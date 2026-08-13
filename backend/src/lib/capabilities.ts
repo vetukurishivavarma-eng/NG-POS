@@ -23,6 +23,7 @@ export const CAPABILITIES = [
   'warehouses.write',
   'transfers.create',
   'stores.write',
+  'stores.delete',
   'suppliers.write',
   'suppliers.delete',
   'purchases.write',
@@ -91,7 +92,13 @@ export function capabilitiesFor(input: CapabilityInput): Capability[] {
   // shops, and organisation settings. Asked for explicitly, and it cuts both
   // ways — anyone here can change the owner's own password or deactivate their
   // account, so this list is granted by assignment and taken away the same way.
-  if (input.warehouseStaff) return [...CAPABILITIES];
+  //
+  // With one carve-out, added later at the owner's explicit instruction:
+  // removing a shop outright is the only irreversible act in the application,
+  // and it stays with the account that owns the organisation. Everything else a
+  // warehouse worker might do wrong can be undone — a closed shop reopens, a
+  // deactivated product comes back. This cannot.
+  if (input.warehouseStaff) return CAPABILITIES.filter((c) => c !== 'stores.delete');
 
   const granted = new Set<Capability>(ROLE_CAPABILITIES[input.role] ?? []);
 

@@ -145,6 +145,14 @@ export const stores = {
   /** Deactivates rather than deletes — receipts still reference the shop. */
   deactivate: (id: string) =>
     api.delete<{ detail: string }>(`/stores/${id}`).then((r) => r.data),
+
+  /**
+   * Removes a shop for good. Admin only, and the server refuses any shop that
+   * has ever traded — deleting one cascades to every sale, stock movement and
+   * day report it holds. For a shop opened by mistake, nothing else.
+   */
+  deletePermanently: (id: string) =>
+    api.delete<{ detail: string }>(`/stores/${id}/permanently`).then((r) => r.data),
 };
 
 export const suppliers = {

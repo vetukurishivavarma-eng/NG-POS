@@ -5,7 +5,7 @@ import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeStore } from '../lib/serialize.js';
-import { conflict, notFound } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
 
 export const storesRouter = Router();
@@ -259,5 +259,69 @@ storesRouter.delete(
     nextAuditAction('deactivate');
     await prisma.store.update({ where: { id: existing.id }, data: { isActive: false } });
     res.json({ detail: 'Store deactivated.' });
+  })
+);
+
+/**
+ * Removes a shop for good — but only one that never traded.
+ *
+ * The restriction is not caution, it is the only safe version of this. Every
+ * table that hangs off a store cascades from it in the database: transactions
+ * first, and transaction items and payments behind those, then stock movements,
+ * day reports, inventory and supplier invoices. Deleting a shop that has sold
+ * anything erases the record of every sale ever made there.
+ *
+ * Worse, it would do it *silently*. The guard that refuses to delete a sale
+ * (`lib/audit.ts`) hangs off the Prisma client and sees Prisma operations; a
+ * foreign-key cascade happens inside Postgres and never becomes one. There is
+ * no `transaction.delete` call to refuse. So the check has to happen here,
+ * before anything is removed.
+ *
+ * What is left is the case this exists for: a shop opened by mistake, or with a
+ * typo in its name, that has never taken a shilling. Anything else is closed
+ * instead, which hides it everywhere without destroying its history.
+ */
+storesRouter.delete(
+  '/:id/permanently',
+  requireCapability('stores.delete'),
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const existing = await prisma.store.findFirst({
+      where: { id: req.params.id, organizationId: user.organizationId },
+    });
+    if (!existing) throw notFound('Store not found.');
+
+    const [transactions, movements, invoices, reports, transfersOut, transfersIn] =
+      await Promise.all([
+        prisma.transaction.count({ where: { storeId: existing.id } }),
+        prisma.stockMovement.count({ where: { storeId: existing.id } }),
+        prisma.supplierInvoice.count({ where: { storeId: existing.id } }),
+        prisma.dailyReport.count({ where: { storeId: existing.id } }),
+        prisma.transfer.count({ where: { fromStoreId: existing.id } }),
+        prisma.transfer.count({ where: { toStoreId: existing.id } }),
+      ]);
+
+    // Named individually rather than as one refusal, because "it has history"
+    // sends somebody hunting. "41 sales" tells them what they would be losing.
+    const history: string[] = [];
+    if (transactions) history.push(`${transactions} sale${transactions === 1 ? '' : 's'}`);
+    if (movements) history.push(`${movements} stock movement${movements === 1 ? '' : 's'}`);
+    if (invoices) history.push(`${invoices} supplier invoice${invoices === 1 ? '' : 's'}`);
+    if (reports) history.push(`${reports} day report${reports === 1 ? '' : 's'}`);
+    const transfers = transfersOut + transfersIn;
+    if (transfers) history.push(`${transfers} transfer${transfers === 1 ? '' : 's'}`);
+
+    if (history.length > 0) {
+      throw badRequest(
+        `${existing.name} cannot be deleted — it has ${history.join(', ')} on record, and removing it would erase them. Close it instead: it disappears from every list and its history stays.`
+      );
+    }
+
+    // Only stock levels, price overrides and an unused receipt counter can
+    // remain, and none of those is a record of anything happening.
+    nextAuditAction('delete');
+    await prisma.store.delete({ where: { id: existing.id } });
+
+    res.json({ detail: `${existing.name} has been deleted.` });
   })
 );
