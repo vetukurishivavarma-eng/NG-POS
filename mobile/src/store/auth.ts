@@ -107,7 +107,9 @@ export type Permission =
   | 'refunds.issue'
   | 'transactions.void'
   | 'reports.rebuild'
-  | 'devices.remove';
+  | 'devices.remove'
+  | 'audit.read'
+  | 'releases.publish';
 
 const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'products.write': ['admin', 'manager'],
@@ -131,6 +133,10 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'transactions.void': ['admin'],
   'reports.rebuild': ['admin'],
   'devices.remove': ['admin'],
+  // A manager reads the history of their own shops; the server narrows it to
+  // the stores they are assigned to.
+  'audit.read': ['admin', 'manager'],
+  'releases.publish': ['admin'],
 };
 
 /**

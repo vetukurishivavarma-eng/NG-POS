@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { organizations } from '../src/api/endpoints';
 import { errorMessage, getApiBaseUrl, isCustomApiBaseUrl } from '../src/api/client';
 import { ROLE_LABELS } from '../src/api/types';
+import { installedBuild } from '../src/store/appUpdate';
 import { useAuth, useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
 import { colors, font, radius, spacing } from '../src/theme';
@@ -273,7 +274,17 @@ export default function SettingsScreen() {
             {appVersion ? (
               <>
                 <RowDivider />
-                <AboutRow icon="tag" label="App version" value={appVersion} />
+                {/* The build number is here rather than hidden, because it is
+                    what the update check compares and the first thing worth
+                    asking for when a shop reports something the current build
+                    does not do. */}
+                <AboutRow
+                  icon="tag"
+                  label="App version"
+                  value={
+                    installedBuild() === null ? appVersion : `${appVersion} (build ${installedBuild()})`
+                  }
+                />
               </>
             ) : null}
           </Card>

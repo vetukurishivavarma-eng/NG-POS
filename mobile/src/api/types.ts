@@ -768,3 +768,96 @@ export interface BulkUploadRejection {
   error_count: number;
   warnings: string[];
 }
+
+/* -------------------------------------------------------------- history */
+
+/**
+ * One recorded change. Written by the server's data layer, so every mutation
+ * has one whether or not the endpoint that made it knew about the trail.
+ */
+export interface AuditEntry {
+  id: string;
+  /** `transaction`, `product`, `store_price`, `auth`, `device` … */
+  entity: string;
+  entity_id: string;
+  /** `create` | `update` | `delete` | `void` | `deactivate` | `login` … */
+  action: string;
+  /** What the record was called at the time — a receipt number, a product name. */
+  label: string;
+  /** One line: "Selling price 85.00 → 90.00". */
+  summary: string;
+  changed_fields: string[];
+  /** Whole snapshots. Null on a create (before) and on a delete (after). */
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  actor_id: string | null;
+  actor_name: string;
+  actor_role: string;
+  device_name: string | null;
+  store_id: string | null;
+  ip: string | null;
+  route: string;
+  minor: boolean;
+  created_at: string;
+}
+
+export interface AuditPage {
+  total: number;
+  limit: number;
+  offset: number;
+  entries: AuditEntry[];
+}
+
+export interface AuditTrail {
+  entity: string;
+  entity_id: string;
+  label: string;
+  entries: AuditEntry[];
+}
+
+/* ------------------------------------------------------- app updates */
+
+export interface AppReleaseInfo {
+  version: string;
+  build: number;
+  minimum_build: number;
+  download_url: string;
+  notes: string;
+  published_at: string;
+}
+
+/**
+ * The answer to "am I current?".
+ *
+ * `grace_count` is how many times "Later" may be tapped before the update is
+ * compulsory — server-side policy, so a release that must not be postponed can
+ * say so without a new app being shipped to enforce it.
+ */
+export interface VersionCheck {
+  platform: string;
+  update_available: boolean;
+  mandatory: boolean;
+  grace_count: number;
+  current_build: number | null;
+  latest: AppReleaseInfo | null;
+}
+
+export interface AppRelease extends AppReleaseInfo {
+  id: string;
+  platform: string;
+  grace_count: number;
+  mandatory: boolean;
+  is_active: boolean;
+  published_by: string;
+}
+
+export interface AppReleaseDraft {
+  platform?: 'android' | 'ios';
+  version: string;
+  build: number;
+  minimum_build?: number;
+  download_url: string;
+  notes?: string;
+  grace_count?: number;
+  mandatory?: boolean;
+}

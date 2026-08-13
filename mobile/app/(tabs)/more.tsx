@@ -42,6 +42,8 @@ export default function MoreScreen() {
   const canImport = useCan('products.import');
   const canShops = useCan('stores.write');
   const canBuy = useCan('purchases.write');
+  const canHistory = useCan('audit.read');
+  const canPublish = useCan('releases.publish');
   const seesReports = roleLevel(user) !== 'cashier';
 
   async function runSync() {
@@ -233,7 +235,7 @@ export default function MoreScreen() {
           </View>
         ) : null}
 
-        {seesReports || canViewStaff || canSettings || canShops ? (
+        {seesReports || canViewStaff || canSettings || canShops || canHistory ? (
           <View>
             <SectionLabel>Business</SectionLabel>
             <View style={styles.card}>
@@ -276,7 +278,16 @@ export default function MoreScreen() {
                   />
                 </>
               ) : null}
-              {canViewStaff && canSettings ? <View style={styles.divider} /> : null}
+              {canViewStaff && (canHistory || canSettings) ? <View style={styles.divider} /> : null}
+              {canHistory ? (
+                <LinkRow
+                  icon="clock"
+                  label="History"
+                  value="Every change, who made it and when"
+                  onPress={() => router.push('/history')}
+                />
+              ) : null}
+              {canHistory && canSettings ? <View style={styles.divider} /> : null}
               {canSettings ? (
                 <LinkRow
                   icon="sliders"
@@ -284,6 +295,17 @@ export default function MoreScreen() {
                   value="Organisation, VAT rate and currency"
                   onPress={() => router.push('/settings')}
                 />
+              ) : null}
+              {canPublish ? (
+                <>
+                  <View style={styles.divider} />
+                  <LinkRow
+                    icon="download-cloud"
+                    label="App Updates"
+                    value="Publish a build for every device"
+                    onPress={() => router.push('/app-releases')}
+                  />
+                </>
               ) : null}
             </View>
           </View>

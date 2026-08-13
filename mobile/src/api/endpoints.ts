@@ -1,7 +1,13 @@
+import { Platform } from 'react-native';
+
 import { api } from './client';
 import type { DeviceIdentity } from '../store/device';
 import type {
   AnalyticsPeriod,
+  AppRelease,
+  AppReleaseDraft,
+  AuditPage,
+  AuditTrail,
   BulkUploadRequest,
   BulkUploadResult,
   CategorySummary,
@@ -45,6 +51,7 @@ import type {
   TransferDraft,
   User,
   UserDraft,
+  VersionCheck,
   Warehouse,
   WarehouseStockRow,
 } from './types';
@@ -369,6 +376,77 @@ export const analytics = {
         params: { ...(storeId ? { store_id: storeId } : {}), period },
       })
       .then((r) => r.data),
+};
+
+export const history = {
+  /**
+   * The activity log. `entity` takes a comma-separated list, so one request can
+   * ask for "sales and refunds" without four round trips.
+   *
+   * `include_minor` brings in the entries whose story another entry already
+   * tells — the stock level behind a movement. Off by default, or one sale of
+   * five lines buries the day.
+   */
+  list: (params?: {
+    entity?: string;
+    entity_id?: string;
+    store_id?: string;
+    actor_id?: string;
+    action?: string;
+    search?: string;
+    from?: string;
+    to?: string;
+    include_minor?: boolean;
+    limit?: number;
+    offset?: number;
+  }) =>
+    api
+      .get<AuditPage>('/audit-logs', {
+        params: {
+          ...params,
+          ...(params?.include_minor ? { include_minor: 'true' } : {}),
+        },
+      })
+      .then((r) => r.data),
+
+  /** Everything that ever happened to one record, newest first. */
+  forRecord: (entity: string, id: string) =>
+    api.get<AuditTrail>(`/audit-logs/${entity}/${id}`).then((r) => r.data),
+};
+
+export const appUpdates = {
+  /**
+   * Asks the server what the current build is.
+   *
+   * Unauthenticated, and deliberately so — this is checked before anyone signs
+   * in, because a build too old to be trusted with money should not reach the
+   * login screen. Send the installed `versionCode`; the server compares numbers,
+   * never version strings, so "1.10.0" cannot sort below "1.9.0".
+   */
+  check: (build: number | null, version?: string) =>
+    api
+      .get<VersionCheck>('/app/version', {
+        params: {
+          platform: Platform.OS,
+          ...(build != null ? { build } : {}),
+          ...(version ? { version } : {}),
+        },
+      })
+      .then((r) => r.data),
+
+  /** Admin: what has been published. */
+  releases: () => api.get<AppRelease[]>('/app/releases').then((r) => r.data),
+
+  /**
+   * Admin: publish a build. This is the whole of "pushing an update" — the APK
+   * is uploaded wherever the shop can reach it, and this row is what tells every
+   * handset to go and get it.
+   */
+  publish: (body: AppReleaseDraft) =>
+    api.post<AppRelease>('/app/releases', body).then((r) => r.data),
+
+  update: (id: string, body: Partial<AppReleaseDraft> & { is_active?: boolean }) =>
+    api.put<AppRelease>(`/app/releases/${id}`, body).then((r) => r.data),
 };
 
 export const sync = {

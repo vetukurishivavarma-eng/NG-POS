@@ -5,7 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 
 import { stores as storesApi, transactions as txApi } from '../../src/api/endpoints';
-import { useAuth, capabilitiesFor } from '../../src/store/auth';
+import { useAuth, can, capabilitiesFor } from '../../src/store/auth';
 import { useStoreSelection } from '../../src/store/storeSelection';
 import { printTransaction } from '../../src/printing/print';
 import { printBlockedReason } from '../../src/printing/printer';
@@ -63,6 +63,7 @@ export default function TransactionScreen() {
     capabilitiesFor(user).includes('reports') &&
     t.transaction_type === 'sale' &&
     t.status === 'completed';
+  const canSeeHistory = can(user, 'audit.read');
 
   async function reprint() {
     if (!store.data) return;
@@ -172,6 +173,18 @@ export default function TransactionScreen() {
               icon="corner-up-left"
               variant="danger"
               onPress={() => router.push(`/refund?id=${t.id}`)}
+            />
+          ) : null}
+
+          {/* The receipt shows what the sale is now. This shows whether it has
+              always been that — which is the question actually being asked when
+              somebody brings a printed receipt back to the counter. */}
+          {canSeeHistory ? (
+            <Button
+              label="History of This Sale"
+              icon="clock"
+              variant="ghost"
+              onPress={() => router.push(`/history?entity=transaction&entity_id=${t.id}`)}
             />
           ) : null}
 

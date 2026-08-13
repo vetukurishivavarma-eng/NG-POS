@@ -17,6 +17,7 @@ import {
 import * as Notifications from 'expo-notifications';
 
 import { restoreApiBaseUrl, setUnauthorizedHandler } from '../src/api/client';
+import { updateGateVisible, useAppUpdate } from '../src/store/appUpdate';
 import { useAuth } from '../src/store/auth';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { startConnectivityWatcher, useSync } from '../src/db/sync';
@@ -27,6 +28,7 @@ import { colors } from '../src/theme';
 import { Loading } from '../src/ui/components';
 import { FlyToCartProvider } from '../src/ui/flyToCart';
 import { LockScreen } from '../src/ui/LockScreen';
+import { UpdateGate } from '../src/ui/UpdateGate';
 
 // A closing-time reminder is useless if it only appears while the app is open.
 Notifications.setNotificationHandler({
@@ -64,6 +66,7 @@ export default function RootLayout() {
   const lockConfigured = useScreenLock((s) => s.configured);
   const locked = useScreenLock((s) => s.locked);
   const segments = useSegments();
+  const updateBlocking = useAppUpdate(updateGateVisible);
   const lastResponse = Notifications.useLastNotificationResponse();
   const handledResponse = useRef<string | null>(null);
   // Nothing may render until the saved server address is loaded, or the first
@@ -153,6 +156,25 @@ export default function RootLayout() {
     void useSync.getState().refreshPendingCount();
     return stop;
   }, []);
+
+  /**
+   * Ask whether this build is still the current one — on opening, and again
+   * whenever the app is brought back to the foreground.
+   *
+   * The foreground case is not decoration: a till is rarely restarted. Left to
+   * cold starts alone, a shop could run a build for a week after it was
+   * withdrawn. The store throttles the calls, so a shift's worth of switching
+   * between apps is one request every half hour.
+   */
+  useEffect(() => {
+    if (!apiReady) return;
+    void useAppUpdate.getState().check();
+
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void useAppUpdate.getState().check();
+    });
+    return () => subscription.remove();
+  }, [apiReady]);
 
   // Route guard: unauthenticated users can only reach the sign-in screens.
   // Password recovery has to be in this set — the person using it cannot sign
@@ -262,6 +284,11 @@ export default function RootLayout() {
           />
           <Stack.Screen name="warehouses" options={{ headerShown: true, title: 'Warehouses' }} />
           <Stack.Screen name="analytics" options={{ headerShown: true, title: 'Analytics' }} />
+          <Stack.Screen name="history" options={{ headerShown: true, title: 'History' }} />
+          <Stack.Screen
+            name="app-releases"
+            options={{ headerShown: true, title: 'App Updates' }}
+          />
           <Stack.Screen name="settings" options={{ headerShown: true, title: 'Settings' }} />
         </Stack>
         {/* Over the navigator, not inside it. A route could be dismissed by a
@@ -269,6 +296,10 @@ export default function RootLayout() {
             be navigated away from. Only shown to someone already signed in —
             the lock protects a live session, it does not replace the password. */}
         {locked && user ? <LockScreen /> : null}
+        {/* Above the lock screen as well as the navigator, and shown whether or
+            not anybody is signed in: a build the server has withdrawn should not
+            get as far as the login form. */}
+        {updateBlocking ? <UpdateGate /> : null}
         </FlyToCartProvider>
       </SafeAreaProvider>
     </QueryClientProvider>
