@@ -65,6 +65,18 @@ export const auth = {
   login: (email: string, password: string, device: DeviceIdentity) =>
     api.post<LoginResponse>('/auth/login', { email, password, device }).then((r) => r.data),
 
+  /**
+   * The signed-in account as the server sees it *now* — capabilities included.
+   *
+   * Worth calling on every cold start, not just at sign-in. What somebody is
+   * allowed to do changes without them touching anything: a shop is flagged as
+   * the warehouse, the product-entry window closes, a new capability ships. The
+   * app was caching the answer from sign-in and never asking again, so a token
+   * issued before a change went on hiding the screens it granted — with nothing
+   * on screen to suggest signing out and in would fix it.
+   */
+  me: () => api.get<User>('/auth/me').then((r) => r.data),
+
   /** Releases this device so the account can be used on another one. */
   logout: () => api.post<{ detail: string }>('/auth/logout').then((r) => r.data),
 

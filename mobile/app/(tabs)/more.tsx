@@ -3,6 +3,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
+import { installedBuild, installedVersion, useAppUpdate } from '../../src/store/appUpdate';
 import { useAuth, roleLevel, useCan } from '../../src/store/auth';
 import { useStoreSelection } from '../../src/store/storeSelection';
 import { useSync, syncAll } from '../../src/db/sync';
@@ -392,6 +393,13 @@ export default function MoreScreen() {
         </View>
 
         <Button label="Sign Out" variant="danger" icon="log-out" onPress={confirmSignOut} />
+
+        {/* Which build this handset is running, in plain sight.
+            It lived in Settings, which only an administrator can open — so the
+            one question support always starts with ("what version are you on?")
+            could not be answered by the person holding the phone. Tapping it
+            asks the server whether there is a newer one. */}
+        <BuildStamp />
       </ScrollView>
     </SafeAreaView>
   );
@@ -420,6 +428,48 @@ function LinkRow({
         </Text>
       </View>
       <Icon name="chevron-right" size={18} color={colors.textFaint} />
+    </Pressable>
+  );
+}
+
+/**
+ * The version and build, at the foot of the screen everyone can reach.
+ *
+ * Tapping it asks the server whether there is a newer build — the same check
+ * that runs on opening, forced past its throttle. If there is one, the update
+ * screen comes up over the top by itself; there is nothing to navigate to.
+ */
+function BuildStamp() {
+  const [checking, setChecking] = useState(false);
+
+  async function check() {
+    setChecking(true);
+    try {
+      await useAppUpdate.getState().check({ force: true });
+      // `status` is read after the check, not from a render-time snapshot.
+      if (useAppUpdate.getState().status === 'none') {
+        Alert.alert('Up to date', 'This is the current build.');
+      }
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  const build = installedBuild();
+
+  return (
+    <Pressable
+      onPress={() => void check()}
+      disabled={checking}
+      style={({ pressed }) => [styles.stamp, pressed && styles.stampPressed]}
+    >
+      <Text style={styles.stampVersion}>
+        NG POS {installedVersion() || '—'}
+        {build === null ? '' : ` · build ${build}`}
+      </Text>
+      <Text style={styles.stampHint}>
+        {checking ? 'Checking…' : 'Tap to check for updates'}
+      </Text>
     </Pressable>
   );
 }
@@ -479,6 +529,16 @@ const styles = StyleSheet.create({
     color: colors.onDark,
     textTransform: 'capitalize',
   },
+
+  stamp: { alignItems: 'center', gap: 2, paddingTop: spacing.lg, paddingBottom: spacing.sm },
+  stampPressed: { opacity: 0.55 },
+  stampVersion: {
+    fontFamily: font.semibold,
+    fontSize: 12,
+    color: colors.textFaint,
+    letterSpacing: 0.3,
+  },
+  stampHint: { fontFamily: font.regular, fontSize: 11, color: colors.textFaint },
 
   card: {
     backgroundColor: colors.surface,

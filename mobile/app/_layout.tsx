@@ -128,6 +128,16 @@ export default function RootLayout() {
     void useStoreSelection.getState().reconcile();
   }, [user, hydrated, storeHydrated, apiReady]);
 
+  // The account is cached at sign-in and the token lasts thirty days, so what
+  // this person is allowed to do would otherwise be a month out of date. Re-read
+  // it once per launch — see `useAuth.refresh`. Keyed on having a session at all
+  // rather than on the user object, or updating it here would re-trigger this.
+  const signedIn = Boolean(user);
+  useEffect(() => {
+    if (!signedIn || !hydrated || !apiReady) return;
+    void useAuth.getState().refresh();
+  }, [signedIn, hydrated, apiReady]);
+
   // Tapping the closing-time reminder should land on the report itself, not
   // wherever the app happened to be left. `useLastNotificationResponse` also
   // covers the cold-start case, where the tap is what launched the app — but it

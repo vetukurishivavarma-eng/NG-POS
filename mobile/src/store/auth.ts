@@ -15,6 +15,8 @@ interface AuthState {
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   restore: () => Promise<void>;
+  /** Re-read the account from the server, so permissions cannot go stale. */
+  refresh: () => Promise<void>;
 }
 
 export const useAuth = create<AuthState>((set) => ({
@@ -27,6 +29,29 @@ export const useAuth = create<AuthState>((set) => ({
       set({ user: token && raw ? (JSON.parse(raw) as User) : null, hydrated: true });
     } catch {
       set({ user: null, hydrated: true });
+    }
+  },
+
+  /**
+   * Re-reads the account on cold start.
+   *
+   * The cached copy is written once, at sign-in, and tokens last thirty days —
+   * so without this a capability granted today stays invisible for a month, and
+   * the only cure is signing out, which nobody would think to try because the
+   * app looks like it is working. Exactly how "App Updates" and "History" went
+   * missing for an account that was entitled to both.
+   *
+   * Failure is deliberately silent: offline is the normal case for a till, and
+   * the cached account is a perfectly good answer. A 401 is handled by the
+   * response interceptor, which ends the session properly.
+   */
+  refresh: async () => {
+    try {
+      const fresh = await authApi.me();
+      await SecureStore.setItemAsync(USER_KEY, JSON.stringify(fresh));
+      set({ user: fresh });
+    } catch {
+      /* offline, or the session ended — the interceptor deals with the latter */
     }
   },
 
