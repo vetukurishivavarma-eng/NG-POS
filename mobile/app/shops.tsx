@@ -63,6 +63,34 @@ export default function ShopsScreen() {
     );
   }
 
+  /**
+   * Opens a shop back up.
+   *
+   * Closing was a one-way door: there was a Close action and nothing to undo
+   * it, and the edit form does not send `is_active`, so saving would not do it
+   * either. A shop closed by mistake stayed closed — and a closed shop is left
+   * out of the transfer directory, so stock could not be sent to it or brought
+   * back from it. That is how the warehouse went missing.
+   */
+  function reopen(store: Store) {
+    Alert.alert(
+      `Reopen ${store.name}?`,
+      'It goes back to being a place to sell from, and a place stock can be transferred to and from.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reopen',
+          onPress: () => {
+            void storesApi
+              .update(store.id, { is_active: true })
+              .then(refresh)
+              .catch((err: unknown) => Alert.alert("Couldn't reopen the shop", errorMessage(err)));
+          },
+        },
+      ]
+    );
+  }
+
   if (editing) {
     return (
       <ShopForm
@@ -131,6 +159,7 @@ export default function ShopsScreen() {
                 canWrite={canWrite}
                 onEdit={() => setEditing(store)}
                 onDeactivate={() => confirmDeactivate(store)}
+                onReopen={() => reopen(store)}
               />
             ))}
           </>
@@ -146,12 +175,14 @@ function ShopCard({
   canWrite,
   onEdit,
   onDeactivate,
+  onReopen,
 }: {
   store: Store;
   current: boolean;
   canWrite: boolean;
   onEdit: () => void;
   onDeactivate: () => void;
+  onReopen: () => void;
 }) {
   const where = [store.address.street, store.address.city, store.address.province]
     .map((p) => p.trim())
@@ -214,7 +245,12 @@ function ShopCard({
               <Icon name="slash" size={14} color={colors.danger} />
               <Text style={[styles.actionText, { color: colors.danger }]}>Close</Text>
             </Pressable>
-          ) : null}
+          ) : (
+            <Pressable onPress={onReopen} style={styles.action} hitSlop={6}>
+              <Icon name="rotate-ccw" size={14} color={colors.success} />
+              <Text style={[styles.actionText, { color: colors.success }]}>Reopen</Text>
+            </Pressable>
+          )}
         </View>
       ) : null}
     </View>
