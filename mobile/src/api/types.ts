@@ -561,6 +561,11 @@ export interface StoreDraft {
   phone?: string;
   email?: string;
   is_active?: boolean;
+  /**
+   * Mark this as the warehouse. Not cosmetic: everyone assigned to a warehouse
+   * gets every administrator capability. Omit to leave it as it is.
+   */
+  is_warehouse?: boolean;
 }
 
 /* -------------------------------------------------------------- suppliers */

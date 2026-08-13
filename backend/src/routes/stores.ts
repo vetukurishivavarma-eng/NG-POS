@@ -42,6 +42,21 @@ const storeSchema = z.object({
   phone: z.string().default(''),
   email: z.string().email().or(z.literal('')).default(''),
   is_active: z.boolean().default(true),
+  /**
+   * Mark this as the warehouse.
+   *
+   * Until now the only thing that ever set this was a migration with
+   * `WHERE code = 'LUSAKA001'` written into it. That store is no longer active,
+   * so the flag sits on nothing and there has been no way to move it — which
+   * takes the whole warehouse rule down with it, including the capabilities
+   * everyone assigned there is supposed to get.
+   *
+   * It is not a cosmetic label. Anyone assigned to a store carrying this flag
+   * gets **every administrator capability**, by the rule in `lib/capabilities.ts`
+   * — including changing passwords and deactivating accounts. Granted by
+   * assignment, and taken away the same way.
+   */
+  is_warehouse: z.boolean().optional(),
 });
 
 storesRouter.get(
@@ -173,6 +188,7 @@ storesRouter.post(
         phone: body.phone,
         email: body.email,
         isActive: body.is_active,
+        staffFullAccess: body.is_warehouse ?? false,
       },
     });
     res.status(201).json(serializeStore(store));
@@ -215,6 +231,10 @@ storesRouter.put(
         phone: body.phone,
         email: body.email,
         isActive: body.is_active,
+        // `partial()` means absent stays absent, so a form that does not send
+        // this cannot silently strip a shop of its warehouse standing — and
+        // with it, the capabilities of everyone assigned there.
+        staffFullAccess: body.is_warehouse,
       },
     });
 

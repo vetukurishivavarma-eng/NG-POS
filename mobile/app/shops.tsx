@@ -9,7 +9,16 @@ import { useCan } from '../src/store/auth';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { useLayout } from '../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../src/theme';
-import { Badge, Button, EmptyState, Field, Icon, Loading, SectionLabel } from '../src/ui/components';
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  Icon,
+  Loading,
+  SectionLabel,
+  Toggle,
+} from '../src/ui/components';
 import type { Store } from '../src/api/types';
 
 /**
@@ -235,6 +244,7 @@ function ShopForm({
   const [province, setProvince] = useState(store?.address.province ?? '');
   const [phone, setPhone] = useState(store?.phone ?? '');
   const [email, setEmail] = useState(store?.email ?? '');
+  const [warehouse, setWarehouse] = useState(store?.staff_full_access === true);
   const [busy, setBusy] = useState(false);
 
   const cleanCode = code.toUpperCase().replace(/\s+/g, '');
@@ -256,6 +266,7 @@ function ShopForm({
         },
         phone: phone.trim(),
         email: email.trim(),
+        is_warehouse: warehouse,
       };
 
       if (store) {
@@ -351,6 +362,33 @@ function ShopForm({
             keyboardType="email-address"
             autoCapitalize="none"
             error={emailInvalid ? 'That does not look like an email address.' : null}
+          />
+        </View>
+
+        <View style={{ gap: spacing.sm }}>
+          <SectionLabel>Role</SectionLabel>
+          <Toggle
+            label="This is the warehouse"
+            value={warehouse}
+            onChange={(next) => {
+              // Turning it off is a demotion and needs no warning. Turning it on
+              // hands every person assigned here the powers of an administrator,
+              // and somebody ticking a box in a form deserves to be told that
+              // before it happens rather than after.
+              if (!next) {
+                setWarehouse(false);
+                return;
+              }
+              Alert.alert(
+                'Make this the warehouse?',
+                'Everyone assigned to this shop will get every administrator power — including changing staff passwords, editing roles and closing shops. It is granted by assignment and taken away the same way.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Make it the warehouse', onPress: () => setWarehouse(true) },
+                ]
+              );
+            }}
+            hint="The warehouse is offered first when stock is transferred, and shown as the warehouse rather than as a shop."
           />
         </View>
 
