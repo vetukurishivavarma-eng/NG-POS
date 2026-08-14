@@ -14,14 +14,15 @@
       "package": "com.mamamaxx.ngpos",
       "versionCode": 4,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#F2F8EA",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
@@ -54,6 +55,9 @@
         {
           "android": {
             "usesCleartextTraffic": false,
+            "buildArchs": [
+              "arm64-v8a"
+            ],
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
             "extraProguardRules": "# Keep rules so first-time minification can't strip native modules that are\n# resolved by reflection/JNI at runtime. Additive keeps only — they can prevent\n# a crash but never cause one.\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keepclassmembers class * { @com.facebook.proguard.annotations.DoNotStrip *; @com.facebook.jni.annotations.DoNotStrip *; }\n-keep,includedescriptorclasses class * { native <methods>; }\n# React Native / Hermes bridge\n-keep class com.facebook.react.** { *; }\n-keep class com.facebook.hermes.** { *; }\n-keep class com.facebook.jni.** { *; }\n-dontwarn com.facebook.react.**\n# Reanimated / Worklets (JNI-heavy)\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n-keep class com.facebook.react.turbomodule.** { *; }\n# Expo modules are discovered reflectively\n-keep class expo.modules.** { *; }\n-keep class expo.modules.securestore.** { *; }\n-dontwarn expo.modules.**\n# OkHttp (the network stack under axios' native layer)\n-dontwarn okhttp3.**\n-dontwarn okio.**\n"

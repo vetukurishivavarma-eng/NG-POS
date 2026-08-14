@@ -1,9 +1,19 @@
 import { create } from 'zustand';
+import NetInfo from '@react-native-community/netinfo';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
+import type { File } from 'expo-file-system';
+
 import { appUpdates } from '../api/endpoints';
 import type { AppReleaseInfo } from '../api/types';
+import {
+  canInstallInApp,
+  downloadApk,
+  InstallError,
+  launchInstaller,
+  type DownloadHandle,
+} from '../lib/apkInstaller';
 
 /**
  * Keeping the shop on a current build.
@@ -80,6 +90,30 @@ async function writeSkips(skips: Record<string, number>): Promise<void> {
   }
 }
 
+/**
+ * Where the install has got to.
+ *
+ * Kept apart from `UpdateStatus` on purpose: that answers "should the gate be
+ * up", which the server decides, and this answers "what is happening on this
+ * handset right now", which nothing outside this run of the app cares about.
+ */
+export type InstallPhase =
+  | { kind: 'idle' }
+  | { kind: 'downloading'; received: number; total: number }
+  /**
+   * Downloaded, verified, and sitting on disk with nothing running.
+   *
+   * Reached by backing out of Android's installer. It is distinct from `idle`
+   * for two reasons that both matter: the APK is already here, so offering
+   * "Install" must not fetch it again, and `idle` is what the automatic
+   * download watches for — returning there would restart an 80 MB transfer
+   * every time somebody dismissed the system dialog.
+   */
+  | { kind: 'staged' }
+  /** Android's installer is on screen. */
+  | { kind: 'handedOff' }
+  | { kind: 'failed'; reason: string; offerBrowser: boolean };
+
 export type UpdateStatus =
   /** Nothing to say: current, or we could not ask. */
   | 'none'
@@ -100,11 +134,44 @@ interface AppUpdateState {
   checking: boolean;
   lastCheckedAt: number | null;
 
+  install: InstallPhase;
+  /**
+   * Whether the connection is one it would be rude to pull 80 MB down.
+   *
+   * `null` until it has been established — which is not the same as "not
+   * metered", and is why the automatic download waits for an answer rather
+   * than assuming a good one.
+   */
+  metered: boolean | null;
+
   check: (options?: { force?: boolean }) => Promise<void>;
   postpone: () => Promise<void>;
+  /** Fetch the APK and hand it to Android. */
+  installUpdate: () => Promise<void>;
+  cancelInstall: () => void;
   /** Only for the release screen: forget the tally after a manual install. */
   reset: () => Promise<void>;
 }
+
+/**
+ * The live download, held outside the store.
+ *
+ * It is a native handle, not state — putting it in the store would mean every
+ * subscriber re-rendered when it was swapped, for a value none of them read.
+ */
+let inFlight: DownloadHandle | null = null;
+
+/** The APK on disk, if one has been fetched and checked this run. */
+let staged: { build: number; file: File } | null = null;
+
+/**
+ * Whether the automatic download has had its turn for this build.
+ *
+ * Set the first time a download starts and never cleared except by a new
+ * release, so cancelling is a decision that sticks. Without it, cancelling on
+ * wi-fi would only mean the transfer restarted a frame later.
+ */
+let autoStarted = 0;
 
 export const useAppUpdate = create<AppUpdateState>((set, get) => ({
   status: 'none',
@@ -114,6 +181,8 @@ export const useAppUpdate = create<AppUpdateState>((set, get) => ({
   postponed: false,
   checking: false,
   lastCheckedAt: null,
+  install: { kind: 'idle' },
+  metered: null,
 
   check: async ({ force = false } = {}) => {
     const { checking, lastCheckedAt } = get();
@@ -126,7 +195,13 @@ export const useAppUpdate = create<AppUpdateState>((set, get) => ({
       const result = await appUpdates.check(build, installedVersion());
 
       if (!result.update_available || !result.latest) {
-        set({ status: 'none', release: null, postponed: false, lastCheckedAt: Date.now() });
+        set({
+          status: 'none',
+          release: null,
+          postponed: false,
+          install: { kind: 'idle' },
+          lastCheckedAt: Date.now(),
+        });
         return;
       }
 
@@ -147,6 +222,10 @@ export const useAppUpdate = create<AppUpdateState>((set, get) => ({
         skipsUsed: used,
         graceCount: result.grace_count,
         postponed: !blocked && sameBuild && get().postponed,
+        // A different build means anything downloaded or failed was about a
+        // release nobody is being offered any more, and a stale "not enough
+        // space" would otherwise sit on screen against the wrong version.
+        install: sameBuild ? get().install : { kind: 'idle' },
         lastCheckedAt: Date.now(),
       });
     } catch {
@@ -173,11 +252,146 @@ export const useAppUpdate = create<AppUpdateState>((set, get) => ({
     set({ skipsUsed: skipsUsed + 1, postponed: true });
   },
 
+  installUpdate: async () => {
+    const { release, install } = get();
+    if (!release) return;
+    // Re-entrant by design: the gate autostarts this and the button offers it,
+    // and on a slow connection both can happen within the same second.
+    if (install.kind === 'downloading' || install.kind === 'handedOff') return;
+
+    autoStarted = release.build;
+
+    // Already downloaded and checked, and the installer was backed out of.
+    // `exists` is asked rather than assumed because the cache directory can be
+    // emptied by Android at any moment when the device runs short of space.
+    let file = staged?.build === release.build && staged.file.exists ? staged.file : null;
+
+    if (!file) {
+      staged = null;
+      set({ install: { kind: 'downloading', received: 0, total: -1 } });
+      try {
+        file = await downloadApk(
+          release.download_url,
+          release.build,
+          (received, total) => {
+            // A cancelled transfer can emit one last progress event on its way
+            // down. Without this guard it would resurrect the progress bar over
+            // whatever the cancellation just put on screen.
+            if (get().install.kind !== 'downloading') return;
+            set({ install: { kind: 'downloading', received, total } });
+          },
+          (handle) => {
+            inFlight = handle;
+          }
+        );
+      } catch (error) {
+        inFlight = null;
+        // A cancellation is the user's own doing and has already been reflected
+        // on screen by `cancelInstall`. Reporting it back as a failure would
+        // replace "tap to download" with an error about something they chose.
+        if (get().install.kind !== 'downloading') return;
+
+        const known = error instanceof InstallError;
+        set({
+          install: {
+            kind: 'failed',
+            reason: known
+              ? (error as InstallError).message
+              : 'The update could not be downloaded. Check the connection and try again.',
+            offerBrowser: known ? (error as InstallError).fallbackWorthwhile : true,
+          },
+        });
+        return;
+      }
+
+      inFlight = null;
+      staged = { build: release.build, file };
+    }
+
+    set({ install: { kind: 'handedOff' } });
+
+    try {
+      await launchInstaller(file);
+    } catch {
+      // The installer would not open at all — an OEM ROM with it disabled, or
+      // no activity able to handle an APK. The file is downloaded and sound,
+      // so the browser is genuinely worth offering here.
+      set({
+        install: {
+          kind: 'failed',
+          reason: 'This device would not open the installer.',
+          offerBrowser: true,
+        },
+      });
+      return;
+    }
+
+    // Reaching here means the installer closed without replacing us: cancelled,
+    // or blocked because installs from NG POS are not permitted yet. The APK
+    // is still on disk and still good, so this settles on `staged` — the next
+    // tap opens the installer again without a second download.
+    set({ install: { kind: 'staged' } });
+  },
+
+  cancelInstall: () => {
+    inFlight?.cancel();
+    inFlight = null;
+    // `staged` when there is something to install, so cancelling the *dialog*
+    // does not throw away a finished download.
+    // `build != null` first, or a missing release and a missing `staged` would
+    // compare `undefined === undefined` and take the branch that dereferences
+    // the null.
+    const build = get().release?.build;
+    const ready = build != null && staged?.build === build && staged.file.exists;
+    set({ install: ready ? { kind: 'staged' } : { kind: 'idle' } });
+  },
+
   reset: async () => {
     await writeSkips({});
-    set({ skipsUsed: 0, postponed: false, status: 'none', release: null, lastCheckedAt: null });
+    staged = null;
+    autoStarted = 0;
+    set({
+      skipsUsed: 0,
+      postponed: false,
+      status: 'none',
+      release: null,
+      install: { kind: 'idle' },
+      lastCheckedAt: null,
+    });
   },
 }));
+
+/**
+ * Keeps `metered` current.
+ *
+ * Started once, at module load, because the answer is needed the moment the
+ * gate appears — a subscription set up inside the gate would not have heard
+ * from NetInfo yet, and the automatic download would either stall waiting or
+ * start on somebody's mobile data.
+ */
+NetInfo.addEventListener((state) => {
+  useAppUpdate.setState({
+    metered: state.type === 'cellular' || state.details?.isConnectionExpensive === true,
+  });
+});
+
+/**
+ * Whether the APK should start downloading on its own.
+ *
+ * Only on a connection that is not going to cost the shop anything. On mobile
+ * data the size is put in front of them and they choose — which is the one
+ * place in this flow where making it automatic would be taking a decision that
+ * is not ours to take.
+ */
+export function shouldAutoDownload(state: AppUpdateState): boolean {
+  return (
+    canInstallInApp &&
+    state.install.kind === 'idle' &&
+    state.release !== null &&
+    state.release.build !== autoStarted &&
+    state.metered === false
+  );
+}
 
 /**
  * Whether the update prompt should be covering the app right now.

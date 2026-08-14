@@ -17,6 +17,7 @@ import {
 import * as Notifications from 'expo-notifications';
 
 import { restoreApiBaseUrl, setUnauthorizedHandler } from '../src/api/client';
+import { sweepStagedApks } from '../src/lib/apkInstaller';
 import { updateGateVisible, useAppUpdate } from '../src/store/appUpdate';
 import { useAuth } from '../src/store/auth';
 import { useStoreSelection } from '../src/store/storeSelection';
@@ -82,6 +83,11 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
+    // If an APK is still staged, it is either the build now running or one
+    // that was abandoned. Neither is worth the 80 MB it is occupying, and
+    // clearing it here is what keeps old versions from piling up the way they
+    // did when the update was a browser download into a folder nobody emptied.
+    sweepStagedApks();
     void restoreApiBaseUrl().finally(() => setApiReady(true));
     void restore();
     void restoreStore();

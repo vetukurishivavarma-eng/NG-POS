@@ -1,15 +1,49 @@
-# Keep the upload to source. The native project is regenerated or compiled on
-# the builder, and android/app/build alone runs to hundreds of megabytes.
+# What goes up to the builder.
+#
+# This file REPLACES .gitignore for the upload — it is not added to it. Every
+# rule that matters has to be repeated here, because anything .gitignore hides
+# from git but this file does not name is uploaded anyway. That is how a stale
+# android/ ended up on the builder: EAS skips prebuild whenever the native
+# directory is present, so app.json changes — icons, permissions — silently
+# never reached the APK. Keep this in step with .gitignore.
+
+# Regenerated on the builder by prebuild. Must be excluded, or CNG is off and
+# app.json stops being the source of truth for anything native.
+/android
+/ios
+
 node_modules/
-android/build/
-android/app/build/
-android/.gradle/
-android/.cxx/
-android/app/.cxx/
-ios/build/
-ios/Pods/
 .expo/
 dist/
+web-build/
+expo-env.d.ts
+.git-preMonorepo/
+
+# Compiled output of the local native modules.
+modules/*/android/build/
+modules/*/android/.gradle/
+modules/*/android/.cxx/
+**/build/
+**/.cxx/
+.kotlin/
+.metro-health-check*
+*.tsbuildinfo
+
+# Signing material and secrets. EAS holds the real credentials; nothing here
+# should ever travel with the source.
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+.env*.local
+
 *.apk
 *.aab
-*.keystore
+*.orig.*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
