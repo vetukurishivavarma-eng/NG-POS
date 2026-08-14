@@ -706,7 +706,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     minHeight: 52,
     paddingHorizontal: spacing.lg,
-    backgroundColor: colors.surface,
+    // Bone rather than white: against a white card a warm recessed fill reads
+    // as a well cut into the surface, which is what an input is. Cards come
+    // forward, fields go back — that contrast is most of the sense of depth,
+    // and it costs one property rather than a border trick that would fight
+    // the error and disabled states below.
+    backgroundColor: colors.canvas,
     borderRadius: radius.md,
     borderWidth: 1.5,
     borderColor: colors.border,
@@ -731,8 +736,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1.5,
     borderColor: colors.border,
+    // Shadow only, no bevel: on a pill the lit "top edge" becomes an arc of
+    // uneven border width, which reads as a drawing error rather than light.
+    ...shadow.card,
   },
-  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary, ...shadow.tile },
   chipText: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted },
   chipTextActive: { color: colors.onDark },
 
@@ -745,7 +753,10 @@ const styles = StyleSheet.create({
   toggleLabel: { fontFamily: font.semibold, fontSize: 15, color: colors.text },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm },
-  rowPressed: { opacity: 0.6 },
+  // Sinks like a button rather than fading. Opacity says "this is disabled";
+  // travelling toward the page says "this was pressed", and it matches what
+  // every Button in the app already does.
+  rowPressed: { transform: [{ scale: 0.99 }, { translateY: 1 }], opacity: 0.9 },
   rowIcon: {
     width: 38,
     height: 38,
@@ -753,6 +764,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
+    ...shadow.card,
   },
   rowTitle: { fontFamily: font.semibold, fontSize: 15, color: colors.text },
   rowSubtitle: { fontFamily: font.regular, fontSize: 12, color: colors.textMuted, marginTop: 2 },

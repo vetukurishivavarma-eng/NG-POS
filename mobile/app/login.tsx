@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -25,7 +26,7 @@ import {
   takeSessionEndedReason,
 } from '../src/api/client';
 import { Button, Icon } from '../src/ui/components';
-import { colors, font, radius, shadow, spacing } from '../src/theme';
+import { bevel, colors, font, radius, shadow, spacing } from '../src/theme';
 
 export default function LoginScreen() {
   const signIn = useAuth((s) => s.signIn);
@@ -127,8 +128,20 @@ export default function LoginScreen() {
         >
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
             <View style={styles.brand}>
+              {/*
+                The tile sits on the same card colour as the launcher icon, so
+                the mark a cashier taps and the mark they then see are the same
+                object. It must not be the gold accent: the logo's own lettering
+                is gold and would vanish into it.
+              */}
               <View style={styles.mark}>
-                <Text style={styles.markText}>NG</Text>
+                <Image
+                  source={require('../assets/brand-mark.png')}
+                  style={styles.markImage}
+                  resizeMode="contain"
+                  accessibilityRole="image"
+                  accessibilityLabel="Mama Maxx Agrovet"
+                />
               </View>
               <Text style={styles.wordmark}>NG POS</Text>
               <Text style={styles.tagline}>Inventory &amp; Sales</Text>
@@ -323,15 +336,16 @@ const styles = StyleSheet.create({
 
   brand: { alignItems: 'center', marginBottom: spacing.xl },
   mark: {
-    width: 66,
-    height: 66,
-    borderRadius: radius.lg,
-    backgroundColor: colors.accent,
+    width: 96,
+    height: 96,
+    borderRadius: radius.xl,
+    backgroundColor: colors.brandCard,
     alignItems: 'center',
     justifyContent: 'center',
     ...shadow.raised,
+    ...bevel.light,
   },
-  markText: { fontFamily: font.extrabold, fontSize: 24, color: colors.primaryDeep },
+  markImage: { width: 78, height: 78 },
   wordmark: {
     fontFamily: font.extrabold,
     fontSize: 30,
@@ -353,6 +367,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
     padding: spacing.xl,
     ...shadow.raised,
+    ...bevel.light,
   },
   cardTitle: { fontFamily: font.bold, fontSize: 21, color: colors.text, letterSpacing: -0.3 },
   cardHint: { fontFamily: font.regular, fontSize: 13, color: colors.textMuted, marginBottom: spacing.lg },

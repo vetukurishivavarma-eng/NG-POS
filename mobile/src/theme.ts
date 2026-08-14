@@ -20,6 +20,13 @@ export const colors = {
   accentDeep: '#B77F16',
   accentSoft: '#FBF0D9',
 
+  /**
+   * The card the client's logo was drawn on, and the adaptive icon's
+   * background. Anywhere the mark is shown it sits on this, so the launcher
+   * icon and the mark inside the app read as the same object.
+   */
+  brandCard: '#F2F8EA',
+
   // Warm neutrals. Bone paper, not cold grey.
   canvas: '#F6F4EF',
   surface: '#FFFFFF',
