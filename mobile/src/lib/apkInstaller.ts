@@ -50,6 +50,27 @@ const APK_MIME = 'application/vnd.android.package-archive';
  */
 const REQUIRED_FREE_BYTES = 250 * 1024 * 1024;
 
+/**
+ * How long to wait for the *first byte* before giving up and starting over.
+ *
+ * `downloadAsync()` has no timeout of its own, so a connection that is accepted
+ * and then goes nowhere waits for ever — which on 1.5.0 showed as a progress
+ * panel reading 0.0 MB for about a minute, indistinguishable from a hang.
+ *
+ * The classic cause of exactly that shape is a handset trying an AAAA record on
+ * a network with no working IPv6 route: the attempt blackholes until something
+ * gives up, then IPv4 succeeds and the transfer runs at full speed. Whatever the
+ * cause, the cure is the same and it is not patience — a fresh connection
+ * re-resolves and usually lands immediately.
+ *
+ * This measures time to first byte, not total time. A genuinely slow shop
+ * connection is allowed to take as long as it needs once bytes are moving.
+ */
+const FIRST_BYTE_TIMEOUT_MS = 45_000;
+
+/** One retry. If a second fresh connection also stalls, something is wrong. */
+const MAX_ATTEMPTS = 2;
+
 export class InstallError extends Error {
   constructor(
     message: string,
@@ -132,7 +153,9 @@ export async function downloadApk(
   url: string,
   build: number,
   onProgress: (received: number, total: number) => void,
-  onHandle?: (handle: DownloadHandle) => void
+  onHandle?: (handle: DownloadHandle) => void,
+  /** Called before each attempt, so the caller can reset its progress display. */
+  onAttempt?: (attempt: number) => void
 ): Promise<File> {
   if (!canInstallInApp) {
     throw new InstallError('In-app installing is only available on Android.');
@@ -148,34 +171,93 @@ export async function downloadApk(
     );
   }
 
-  // The sweep above has already cleared the destination, which matters:
-  // `createDownloadTask` has no overwrite option and rejects onto an existing
-  // file.
-  const destination = new File(staging(), `ngpos-${build}.apk`);
-  const task = File.createDownloadTask(url, destination, {
-    onProgress: ({ bytesWritten, totalBytes }) => onProgress(bytesWritten, totalBytes),
+  // Held across attempts: a cancellation must stop the retry loop too, or
+  // tapping Cancel during a stall would quietly start a second transfer.
+  let cancelledByUser = false;
+  let live: AbortController | null = null;
+  onHandle?.({
+    cancel: () => {
+      cancelledByUser = true;
+      live?.abort();
+    },
   });
 
-  onHandle?.({ cancel: () => task.cancel() });
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    onAttempt?.(attempt);
 
-  const file = await task.downloadAsync();
-  // `null` means the task was paused. Nothing here pauses one, so treat it the
-  // same as a transfer that never arrived rather than pressing on with no file.
-  if (!file) throw new InstallError('The download did not finish.');
+    const controller = new AbortController();
+    live = controller;
 
-  if (!looksLikeAnApk(file)) {
-    try {
-      file.delete();
-    } catch {
-      /* The sweep will deal with it. */
+    let sawBytes = false;
+    const stall = setTimeout(() => {
+      if (!sawBytes) controller.abort();
+    }, FIRST_BYTE_TIMEOUT_MS);
+
+    // `createDownloadTask` has no overwrite option and rejects onto an existing
+    // file, so the destination is cleared rather than assumed absent — the
+    // sweep above handles the first attempt, this handles a retry after one
+    // that wrote something before dying.
+    const destination = new File(staging(), `ngpos-${build}.apk`);
+    if (destination.exists) {
+      try {
+        destination.delete();
+      } catch {
+        /* Nothing better to do; the download below will report the real fault. */
+      }
     }
-    throw new InstallError(
-      'What was downloaded is not an installable app. The download link for this release is probably wrong — check it on the releases screen.',
-      false
-    );
+
+    try {
+      const task = File.createDownloadTask(url, destination, {
+        signal: controller.signal,
+        onProgress: ({ bytesWritten, totalBytes }) => {
+          if (bytesWritten > 0) sawBytes = true;
+          onProgress(bytesWritten, totalBytes);
+        },
+      });
+
+      const file = await task.downloadAsync();
+      clearTimeout(stall);
+
+      // `null` means the task was paused. Nothing here pauses one, so treat it
+      // the same as a transfer that never arrived rather than pressing on with
+      // no file.
+      if (!file) throw new InstallError('The download did not finish.');
+
+      if (!looksLikeAnApk(file)) {
+        try {
+          file.delete();
+        } catch {
+          /* The sweep will deal with it. */
+        }
+        throw new InstallError(
+          'What was downloaded is not an installable app. The download link for this release is probably wrong — check it on the releases screen.',
+          false
+        );
+      }
+
+      return file;
+    } catch (error) {
+      clearTimeout(stall);
+
+      // The user's own doing. The caller has already put something on screen.
+      if (cancelledByUser) throw error;
+
+      // A diagnosed fault — wrong file, no space, a paused task. A second
+      // attempt would fail the same way and only wastes the shop's data.
+      if (error instanceof InstallError) throw error;
+
+      // Anything else is the connection: a stall we aborted, a dropped socket,
+      // a DNS failure. Worth exactly one fresh connection.
+      if (attempt === MAX_ATTEMPTS) {
+        throw new InstallError(
+          'The update could not be downloaded — the connection did not get going, twice. Try again when the signal is better, or use the browser instead.'
+        );
+      }
+    }
   }
 
-  return file;
+  // Unreachable: the loop either returns a file or throws on its last attempt.
+  throw new InstallError('The update could not be downloaded.');
 }
 
 /**

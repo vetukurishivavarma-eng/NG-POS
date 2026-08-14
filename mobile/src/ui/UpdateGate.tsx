@@ -125,6 +125,7 @@ export function UpdateGate() {
             <Downloading
               received={install.received}
               total={install.total}
+              attempt={install.attempt}
               onCancel={cancelInstall}
             />
           ) : install.kind === 'handedOff' ? (
@@ -250,26 +251,53 @@ export function UpdateGate() {
 function Downloading({
   received,
   total,
+  attempt,
   onCancel,
 }: {
   received: number;
   total: number;
+  attempt: number;
   onCancel: () => void;
 }) {
+  // Nothing has arrived yet, so this is the connection being made, not a
+  // transfer sitting at zero. Saying "Downloading" here is what made a slow
+  // connect look like a hang on 1.5.0.
+  const connecting = received <= 0;
   const known = total > 0;
   const fraction = known ? Math.min(1, received / total) : 0;
+
+  // A connect that is taking unusually long gets an explanation rather than
+  // more silence. Deliberately shorter than the abort in `apkInstaller`, so the
+  // user is told it is slow before anything decides to start over.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!connecting) {
+      setSlow(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlow(true), 20_000);
+    return () => clearTimeout(timer);
+    // `attempt` restarts the clock: a retry deserves its own 20 seconds before
+    // being called slow again.
+  }, [connecting, attempt]);
 
   return (
     <View>
       <View style={styles.progressHead}>
-        <Text style={styles.progressLabel}>Downloading the update</Text>
+        <Text style={styles.progressLabel}>
+          {connecting
+            ? attempt > 1
+              ? 'Trying a new connection'
+              : 'Connecting'
+            : 'Downloading the update'}
+        </Text>
         <Text style={styles.progressValue}>
-          {known ? `${Math.round(fraction * 100)}%` : megabytes(received)}
+          {connecting ? '' : known ? `${Math.round(fraction * 100)}%` : megabytes(received)}
         </Text>
       </View>
 
       <View style={styles.track}>
-        {known ? (
+        {known && !connecting ? (
           <View style={[styles.fill, { width: `${fraction * 100}%` }]} />
         ) : (
           <View style={styles.fillUnknown} />
@@ -277,7 +305,13 @@ function Downloading({
       </View>
 
       <Text style={styles.progressSub}>
-        {known ? `${megabytes(received)} of ${megabytes(total)}` : 'Keep the app open.'}
+        {connecting
+          ? slow
+            ? 'Still connecting. This can take a minute on a weak signal — it will start over on its own if it has to.'
+            : 'Reaching the update server.'
+          : known
+            ? `${megabytes(received)} of ${megabytes(total)}`
+            : 'Keep the app open.'}
       </Text>
 
       <Pressable

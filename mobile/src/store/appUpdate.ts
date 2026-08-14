@@ -99,7 +99,13 @@ async function writeSkips(skips: Record<string, number>): Promise<void> {
  */
 export type InstallPhase =
   | { kind: 'idle' }
-  | { kind: 'downloading'; received: number; total: number }
+  /**
+   * `received === 0` means the connection has not delivered anything yet, which
+   * the gate shows as "Connecting" rather than as a download stuck at zero —
+   * the two are the same picture and only one of them is honest. `attempt`
+   * carries whether this is the retry, so the gate can say so.
+   */
+  | { kind: 'downloading'; received: number; total: number; attempt: number }
   /**
    * Downloaded, verified, and sitting on disk with nothing running.
    *
@@ -162,6 +168,9 @@ interface AppUpdateState {
 let inFlight: DownloadHandle | null = null;
 
 /** The APK on disk, if one has been fetched and checked this run. */
+/** Ceiling on how often a download redraws the gate. ~4 updates a second. */
+const PROGRESS_INTERVAL_MS = 250;
+
 let staged: { build: number; file: File } | null = null;
 
 /**
@@ -268,7 +277,15 @@ export const useAppUpdate = create<AppUpdateState>((set, get) => ({
 
     if (!file) {
       staged = null;
-      set({ install: { kind: 'downloading', received: 0, total: -1 } });
+      set({ install: { kind: 'downloading', received: 0, total: -1, attempt: 1 } });
+
+      // Progress arrives per chunk — hundreds of events a second on a decent
+      // link — and each one would otherwise be a store write and a re-render,
+      // on the same thread that has to draw them. The eye cannot read more than
+      // a few updates a second anyway.
+      let lastEmit = 0;
+      let attempt = 1;
+
       try {
         file = await downloadApk(
           release.download_url,
@@ -278,10 +295,27 @@ export const useAppUpdate = create<AppUpdateState>((set, get) => ({
             // down. Without this guard it would resurrect the progress bar over
             // whatever the cancellation just put on screen.
             if (get().install.kind !== 'downloading') return;
-            set({ install: { kind: 'downloading', received, total } });
+
+            const now = Date.now();
+            // Never throttle away the first byte or the last: the first is what
+            // turns "Connecting" into a real transfer, and the last is what
+            // leaves the bar full instead of stopping at 97%.
+            const isEdge = received === 0 || (total > 0 && received >= total);
+            if (!isEdge && now - lastEmit < PROGRESS_INTERVAL_MS) return;
+            lastEmit = now;
+
+            set({ install: { kind: 'downloading', received, total, attempt } });
           },
           (handle) => {
             inFlight = handle;
+          },
+          (nextAttempt) => {
+            // A retry starts from nothing, so the bar must go back to
+            // "Connecting" rather than sit at whatever the dead attempt reached.
+            attempt = nextAttempt;
+            lastEmit = 0;
+            if (get().install.kind !== 'downloading') return;
+            set({ install: { kind: 'downloading', received: 0, total: -1, attempt } });
           }
         );
       } catch (error) {
