@@ -4,7 +4,6 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -317,10 +316,8 @@ export default function StorePricingScreen() {
         animationType="fade"
         onRequestClose={closeEditor}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.backdrop}
-        >
+        {/* `padding` on Android too — see the note in `login.tsx`. */}
+        <KeyboardAvoidingView behavior="padding" style={styles.backdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeEditor} />
           {draft ? (
             <View style={styles.editor}>

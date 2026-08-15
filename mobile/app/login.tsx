@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   Image,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -122,10 +121,17 @@ export default function LoginScreen() {
       <View style={styles.washGlow} />
 
       <SafeAreaView style={styles.flex}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.flex}
-        >
+        {/*
+          `padding` on Android too, not `undefined`.
+
+          The `undefined` was correct when `windowSoftInputMode="adjustResize"`
+          shrank the window and this view inherited a shorter frame. Edge-to-edge
+          ended that: the keyboard now arrives as an inset over an unchanged
+          window, so nothing moved and the keyboard simply covered the password
+          field and the Sign in button. With the content centred and fitting the
+          screen there was not even anything to scroll to.
+        */}
+        <KeyboardAvoidingView behavior="padding" style={styles.flex}>
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
             <View style={styles.brand}>
               {/*

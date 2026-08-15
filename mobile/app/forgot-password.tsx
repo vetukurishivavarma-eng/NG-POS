@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -88,10 +87,8 @@ export default function ForgotPasswordScreen() {
   return (
     <View style={styles.root}>
       <SafeAreaView style={styles.flex}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.flex}
-        >
+        {/* `padding` on Android too — see the note in `login.tsx`. */}
+        <KeyboardAvoidingView behavior="padding" style={styles.flex}>
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
             <Pressable onPress={() => router.back()} hitSlop={10} style={styles.back}>
               <Icon name="chevron-left" size={18} color={colors.onDarkMuted} />
