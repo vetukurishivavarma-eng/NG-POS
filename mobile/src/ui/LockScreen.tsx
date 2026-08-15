@@ -211,7 +211,26 @@ function Key({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.primaryDeep },
+  /**
+   * Positioned absolutely rather than `flex: 1`, for the same reason
+   * `UpdateGate` is — and this screen predates that fix by a session.
+   *
+   * It renders as a sibling of the navigator, so a flexed child is handed half
+   * the column: the keypad took the bottom half and left the till it exists to
+   * cover visible, and tappable, in the top half. `elevation` is what orders it
+   * on Android, where z-order follows elevation rather than paint order. Below
+   * `UpdateGate`'s 100 on purpose — a withdrawn build outranks a locked till.
+   */
+  safe: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.primaryDeep,
+    zIndex: 50,
+    elevation: 50,
+  },
   body: {
     flex: 1,
     alignItems: 'center',
