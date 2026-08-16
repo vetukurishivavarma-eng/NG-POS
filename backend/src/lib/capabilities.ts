@@ -71,7 +71,17 @@ const ROLE_CAPABILITIES: Record<string, Capability[]> = {
  * every time they move — so this is recurring work, and a window that shut
  * would take the monthly repricing with it.
  */
-const SHOP_STAFF_GRANT: Capability[] = ['pricing.write', 'transfers.create', 'products.import'];
+const SHOP_STAFF_GRANT: Capability[] = [
+  'pricing.write',
+  'transfers.create',
+  'products.import',
+  // Correcting the stock figure is the other half of running a shop's
+  // catalogue, and it was the one part shop staff never had: a cashier could
+  // load a whole spreadsheet of stock but not fix a single wrong count by hand.
+  // Added 2026-08-16 at the owner's instruction, alongside the deliberate
+  // decision that deleting anything stays with an administrator.
+  'stock.adjust',
+];
 
 /** The half that closes on a date: entering the catalogue is a finite job. */
 const SHOP_STAFF_GRANT_WHILE_OPEN: Capability[] = ['products.write'];
