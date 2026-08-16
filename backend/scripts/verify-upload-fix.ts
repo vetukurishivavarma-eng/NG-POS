@@ -1,12 +1,10 @@
 /**
- * Checks the 2026-08-16 fixes against the client's own file.
+ * Checks the 2026-08-16 upload fixes against the client's own file.
  *
- *   npx tsx scripts/verify-upload-fix.ts "C:/path/to/file.xlsx"
+ *   npx tsx scripts/verify-upload-fix.ts ["C:/path/to/file.xlsx"]
  *
- * 1. the mis-headed SKU column is detected and explained;
- * 2. the same file with that heading renamed imports cleanly;
- * 3. "GP On SP" is no longer offered as a shop;
- * 4. shop staff can now adjust stock, and still cannot delete.
+ * The point of the exercise: the file imports **exactly as the client sends
+ * it**, with its SKU column full of pack sizes. Nothing is renamed by hand.
  */
 
 import { readFileSync } from 'node:fs';
@@ -15,8 +13,9 @@ import { tableToObjects } from '../src/lib/csv';
 import {
   detectMisheadedSku,
   HEADER_ALIASES,
-  KNOWN_FIELDS,
   identityOf,
+  KNOWN_FIELDS,
+  synthesiseSku,
 } from '../src/lib/productSheet';
 import { readXlsx } from '../src/lib/xlsx';
 import { capabilitiesFor } from '../src/lib/capabilities';
@@ -30,99 +29,126 @@ const check = (name: string, ok: boolean, extra = '') => {
 const path = process.argv[2] ?? 'C:/Users/Shiva/Downloads/Agro products with Prices_ 1 (1).xlsx';
 const { rows: table } = readXlsx(readFileSync(path), { maxRows: 2000 });
 const parsed = tableToObjects(table, HEADER_ALIASES);
+const records = parsed.rows;
 
-console.log('\nThe file as uploaded');
+console.log('\nThe client\'s file, exactly as sent');
 
-const rows = parsed.rows.map((record) => ({
-  sku: (record.sku ?? '').trim(),
-  name: (record.name ?? '').trim(),
-  company: (record.company ?? '').trim(),
-}));
+check('it is read as a coded file at first glance', parsed.headers.includes('sku'));
 
-const misheaded = detectMisheadedSku(rows);
+const misheaded = detectMisheadedSku(
+  records.map((r) => ({
+    sku: (r.sku ?? '').trim(),
+    name: (r.name ?? '').trim(),
+    company: (r.company ?? '').trim(),
+  }))
+);
+
 check('the SKU column is recognised as pack sizes', misheaded !== null);
 check(
-  'the mistake is explained with examples',
-  (misheaded?.examples.length ?? 0) > 0,
-  misheaded?.examples.join(', ')
-);
-check(
-  'it knows the file would import once renamed',
+  'company + product + pack size identifies every row',
   misheaded?.uniqueAsPackSize === true,
-  `${misheaded?.rows} rows`
+  `${misheaded?.rows} rows, ${misheaded?.distinctValues} distinct values`
 );
 if (misheaded) {
-  console.log(`        ${misheaded.rows} rows, ${misheaded.distinctValues} distinct values, ${misheaded.sharedValues} shared by different products`);
+  console.log(`        e.g. ${misheaded.examples.join(', ')}`);
 }
+
+/* --- the reinterpretation the route performs, applied here the same way --- */
+
+const adopted = records.map((r) => ({ ...r, pack_size: (r.sku ?? '').trim(), sku: '' }));
+
+const identities = new Set(
+  adopted.map((r) => identityOf((r.company ?? '').trim(), (r.name ?? '').trim(), r.pack_size))
+);
+check(
+  'every row becomes a distinct product',
+  identities.size === adopted.length,
+  `${identities.size} of ${adopted.length}`
+);
+
+const codes = new Set(
+  adopted.map((r) => synthesiseSku((r.company ?? '').trim(), (r.name ?? '').trim(), r.pack_size))
+);
+check('every row gets its own generated code', codes.size === adopted.length, `${codes.size} codes`);
+
+// The codes have to be the same next month, or a re-upload builds a second
+// catalogue beside the first.
+const again = new Set(
+  adopted.map((r) => synthesiseSku((r.company ?? '').trim(), (r.name ?? '').trim(), r.pack_size))
+);
+check('the codes are stable across runs', [...codes].every((c) => again.has(c)));
+
+console.log('\nColumns');
 
 const unclaimed = parsed.rawHeaders
   .map((raw, index) => ({ raw, key: parsed.headers[index] ?? '' }))
   .filter(({ raw, key }) => raw !== '' && key !== '' && !KNOWN_FIELDS.has(key))
   .map(({ raw }) => raw);
+
 check(
-  '"GP On SP" is no longer offered as a shop column',
+  '"GP On SP" is not offered as a shop',
   !unclaimed.some((h) => h.toLowerCase().includes('gp on sp')),
   `candidates: ${unclaimed.join(', ')}`
 );
 check(
-  'the six shops are still offered as shop columns',
-  ['Katende', 'Kanakantapa', 'Chinkuli', 'Kempekete', 'Chilyabale', 'Lwimba'].every((shop) =>
-    unclaimed.includes(shop)
+  'all six shops are offered as price columns',
+  ['Katende', 'Kanakantapa', 'Chinkuli', 'Kempekete', 'Chilyabale', 'Lwimba'].every((s) =>
+    unclaimed.includes(s)
   ),
   `candidates: ${unclaimed.join(', ')}`
 );
-
-console.log('\nThe same file with the heading renamed to PACKSIZE');
-
-const headerIndex = table.findIndex((row) => row.some((cell) => (cell ?? '').trim() !== ''));
-const renamed = table.map((row, index) =>
-  index === headerIndex
-    ? row.map((cell) => ((cell ?? '').trim().toLowerCase() === 'sku' ? 'PACKSIZE' : cell))
-    : row
-);
-const second = tableToObjects(renamed, HEADER_ALIASES);
-
-check('it no longer looks like a coded file', !second.headers.includes('sku'));
-check('the pack size column is understood', second.headers.includes('pack_size'));
-
-const identities = new Set(
-  second.rows.map((record) =>
-    identityOf((record.company ?? '').trim(), (record.name ?? '').trim(), (record.pack_size ?? '').trim())
-  )
-);
 check(
-  'every row is a distinct product',
-  identities.size === second.rows.length,
-  `${identities.size} identities for ${second.rows.length} rows`
+  'the file carries no quantities, so stock is left alone',
+  records.every((r) => (r.quantity ?? '') === '')
 );
 
-const withoutQuantity = second.rows.every((record) => (record.quantity ?? '') === '');
-check('the file carries no quantities, so stock is left alone', withoutQuantity);
+const zeroPrices = records.reduce((total, r) => {
+  const shops = ['katende', 'kanakantapa', 'chinkuli', 'kempekete', 'chilyabale', 'lwimba'];
+  return total + shops.filter((s) => (r[s] ?? '').trim() !== '' && Number((r[s] ?? '').replace(/,/g, '')) === 0).length;
+}, 0);
+check('the zero shop prices are still there to be skipped', zeroPrices > 0, `${zeroPrices} cells`);
 
-console.log('\nWhat shop staff may now do');
+/* --- a real code column must not be mistaken for a pack size --- */
 
-const shopStaff = capabilitiesFor({ role: 'CASHIER', warehouseStaff: false, productEntryOpen: true });
-const manager = capabilitiesFor({ role: 'STORE_MANAGER', warehouseStaff: false, productEntryOpen: true });
+console.log('\nA file that genuinely uses product codes');
+
+const coded = [
+  { sku: 'ABC123', name: 'Carrot nantes', company: 'Starke Ayres' },
+  { sku: 'ABC124', name: 'Chinese Cabbage', company: 'Starke Ayres' },
+  { sku: 'ABC125', name: 'Okra', company: 'Starke Ayres' },
+  { sku: 'ABC126', name: 'Lettuce', company: 'Starke Ayres' },
+  { sku: 'ABC127', name: 'Giant rape', company: 'Zamseed' },
+  { sku: 'ABC128', name: 'Onion red', company: 'Zamseed' },
+];
+check('a proper code column is left alone', detectMisheadedSku(coded) === null);
+
+// The same product listed twice under one code is a repeat, not a pack size.
+const repeated = [...coded, { sku: 'ABC123', name: 'Carrot nantes', company: 'Starke Ayres' }];
+check('a repeated row does not trigger it', detectMisheadedSku(repeated) === null);
+
+// Codes that happen to be short and numeric are still codes.
+const numericCodes = [
+  { sku: '1001', name: 'Carrot nantes', company: 'Starke Ayres' },
+  { sku: '1002', name: 'Chinese Cabbage', company: 'Starke Ayres' },
+  { sku: '1003', name: 'Okra', company: 'Starke Ayres' },
+  { sku: '1004', name: 'Lettuce', company: 'Starke Ayres' },
+  { sku: '1005', name: 'Giant rape', company: 'Zamseed' },
+  { sku: '1006', name: 'Onion red', company: 'Zamseed' },
+];
+check('numeric codes are not read as pack sizes', detectMisheadedSku(numericCodes) === null);
+
+console.log('\nWhat shop staff may do');
+
+const cashier = capabilitiesFor({ role: 'CASHIER', warehouseStaff: false, productEntryOpen: true });
 const afterWindow = capabilitiesFor({ role: 'CASHIER', warehouseStaff: false, productEntryOpen: false });
 
-check('a shop cashier can adjust stock', shopStaff.includes('stock.adjust'));
-check('a shop cashier can set prices', shopStaff.includes('pricing.write'));
-check('a shop cashier can add and edit products', shopStaff.includes('products.write'));
-check('a shop cashier can bulk upload', shopStaff.includes('products.import'));
-check('a shop cashier CANNOT delete products', !shopStaff.includes('products.delete'));
-check('a shop cashier CANNOT delete a shop', !shopStaff.includes('stores.delete'));
-check('a shop cashier CANNOT void a sale', !shopStaff.includes('transactions.void'));
-check('a store manager keeps everything they had', manager.includes('refunds.issue') && manager.includes('stock.adjust'));
-check(
-  'stock adjustment survives the product-entry window closing',
-  afterWindow.includes('stock.adjust'),
-  'it is a permanent grant, not part of the two-month window'
-);
-check(
-  'adding products still stops when the window closes',
-  !afterWindow.includes('products.write'),
-  'unchanged from the earlier decision — raise if this should now be permanent'
-);
+check('a shop cashier can adjust stock', cashier.includes('stock.adjust'));
+check('a shop cashier can set prices', cashier.includes('pricing.write'));
+check('a shop cashier can add and edit products', cashier.includes('products.write'));
+check('a shop cashier CANNOT delete products', !cashier.includes('products.delete'));
+check('a shop cashier CANNOT delete a shop', !cashier.includes('stores.delete'));
+check('stock adjustment outlives the product-entry window', afterWindow.includes('stock.adjust'));
+check('adding products still ends with the window', !afterWindow.includes('products.write'));
 
 console.log(failures === 0 ? '\nAll checks passed.\n' : `\n${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

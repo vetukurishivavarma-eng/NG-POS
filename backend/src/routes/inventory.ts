@@ -385,8 +385,9 @@ inventoryRouter.post(
     // Either the file names its products, or it describes them well enough for
     // a code to be worked out. Without one of the two there is nothing stable
     // to match a re-upload against, and every import would duplicate the last.
-    const hasSku = parsed.headers.includes('sku');
+    let hasSku = parsed.headers.includes('sku');
     const hasName = parsed.headers.includes('name');
+    const warnings: string[] = [];
     if (!hasSku && !hasName) {
       throw badRequest(
         `The file needs either an "sku" column, or a "PRODUCT" column (with "COMPANY" and "PACKSIZE") so a product code can be worked out. Found: ${
@@ -397,11 +398,26 @@ inventoryRouter.post(
 
     /* ------------------------- 1b-ii. a SKU column that is really a pack size */
 
-    // Caught before the row-by-row pass, because that pass is right about every
-    // row and silent about the cause: a price master whose SKU column held
-    // "25g", "1kg", "1ltr" failed with 186 separate errors, each asking for two
-    // products to be combined into one row. One sentence about the heading is
-    // worth more than 186 correct sentences about the rows.
+    /*
+     * The buyer's price master labels its pack-size column SKU. Ours calls it
+     * PACKSIZE, and the first version of this check told the client to rename
+     * their heading — which is asking somebody to re-label a file they keep
+     * every month so that our vocabulary can stay as it is. The file is theirs;
+     * reading it is our job.
+     *
+     * So it is adopted rather than refused, but only where the reading is not a
+     * guess. Three things must hold together: the values are shaped like pack
+     * sizes (25g, 1ltr, 500ml), the same value is used by genuinely different
+     * products, and company + product + that value identifies every row on its
+     * own. A column satisfying all three cannot be a product code — a code
+     * shared by thirty-six seeds is not a code — and a genuinely broken code
+     * column, full of things like ABC123, matches none of them and still gets
+     * the row-by-row treatment.
+     *
+     * What is done is always said. The response carries a warning naming the
+     * column and what it was read as, because a file that imports differently
+     * from how it is written should never do so quietly.
+     */
     if (hasSku) {
       const misheaded = detectMisheadedSku(
         records.map((record) => ({
@@ -411,15 +427,29 @@ inventoryRouter.post(
         }))
       );
 
-      if (misheaded) {
-        const heading =
-          parsed.rawHeaders[parsed.headers.indexOf('sku')] || 'SKU';
+      const heading = parsed.rawHeaders[parsed.headers.indexOf('sku')] || 'SKU';
+      const alreadyHasPackSize = parsed.headers.includes('pack_size');
+
+      if (misheaded && misheaded.uniqueAsPackSize && !alreadyHasPackSize) {
+        for (const record of records) {
+          record.pack_size = (record.sku ?? '').trim();
+          record.sku = '';
+        }
+        hasSku = false;
+        warnings.push(
+          `The "${heading}" column holds pack sizes (${misheaded.examples.join(', ')}), so it was read as the pack size. ` +
+            `Products are identified by company, product and pack size, and a code was worked out for each of the ${misheaded.rows} rows.`
+        );
+      } else if (misheaded) {
+        // Pack sizes, but they do not identify the rows either — two lines
+        // share a company, a product and a pack size. Nothing here can be
+        // reinterpreted safely, so it is said plainly.
         throw badRequest(
           `The "${heading}" column holds pack sizes, not product codes: ${misheaded.examples.join(', ')}. ` +
-            `Rename that heading to PACKSIZE and upload the file again — ` +
-            (misheaded.uniqueAsPackSize
-              ? `each of the ${misheaded.rows} rows is then identified by its company, product and pack size, and a code is worked out for it.`
-              : `products will then be identified by company, product and pack size.`) +
+            (alreadyHasPackSize
+              ? `The file already has a pack size column as well, so remove or rename "${heading}".`
+              : `Company, product and pack size do not identify every row either, so some products cannot be told apart. ` +
+                `Give the repeated rows a distinguishing pack size, or add a real product code.`) +
             ` Nothing was imported.`
         );
       }
@@ -477,7 +507,8 @@ inventoryRouter.post(
     /* ------------------------------------------------------ 2. validate it */
 
     const errors: RowError[] = [];
-    const warnings: string[] = [];
+    // `warnings` is declared with the header checks above: reading the sheet
+    // can already have something to say before a single row is validated.
     const seenSku = new Map<string, Parsed>();
 
     const parsedRows: Parsed[] = [];
