@@ -15,6 +15,7 @@ import { parseCsvObjects, tableToObjects, type TableObjects } from '../lib/csv.j
 import { readXlsx, XlsxError } from '../lib/xlsx.js';
 import { CATEGORY_LIST_HINT, normaliseCategory } from '../lib/categories.js';
 import {
+  detectMisheadedSku,
   flatten,
   HEADER_ALIASES,
   KNOWN_FIELDS,
@@ -394,6 +395,36 @@ inventoryRouter.post(
       );
     }
 
+    /* ------------------------- 1b-ii. a SKU column that is really a pack size */
+
+    // Caught before the row-by-row pass, because that pass is right about every
+    // row and silent about the cause: a price master whose SKU column held
+    // "25g", "1kg", "1ltr" failed with 186 separate errors, each asking for two
+    // products to be combined into one row. One sentence about the heading is
+    // worth more than 186 correct sentences about the rows.
+    if (hasSku) {
+      const misheaded = detectMisheadedSku(
+        records.map((record) => ({
+          sku: (record.sku ?? '').trim(),
+          name: (record.name ?? '').trim(),
+          company: (record.company ?? '').trim(),
+        }))
+      );
+
+      if (misheaded) {
+        const heading =
+          parsed.rawHeaders[parsed.headers.indexOf('sku')] || 'SKU';
+        throw badRequest(
+          `The "${heading}" column holds pack sizes, not product codes: ${misheaded.examples.join(', ')}. ` +
+            `Rename that heading to PACKSIZE and upload the file again — ` +
+            (misheaded.uniqueAsPackSize
+              ? `each of the ${misheaded.rows} rows is then identified by its company, product and pack size, and a code is worked out for it.`
+              : `products will then be identified by company, product and pack size.`) +
+            ` Nothing was imported.`
+        );
+      }
+    }
+
     /* --------------------------------------- 1c. columns named after a shop */
 
     // Anything the vocabulary does not claim is a candidate. Matching is done
@@ -452,6 +483,7 @@ inventoryRouter.post(
     const parsedRows: Parsed[] = [];
     const writableShopColumns = shopColumns.filter((c) => c.status === 'ok');
     const merged: number[] = [];
+    let zeroShopPrices = 0;
 
     records.forEach((record, index) => {
       const line = index + 2;
@@ -516,7 +548,18 @@ inventoryRouter.post(
         if (!raw) continue;
         pricesShops = true;
         const value = numeric(raw, `${column.column} price`);
-        if (value !== null) shopPrices.set(column.storeId as string, value);
+        if (value === null) continue;
+        // A shop price of zero is not a price. Written as one it means that
+        // shop sells the item for nothing, and it reads as deliberate at the
+        // till — where the buyer's sheet means "not priced here yet", and the
+        // product's own selling price is the honest fallback. Counted and
+        // reported rather than refused: a 200-line sheet with a few empty cells
+        // is normal, and rejecting the file over them helps nobody.
+        if (value === 0) {
+          zeroShopPrices += 1;
+          continue;
+        }
+        shopPrices.set(column.storeId as string, value);
       }
 
       const parsedRow: Parsed = {
@@ -616,6 +659,14 @@ inventoryRouter.post(
     if (unpricedNewProducts > 0) {
       warnings.push(
         `${unpricedNewProducts} new product${unpricedNewProducts === 1 ? ' has' : 's have'} no selling price and will be created at 0.`
+      );
+    }
+
+    if (zeroShopPrices > 0) {
+      warnings.push(
+        `${zeroShopPrices} shop price${zeroShopPrices === 1 ? ' was' : 's were'} zero and ${
+          zeroShopPrices === 1 ? 'was' : 'were'
+        } left out — those shops will use the product's own selling price. Fill the cells in to price them separately.`
       );
     }
 

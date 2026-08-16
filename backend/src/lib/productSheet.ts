@@ -130,6 +130,13 @@ export const HEADER_ALIASES: Record<string, string> = {
   markup: '',
   gp: '',
   gross_profit: '',
+  // Margin as a percentage of the selling price. A working column like the
+  // rest, but it is not caught by stripping brackets, so without this it is
+  // offered to the operator as a possible shop named "GP On SP".
+  gp_on_sp: '',
+  gp_percent: '',
+  margin: '',
+  margin_percent: '',
   // Provenance from whatever merged the buyer's two spreadsheets together.
   match_status: '',
   matched_ap_name: '',
@@ -168,6 +175,72 @@ export function flatten(value: string): string {
  */
 export function identityOf(company: string, product: string, packSize: string): string {
   return [flatten(company), flatten(product), flatten(packSize)].join('|');
+}
+
+/** A value that reads as a pack size rather than a product code: 25g, 1kg, 1ltr, 500ml. */
+const PACK_SIZE_VALUE = /^\d+(\.\d+)?\s*(g|gm|gms|kg|kgs|ml|l|lt|ltr|ltrs|litre|litres|mg|t|ton|tons|pcs|pc|pkt|pack|bag|bags|box|boxes|tab|tabs|dose|doses|units?)$/i;
+
+export interface MisheadedSku {
+  /** How many of the values look like a pack size. */
+  packSizeValues: number;
+  /** Values shared by rows with different product names. */
+  sharedValues: number;
+  distinctValues: number;
+  rows: number;
+  /** Whether company + product + this column would identify every row. */
+  uniqueAsPackSize: boolean;
+  examples: string[];
+}
+
+/**
+ * Detects the mistake that stopped a real 215-row price master dead: a column
+ * headed SKU that actually holds the pack size, so thirty-six different seeds
+ * all share the "code" `25g`.
+ *
+ * Worth detecting rather than leaving to the row-by-row check, because the
+ * row-by-row check is right about every row and useless about the cause — it
+ * reported 186 separate failures, each asking the operator to "combine them
+ * into one row", when what was needed was to change one word in the heading.
+ *
+ * This deliberately only reports. Silently re-reading the column as a pack size
+ * would be a guess about what a file means, and a wrong guess would build the
+ * whole catalogue under invented codes.
+ */
+export function detectMisheadedSku(
+  rows: { sku: string; name: string; company: string }[]
+): MisheadedSku | null {
+  const populated = rows.filter((row) => row.sku.trim() !== '');
+  if (populated.length < 5) return null;
+
+  const byValue = new Map<string, Set<string>>();
+  let packSizeValues = 0;
+
+  for (const row of populated) {
+    const value = row.sku.trim();
+    if (PACK_SIZE_VALUE.test(value)) packSizeValues += 1;
+    const names = byValue.get(value.toLowerCase()) ?? new Set<string>();
+    names.add(flatten(row.name));
+    byValue.set(value.toLowerCase(), names);
+  }
+
+  const shared = [...byValue.entries()].filter(([, names]) => names.size > 1);
+  // Both signals have to agree: values that look like sizes, AND the same value
+  // used by genuinely different products. A legitimate code column can repeat
+  // (the same product listed twice) without meaning anything is wrong.
+  if (packSizeValues < populated.length * 0.6 || shared.length === 0) return null;
+
+  const identities = new Set(
+    populated.map((row) => identityOf(row.company, row.name, row.sku))
+  );
+
+  return {
+    packSizeValues,
+    sharedValues: shared.length,
+    distinctValues: byValue.size,
+    rows: populated.length,
+    uniqueAsPackSize: identities.size === populated.length,
+    examples: shared.slice(0, 3).map(([value, names]) => `"${value}" (${names.size} different products)`),
+  };
 }
 
 /**
