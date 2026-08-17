@@ -3,9 +3,11 @@ import { create } from 'zustand';
 import { products as productsApi, transactions as txApi } from '../api/endpoints';
 import { errorMessage, isNetworkError, isNotFound } from '../api/client';
 import { useStoreSelection } from '../store/storeSelection';
+import { can, useAuth } from '../store/auth';
 import {
   cacheProducts,
   countPending,
+  forgetCachedCosts,
   markPendingFailed,
   readPending,
   removePending,
@@ -124,6 +126,9 @@ async function pullInto(storeId: string, mayRecover: boolean): Promise<number> {
   try {
     const items = await productsApi.withStock(storeId);
     await cacheProducts(storeId, items);
+    // Anything cached before buying prices were withheld is still sitting in
+    // SQLite, and an incremental sync would never come back to those rows.
+    if (!can(useAuth.getState().user, 'costs.view')) await forgetCachedCosts();
     const now = new Date().toISOString();
     await setLastSync(storeId, now);
     useSync.getState()._set({ lastSyncedAt: now });

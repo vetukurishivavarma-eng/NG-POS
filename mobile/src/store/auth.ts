@@ -119,6 +119,7 @@ export type Permission =
   | 'products.import'
   | 'stock.adjust'
   | 'pricing.write'
+  | 'costs.view'
   | 'warehouses.write'
   | 'transfers.create'
   | 'stores.write'
@@ -143,6 +144,11 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'products.import': ['admin', 'manager'],
   'stock.adjust': ['admin', 'manager'],
   'pricing.write': ['admin', 'manager'],
+  // Buying prices are the owner's business with his suppliers, so this is the
+  // one capability a manager does not get. The fallback matters more here than
+  // elsewhere: if it were wrong, a handset on an old token would show the cost
+  // price rather than merely offer a button the server then refuses.
+  'costs.view': ['admin'],
   'warehouses.write': ['admin'],
   'transfers.create': ['admin', 'manager'],
   // Opening a shop is an organisation-level act, so admin only — the same guard

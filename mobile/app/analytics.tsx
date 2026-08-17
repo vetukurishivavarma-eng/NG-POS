@@ -6,7 +6,7 @@ import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { analytics, stores as storesApi } from '../src/api/endpoints';
 import { errorMessage } from '../src/api/client';
 import { PERIOD_LABELS } from '../src/api/types';
-import { useAuth } from '../src/store/auth';
+import { useAuth, useCan } from '../src/store/auth';
 import { placeLabel, warehouseFirst } from '../src/store/place';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { useLayout } from '../src/ui/responsive';
@@ -82,6 +82,7 @@ export default function AnalyticsScreen() {
   // holding the device is nearly always after.
   const [scope, setScope] = useState<string>(store?.id ?? ALL_SHOPS);
   const [focusProductId, setFocusProductId] = useState<string | null>(null);
+  const seesCosts = useCan('costs.view');
 
   const storeList = useQuery({ queryKey: ['stores'], queryFn: () => storesApi.list() });
 
@@ -210,6 +211,23 @@ export default function AnalyticsScreen() {
           profit: margin.data.gross_profit,
         }
       : null;
+
+  // Every panel on this screen is built from the buying price, and the three
+  // endpoints behind them now refuse an account without `costs.view`. The link
+  // into it is hidden from the same accounts, but a handset can be sitting on
+  // this route when its permissions change, and half a dozen red error cards is
+  // a worse answer than one plain sentence.
+  if (!seesCosts) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['bottom']}>
+        <EmptyState
+          icon="lock"
+          title="Not your screen"
+          hint="Margins and profit are kept to the owner and the warehouse. Today's takings are on the Reports tab."
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>

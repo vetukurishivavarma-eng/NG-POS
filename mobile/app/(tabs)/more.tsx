@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
 import { installedBuild, installedVersion, useAppUpdate } from '../../src/store/appUpdate';
-import { useAuth, roleLevel, useCan } from '../../src/store/auth';
+import { useAuth, useCan } from '../../src/store/auth';
 import { useStoreSelection } from '../../src/store/storeSelection';
 import { useSync, syncAll } from '../../src/db/sync';
 import { usePrinter } from '../../src/printing/printer';
@@ -45,7 +45,12 @@ export default function MoreScreen() {
   const canBuy = useCan('purchases.write');
   const canHistory = useCan('audit.read');
   const canPublish = useCan('releases.publish');
-  const seesReports = roleLevel(user) !== 'cashier';
+  // Analytics is every figure the business is judged on — margin, profit per
+  // product, profit per branch — and all three are the buying price with
+  // arithmetic on top. It used to open for anyone above a cashier; the owner
+  // was asked whether a store manager should have it and said no, so it now
+  // follows the buying price exactly: the owner, and the warehouse.
+  const seesReports = useCan('costs.view');
 
   async function runSync() {
     if (!store) return;

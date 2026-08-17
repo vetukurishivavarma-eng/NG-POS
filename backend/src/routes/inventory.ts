@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
-import { capabilityContext } from '../lib/capabilities.js';
+import { capabilityContext, mayViewCosts } from '../lib/capabilities.js';
 import { recordAudit } from '../lib/audit.js';
 import { num } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
@@ -47,6 +47,10 @@ inventoryRouter.get(
       orderBy: { product: { name: 'asc' } },
     });
 
+    // `value` is stock at cost, so it is a buying price with a quantity applied
+    // to it and is withheld from the same accounts for the same reason.
+    const showCosts = await mayViewCosts(user);
+
     const mapped = rows.map((r) => ({
       product_id: r.productId,
       store_id: r.storeId,
@@ -55,7 +59,7 @@ inventoryRouter.get(
       brand: r.product.brand,
       quantity: num(r.quantity),
       reorder_level: num(r.reorderLevel),
-      value: num(r.quantity) * num(r.product.costPrice),
+      value: showCosts ? num(r.quantity) * num(r.product.costPrice) : 0,
       updated_at: r.updatedAt,
     }));
 
@@ -1033,6 +1037,156 @@ inventoryRouter.get(
       accepts_xlsx: true,
       max_rows: MAX_UPLOAD_ROWS,
     });
+  })
+);
+
+/* ------------------------------------------------------------ export back out */
+
+const exportQuery = z.object({
+  /** Whose shelf the quantity column describes. Required to include stock. */
+  store_id: z.string().uuid().optional(),
+  /**
+   * A string enum rather than `z.coerce.boolean()`, which reads the text
+   * "false" as true — every non-empty string is truthy to `Boolean`.
+   */
+  include_stock: z.enum(['true', 'false']).default('false'),
+});
+
+/**
+ * The catalogue as it stands, written in the shape this same route reads back.
+ *
+ * This is the second half of the way the owner asked to load his prices: the
+ * shops upload their stock with no prices in it, the people at the counter type
+ * the selling prices in as they go, and then he takes the completed list away,
+ * fills the buying price in beside each line and sends it back. Without a way
+ * to get the list back out, that last step means retyping two hundred lines.
+ *
+ * It round-trips exactly, which is the property that matters:
+ *
+ *  - `sku` is what the importer matches on, so a re-upload updates these rows
+ *    rather than creating a second catalogue beside them.
+ *  - Every active shop gets its column, whether or not it prices the product.
+ *    A row that prices any shop is authoritative for all the shop columns in
+ *    the file, so an export that dropped the shops with no override would blank
+ *    their prices on the way back in.
+ *  - A money column reading zero is written **blank**. Zero here almost always
+ *    means "nobody has said yet" — the price master arrived with 106 of 215
+ *    rows unpriced — and a blank leaves the stored figure alone where a zero
+ *    would overwrite it. It also puts the empty cells where the eye can find
+ *    them, which is the point of sending the sheet out.
+ *
+ * Quantities are left out unless they are asked for, and that is deliberate:
+ * the importer reads a quantity column as the counted total, so a price list
+ * with yesterday's stock in it would roll every shelf back to yesterday when it
+ * was returned.
+ */
+inventoryRouter.get(
+  '/export',
+  requireCapability('products.import'),
+  asyncHandler(async (req, res) => {
+    const q = exportQuery.parse(req.query);
+    const user = currentUser(req);
+    const includeStock = q.include_stock === 'true';
+
+    if (includeStock && !q.store_id) {
+      throw badRequest('Stock counts are held per shop, so this needs a shop to count.');
+    }
+    if (q.store_id) await assertStoreAccess(user, q.store_id);
+
+    // The buying price is withheld from the same accounts as everywhere else —
+    // and a shop that exports without it simply returns a file with no cost
+    // column, which the importer reads as "says nothing about cost".
+    const showCosts = await mayViewCosts(user);
+
+    const stores = await prisma.store.findMany({
+      where: { organizationId: user.organizationId, isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const products = await prisma.product.findMany({
+      where: { organizationId: user.organizationId, isActive: true },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        barcode: true,
+        brand: true,
+        category: true,
+        unit: true,
+        costPrice: true,
+        sellingPrice: true,
+        taxType: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // Fetched alongside rather than as nested relations: one statement each,
+    // and the stock query only runs when a stock column was asked for.
+    const [overrides, levels] = await Promise.all([
+      prisma.storePrice.findMany({
+        where: { storeId: { in: stores.map((s) => s.id) }, productId: { in: products.map((p) => p.id) } },
+        select: { productId: true, storeId: true, price: true },
+      }),
+      includeStock && q.store_id
+        ? prisma.inventory.findMany({
+            where: { storeId: q.store_id, productId: { in: products.map((p) => p.id) } },
+            select: { productId: true, quantity: true, reorderLevel: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const priceBy = new Map(overrides.map((o) => [`${o.productId}:${o.storeId}`, num(o.price)]));
+    const levelBy = new Map(levels.map((l) => [l.productId, l]));
+
+    /** Blank for nothing, so an unanswered cell stays unanswered on the way back. */
+    const money = (value: number | null | undefined): string =>
+      value === null || value === undefined || value === 0 ? '' : value.toFixed(2);
+
+    const columns = [
+      'sku',
+      'name',
+      'barcode',
+      'brand',
+      'category',
+      'unit',
+      ...(showCosts ? ['cost_price'] : []),
+      'selling_price',
+      'tax_type',
+      ...(includeStock ? ['quantity', 'reorder_level'] : []),
+      ...stores.map((s) => s.name),
+    ];
+
+    const rows = products.map((p) => {
+      const level = levelBy.get(p.id);
+      return [
+        p.sku,
+        p.name,
+        p.barcode ?? '',
+        p.brand ?? '',
+        p.category ?? '',
+        p.unit ?? '',
+        ...(showCosts ? [money(num(p.costPrice))] : []),
+        money(num(p.sellingPrice)),
+        p.taxType,
+        // A count of zero is a fact about the shelf, not a missing answer, so
+        // it is written as 0 where the money columns would be left blank.
+        ...(includeStock ? [level ? String(num(level.quantity)) : '0', level ? String(num(level.reorderLevel)) : ''] : []),
+        ...stores.map((s) => money(priceBy.get(`${p.id}:${s.id}`))),
+      ].map(csvCell).join(',');
+    });
+
+    const day = new Date().toISOString().slice(0, 10);
+    const filename = includeStock
+      ? `ng-pos-stock-count-${day}.csv`
+      : `ng-pos-price-list-${day}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    // How many products are in it, so a client can say "nothing to send" without
+    // parsing the file. The header row is not a row.
+    res.setHeader('X-Product-Count', String(products.length));
+    res.send(`﻿${[columns.map(csvCell).join(','), ...rows].join('\r\n')}\r\n`);
   })
 );
 

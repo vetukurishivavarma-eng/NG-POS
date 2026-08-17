@@ -273,6 +273,70 @@ export default function StockImportScreen() {
     }
   }
 
+  /**
+   * The other direction: the catalogue as it stands, to fill in and send back.
+   *
+   * The two choices are not cosmetic. A price list carries no quantity column
+   * at all, so returning it cannot touch a single shelf; a stock count sheet
+   * carries this shop's counted numbers, and uploading that back with "Counted
+   * on the shelf" set writes them in as the truth. Anyone downloading the price
+   * list to fill in buying prices wants the first one, and would not find out
+   * they had the second until a week of sales went missing.
+   */
+  function chooseExport() {
+    Alert.alert(
+      'Download the current list',
+      'The price list has every product with the prices as they stand now — fill in the cost prices and upload the same file back. The stock count sheet adds what this shop currently has on the shelf.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Price list', onPress: () => void shareExport(false) },
+        { text: 'With stock counts', onPress: () => void shareExport(true) },
+      ]
+    );
+  }
+
+  async function shareExport(includeStock: boolean) {
+    setBusy(true);
+    try {
+      const text = await inventoryApi.exportCatalogue(storeId, includeStock);
+
+      // A header row and nothing under it. Sharing that would look like the
+      // export failed quietly, so it is said plainly instead.
+      if (text.split(/\r?\n/).filter((line) => line.trim() !== '').length < 2) {
+        Alert.alert(
+          'Nothing to download yet',
+          'There are no products in the catalogue. Upload a spreadsheet first, then download it back to fill in the prices.'
+        );
+        return;
+      }
+
+      const dir = new Directory(Paths.cache, 'exports');
+      if (!dir.exists) dir.create({ intermediates: true });
+
+      const day = new Date().toISOString().slice(0, 10);
+      const name = includeStock
+        ? `ng-pos-stock-count-${day}.csv`
+        : `ng-pos-price-list-${day}.csv`;
+      const target = new File(dir, name);
+      if (target.exists) target.delete();
+      target.create();
+      target.write(text);
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(target.uri, {
+          mimeType: 'text/csv',
+          dialogTitle: includeStock ? 'NG POS stock count' : 'NG POS price list',
+        });
+      } else {
+        Alert.alert('Saved', `Saved to ${target.uri}`);
+      }
+    } catch (err) {
+      Alert.alert("Couldn't download the list", errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!store) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -353,6 +417,18 @@ export default function StockImportScreen() {
             loading={busy && !file}
             onPress={chooseTemplate}
           />
+          <Button
+            label="Download the Current List"
+            icon="share"
+            variant="secondary"
+            loading={busy && !file}
+            onPress={chooseExport}
+          />
+          <Text style={styles.hint}>
+            Uploaded the stock with no prices? Have the shops type the selling prices in, then
+            download the current list, fill in the cost prices beside them and upload the same file
+            back.
+          </Text>
           <Text style={styles.hint}>
             An <Text style={styles.mono}>.xlsx</Text> goes up as it is — no need to save it as CSV
             first. Keep the header row; every line needs a{' '}

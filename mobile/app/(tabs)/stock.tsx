@@ -4,6 +4,7 @@ import { FlashList } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useStoreSelection } from '../../src/store/storeSelection';
+import { useCan } from '../../src/store/auth';
 import { useCatalogue, filterCatalogue } from '../../src/hooks/useCatalogue';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/theme';
@@ -14,6 +15,7 @@ type Filter = 'all' | 'in' | 'low' | 'out';
 export default function StockScreen() {
   const store = useStoreSelection((s) => s.selected);
   const layout = useLayout();
+  const showCosts = useCan('costs.view');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
 
@@ -70,15 +72,22 @@ export default function StockScreen() {
         <Subtitle>{store.name}</Subtitle>
       </View>
 
-      <View style={[styles.valueCard, { marginHorizontal: layout.gutter }]}>
-        <View>
-          <Text style={styles.valueLabel}>Stock value at cost</Text>
-          <Text style={styles.valueAmount}>{formatKwacha(summary.value)}</Text>
+      {/* Stock at cost is the buying price with a quantity on it, so it belongs
+          to the accounts allowed to see buying prices and to no others. Asked
+          for by the owner: a shop counts and sells stock without ever needing
+          to know what the business paid for it. The server withholds the
+          figure as well — this only stops an empty card being drawn. */}
+      {showCosts ? (
+        <View style={[styles.valueCard, { marginHorizontal: layout.gutter }]}>
+          <View>
+            <Text style={styles.valueLabel}>Stock value at cost</Text>
+            <Text style={styles.valueAmount}>{formatKwacha(summary.value)}</Text>
+          </View>
+          <View style={styles.valueIcon}>
+            <Icon name="layers" size={22} color={colors.accentDeep} />
+          </View>
         </View>
-        <View style={styles.valueIcon}>
-          <Icon name="layers" size={22} color={colors.accentDeep} />
-        </View>
-      </View>
+      ) : null}
 
       <View style={[styles.filters, { paddingHorizontal: layout.gutter }]}>
         {filters.map((f) => {

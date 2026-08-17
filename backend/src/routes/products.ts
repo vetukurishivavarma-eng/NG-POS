@@ -5,6 +5,7 @@ import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
 import { serializeProduct, serializeProductWithStock } from '../lib/serialize.js';
+import { mayViewCosts } from '../lib/capabilities.js';
 import { notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
 import {
@@ -125,7 +126,8 @@ productsRouter.get(
       skip: q.offset,
     });
 
-    res.json(products.map(serializeProduct));
+    const showCosts = await mayViewCosts(currentUser(req));
+    res.json(products.map((p) => serializeProduct(p, showCosts)));
   })
 );
 
@@ -207,13 +209,15 @@ productsRouter.get(
       },
     });
 
+    const showCosts = await mayViewCosts(user);
     res.json(
       products.map((p) =>
         serializeProductWithStock(
           p,
           p.inventory[0]?.quantity ?? 0,
           p.inventory[0]?.reorderLevel ?? 10,
-          p.prices[0]?.price ?? null
+          p.prices[0]?.price ?? null,
+          showCosts
         )
       )
     );
@@ -227,7 +231,7 @@ productsRouter.get(
       where: { id: req.params.id, organizationId: currentUser(req).organizationId },
     });
     if (!product) throw notFound('Product not found.');
-    res.json(serializeProduct(product));
+    res.json(serializeProduct(product, await mayViewCosts(currentUser(req))));
   })
 );
 
@@ -253,7 +257,7 @@ productsRouter.post(
         imageBase64: body.image_base64 ?? null,
       },
     });
-    res.status(201).json(serializeProduct(product));
+    res.status(201).json(serializeProduct(product, await mayViewCosts(currentUser(req))));
   })
 );
 
@@ -262,12 +266,21 @@ productsRouter.put(
   requireCapability('products.write'),
   asyncHandler(async (req, res) => {
     const body = productSchema.partial().parse(req.body);
-    const organizationId = currentUser(req).organizationId;
+    const user = currentUser(req);
+    const organizationId = user.organizationId;
 
     const existing = await prisma.product.findFirst({
       where: { id: req.params.id, organizationId },
     });
     if (!existing) throw notFound('Product not found.');
+
+    // An account that cannot see the buying price cannot write it either, and
+    // this is not a nicety. Such an account is *sent* a cost price of zero, so
+    // saving any edit at all — a corrected spelling, a new category — would post
+    // that zero back and destroy the real figure for the whole organisation.
+    // The field is dropped from the update rather than rejected, because the
+    // shop did nothing wrong by sending back what it was given.
+    const showCosts = await mayViewCosts(user);
 
     const product = await prisma.product.update({
       where: { id: existing.id },
@@ -278,7 +291,7 @@ productsRouter.put(
         barcode: body.barcode,
         brand: body.brand,
         category: body.category,
-        costPrice: body.cost_price,
+        ...(showCosts ? { costPrice: body.cost_price } : {}),
         sellingPrice: body.selling_price,
         taxType: body.tax_type,
         unit: body.unit,
@@ -287,7 +300,7 @@ productsRouter.put(
       },
     });
 
-    res.json(serializeProduct(product));
+    res.json(serializeProduct(product, showCosts));
   })
 );
 

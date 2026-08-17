@@ -106,6 +106,21 @@ export async function cacheProducts(storeId: string, items: ProductWithStock[]):
   });
 }
 
+/**
+ * Wipes every buying price out of the offline catalogue.
+ *
+ * The server now sends 0 in place of the cost price to an account that may not
+ * see it, but this cache was filled before that was true and it is only topped
+ * up with what has *changed* since the last sync — so a product nobody has
+ * edited would keep the price it was cached with for ever. One statement on a
+ * few hundred rows, run after each sync for those accounts, and the device is
+ * carrying nothing it should not be carrying.
+ */
+export async function forgetCachedCosts(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`UPDATE products SET cost_price = 0 WHERE cost_price <> 0`);
+}
+
 export async function readCachedProducts(storeId: string): Promise<ProductWithStock[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<Record<string, unknown>>(

@@ -34,6 +34,7 @@ type EntryMode = 'counted' | 'delta';
 export default function StockAdjustScreen() {
   const store = useStoreSelection((s) => s.selected);
   const canAdjust = useCan('stock.adjust');
+  const showCosts = useCan('costs.view');
   const layout = useLayout();
   const queryClient = useQueryClient();
   const storeId = store?.id ?? null;
@@ -269,7 +270,8 @@ export default function StockAdjustScreen() {
           <Text style={styles.heroLabel}>In stock now</Text>
           <Text style={styles.heroQty}>{formatQty(current)}</Text>
           <Text style={styles.heroFoot}>
-            {formatKwacha(picked.cost_price)} each at cost · reorder at {formatQty(picked.reorder_level)}
+            {showCosts ? `${formatKwacha(picked.cost_price)} each at cost · ` : ''}reorder at{' '}
+            {formatQty(picked.reorder_level)}
           </Text>
         </View>
 
@@ -408,7 +410,7 @@ export default function StockAdjustScreen() {
           current={current}
           delta={delta}
           newLevel={newLevel}
-          costPrice={picked.cost_price}
+          costPrice={showCosts ? picked.cost_price : null}
           negative={negativeResult}
         />
 
@@ -536,7 +538,8 @@ function Preview({
   current: number;
   delta: number;
   newLevel: number;
-  costPrice: number;
+  /** Null for an account that may not see buying prices — the line is dropped. */
+  costPrice: number | null;
   negative: boolean;
 }) {
   const tone = delta > 0 ? colors.success : delta < 0 ? colors.danger : colors.textMuted;
@@ -570,7 +573,7 @@ function Preview({
           That would take the shelf below zero. If you counted what's there, switch to “Counted
           total” instead.
         </Text>
-      ) : delta !== 0 ? (
+      ) : delta !== 0 && costPrice !== null ? (
         <Text style={styles.previewFoot}>
           {delta > 0 ? 'Adds' : 'Writes off'} {formatKwacha(Math.abs(delta) * costPrice)} of stock at
           cost.

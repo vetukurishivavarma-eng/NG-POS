@@ -60,6 +60,19 @@ export function serializeStore(s: StoreRow) {
   };
 }
 
+/**
+ * A product as the API returns it.
+ *
+ * `showCosts` has no default on purpose. Every caller has to say whether the
+ * account it is answering may see the buying price, because the failure mode of
+ * forgetting is silent: the number simply appears on a shop's handset and
+ * nobody finds out. Making it required turns that into a compile error.
+ *
+ * When it is false the field is sent as 0 rather than dropped. A missing key
+ * would reach older handsets still in the field as `undefined`, and the stock
+ * screen multiplies it — so the shop would read "K NaN" instead of a hidden
+ * figure. Zero is the same thing the app now declines to display anyway.
+ */
 export function serializeProduct(p: {
   id: string;
   organizationId: string;
@@ -78,7 +91,7 @@ export function serializeProduct(p: {
   imageBase64: string | null;
   createdAt: Date;
   updatedAt: Date;
-}) {
+}, showCosts: boolean) {
   return {
     id: p.id,
     organization_id: p.organizationId,
@@ -88,7 +101,7 @@ export function serializeProduct(p: {
     barcode: p.barcode,
     brand: p.brand,
     category: p.category,
-    cost_price: num(p.costPrice),
+    cost_price: showCosts ? num(p.costPrice) : 0,
     selling_price: num(p.sellingPrice),
     tax_type: p.taxType,
     unit: p.unit,
@@ -105,9 +118,10 @@ export function serializeProductWithStock(
   p: Parameters<typeof serializeProduct>[0],
   quantity: Prisma.Decimal | number,
   reorderLevel: Prisma.Decimal | number,
-  overridePrice?: Prisma.Decimal | null
+  overridePrice: Prisma.Decimal | null | undefined,
+  showCosts: boolean
 ) {
-  const base = serializeProduct(p);
+  const base = serializeProduct(p, showCosts);
   return {
     ...base,
     selling_price: overridePrice ? num(overridePrice) : base.selling_price,

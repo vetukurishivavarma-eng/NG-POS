@@ -314,7 +314,13 @@ export interface ProductDraft {
   barcode?: string | null;
   brand?: string | null;
   category?: string | null;
-  cost_price: number;
+  /**
+   * Left out entirely by an account without `costs.view`, which is sent 0 in
+   * place of the real buying price and must not post that 0 back. The server
+   * treats a missing cost price as "says nothing about it" and keeps what it
+   * has, so an omission is safe where a zero would not be.
+   */
+  cost_price?: number;
   selling_price: number;
   tax_type: TaxType;
   unit?: string | null;

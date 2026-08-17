@@ -1035,6 +1035,99 @@ describe('mobile API contract', () => {
     expect(res.text.split(/\r?\n/)[0]).toContain('sku');
   });
 
+  it('inventory.exportCatalogue writes the catalogue in the shape the importer reads', async () => {
+    const res = await get('/api/inventory/export', world.tokens.admin);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+
+    const header = res.text.split(/\r?\n/)[0] as string;
+    // `sku` is what makes a re-upload an update rather than a second catalogue.
+    expect(header).toContain('sku');
+    expect(header).toContain('selling_price');
+    expect(header).toContain('cost_price');
+    // One column per shop, so a row that prices one shop does not blank the rest.
+    expect(header).toContain('Test Store');
+    // No quantity unless it was asked for: the importer reads one as the
+    // counted total, and returning this file must not move any stock.
+    expect(header).not.toContain('quantity');
+  });
+
+  it('inventory.exportCatalogue adds stock counts only for a named shop', async () => {
+    const res = await get('/api/inventory/export', world.tokens.admin, {
+      store_id: world.storeId,
+      include_stock: 'true',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.text.split(/\r?\n/)[0]).toContain('quantity');
+
+    // Stock is per shop, so asking for it without naming one is a 400 rather
+    // than a file that quietly counts nothing.
+    const noShop = await get('/api/inventory/export', world.tokens.admin, {
+      include_stock: 'true',
+    });
+    expect(noShop.status).toBe(400);
+  });
+
+  it('inventory.exportCatalogue leaves the buying price out for a store manager', async () => {
+    const res = await get('/api/inventory/export', world.tokens.manager);
+
+    expect(res.status).toBe(200);
+    const header = res.text.split(/\r?\n/)[0] as string;
+    expect(header).not.toContain('cost_price');
+    expect(header).toContain('selling_price');
+  });
+
+  /* ----------------------------------------------- buying prices are withheld */
+
+  it('products carry no cost price for a store manager', async () => {
+    const admin = await get('/api/products', world.tokens.admin);
+    const manager = await get('/api/products', world.tokens.manager);
+
+    expect(admin.status).toBe(200);
+    expect(manager.status).toBe(200);
+    // Sent as 0 rather than dropped: the field is declared on the app's own
+    // Product type and the stock screen multiplies it, so a missing key would
+    // read "K NaN" on a handset that had not been updated yet.
+    expect(manager.body[0]).toHaveProperty('cost_price', 0);
+    expect(admin.body[0].cost_price).toBeGreaterThan(0);
+  });
+
+  it('a store manager saving a product cannot blank its cost price', async () => {
+    const before = await get('/api/products', world.tokens.admin);
+    const product = before.body[0];
+
+    // Exactly what the app would post back after an edit if it echoed the 0 it
+    // was given — the case that would destroy the figure for the whole chain.
+    const saved = await put(`/api/products/${product.id}`, world.tokens.manager, {
+      name: product.name,
+      sku: product.sku,
+      cost_price: 0,
+      selling_price: product.selling_price,
+      tax_type: product.tax_type,
+    });
+    expect(saved.status).toBe(200);
+
+    const after = await get('/api/products', world.tokens.admin);
+    const same = after.body.find((p: { id: string }) => p.id === product.id);
+    expect(same.cost_price).toBe(product.cost_price);
+  });
+
+  it('profit and margin reports are closed to a store manager', async () => {
+    for (const path of ['/api/analytics/margin-summary', '/api/analytics/profit-per-product', '/api/analytics/profit-per-branch']) {
+      const res = await get(path, world.tokens.manager);
+      expect(res.status).toBe(403);
+    }
+
+    const allowed = await get('/api/analytics/margin-summary', world.tokens.admin);
+    expect(allowed.status).toBe(200);
+
+    // Takings are not costs: the Reports tab every till opens must still work.
+    const dashboard = await get('/api/analytics/dashboard', world.tokens.manager);
+    expect(dashboard.status).toBe(200);
+  });
+
   /* ------------------------------------------------------------------ sync */
 
   it('sync.pull returns products, inventory and the server clock', async () => {

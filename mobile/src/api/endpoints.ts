@@ -271,6 +271,29 @@ export const inventory = {
         responseType: 'text',
       })
       .then((r) => r.data),
+
+  /**
+   * The catalogue as it stands, as CSV, in the shape the importer reads back.
+   *
+   * The point of it is the round trip: send the shops a list with no prices,
+   * let them type the selling prices in, then take this file away, fill the
+   * buying prices in beside them and upload the same file again.
+   *
+   * `includeStock` adds this shop's counted quantity. Left off by default
+   * because the importer reads a quantity column as the counted total, so a
+   * price list carrying stock would roll the shelves back to the day it was
+   * downloaded.
+   */
+  exportCatalogue: (storeId: string | null, includeStock = false) =>
+    api
+      .get<string>('/inventory/export', {
+        params: {
+          ...(storeId ? { store_id: storeId } : {}),
+          include_stock: includeStock ? 'true' : 'false',
+        },
+        responseType: 'text',
+      })
+      .then((r) => r.data),
 };
 
 export const transactions = {

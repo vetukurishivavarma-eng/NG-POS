@@ -40,6 +40,7 @@ export default function ProductFormScreen() {
   const layout = useLayout();
   const canWrite = useCan('products.write');
   const canDelete = useCan('products.delete');
+  const showCosts = useCan('costs.view');
   const queryClient = useQueryClient();
 
   const [name, setName] = useState('');
@@ -98,10 +99,14 @@ export default function ProductFormScreen() {
     () => ({
       name: name.trim() ? null : 'A name is required.',
       sku: sku.trim() ? null : 'An SKU is required — it identifies the product on receipts.',
-      cost: priceError(costValue),
+      // Only where the field is on the screen. A hidden cost price is never
+      // filled in, so validating it would fail a form with nothing visibly
+      // wrong on it — and `submit` returns early on any error, so the Save
+      // button would simply stop working with no explanation anywhere.
+      cost: showCosts ? priceError(costValue) : null,
       selling: priceError(sellValue),
     }),
-    [name, sku, costValue, sellValue]
+    [name, sku, costValue, sellValue, showCosts]
   );
 
   const save = useMutation({
@@ -137,7 +142,11 @@ export default function ProductFormScreen() {
       brand: brand.trim() || null,
       category: category.trim() || null,
       description: description.trim() || null,
-      cost_price: costValue ?? 0,
+      // Never sent by an account that cannot see it. Such an account was given
+      // 0 in place of the real figure, so posting the field back would write
+      // that 0 over a buying price it was never shown. The server drops it as
+      // well; this is the half that does not depend on the server being right.
+      ...(showCosts ? { cost_price: costValue ?? 0 } : {}),
       selling_price: sellValue ?? 0,
       tax_type: taxType,
       unit: unit.trim() || null,
@@ -206,11 +215,17 @@ export default function ProductFormScreen() {
             <Text style={styles.readTitle}>{loaded.name}</Text>
             <Text style={styles.readMeta}>{loaded.sku}</Text>
           </View>
-          <MarginCard cost={loaded.cost_price} selling={loaded.selling_price} />
+          {/* The margin card is the cost price with subtraction applied, so it
+              goes wherever the cost price goes. */}
+          {showCosts ? <MarginCard cost={loaded.cost_price} selling={loaded.selling_price} /> : null}
           <Card>
             <StatRow label="Selling price" value={formatKwacha(loaded.selling_price)} emphasis />
-            <RowDivider />
-            <StatRow label="Cost price" value={formatKwacha(loaded.cost_price)} />
+            {showCosts ? (
+              <>
+                <RowDivider />
+                <StatRow label="Cost price" value={formatKwacha(loaded.cost_price)} />
+              </>
+            ) : null}
             <RowDivider />
             <StatRow label="Tax" value={loaded.tax_type === 'vat' ? 'VAT' : 'Exempt'} />
             <RowDivider />
@@ -283,15 +298,22 @@ export default function ProductFormScreen() {
           <View style={styles.section}>
             <SectionLabel>Pricing</SectionLabel>
             <View style={styles.stack}>
-              <Field
-                label="Cost price"
-                value={cost}
-                onChangeText={setCost}
-                placeholder="0.00"
-                keyboardType="decimal-pad"
-                prefix="K"
-                error={submitted ? errors.cost : null}
-              />
+              {/* Hidden rather than disabled for an account without
+                  `costs.view`: it would otherwise show K0.00, which is not this
+                  product's cost price but the placeholder the server sends in
+                  its place. The server drops the field from such an account's
+                  updates too, so the real figure survives their edits. */}
+              {showCosts ? (
+                <Field
+                  label="Cost price"
+                  value={cost}
+                  onChangeText={setCost}
+                  placeholder="0.00"
+                  keyboardType="decimal-pad"
+                  prefix="K"
+                  error={submitted ? errors.cost : null}
+                />
+              ) : null}
               <Field
                 label="Selling price"
                 value={selling}

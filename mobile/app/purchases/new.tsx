@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { purchases as purchasesApi, suppliers as suppliersApi } from '../../src/api/endpoints';
 import { errorMessage } from '../../src/api/client';
 import { useStoreSelection } from '../../src/store/storeSelection';
+import { useCan } from '../../src/store/auth';
 import { filterCatalogue, useCatalogue } from '../../src/hooks/useCatalogue';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/theme';
@@ -41,6 +42,7 @@ type Settlement = 'credit' | 'part' | 'full';
  */
 export default function NewPurchaseScreen() {
   const layout = useLayout();
+  const showCosts = useCan('costs.view');
   const queryClient = useQueryClient();
   const store = useStoreSelection((s) => s.selected);
   const storeId = store?.id ?? null;
@@ -232,9 +234,14 @@ export default function NewPurchaseScreen() {
                   <Text style={styles.pickName} numberOfLines={1}>
                     {product.name}
                   </Text>
+                  {/* "Last cost" is the stored buying price, so it is withheld
+                      from an account without `costs.view` — which would read
+                      K0.00, the placeholder the server sends. Typing the unit
+                      cost off the invoice in hand is a different thing and stays
+                      open to them; that is the job this screen exists for. */}
                   <Text style={styles.pickMeta} numberOfLines={1}>
-                    {product.sku} · {product.quantity} in stock · last cost{' '}
-                    {formatKwacha(product.cost_price)}
+                    {product.sku} · {product.quantity} in stock
+                    {showCosts ? ` · last cost ${formatKwacha(product.cost_price)}` : ''}
                   </Text>
                 </View>
                 <Icon name="plus-circle" size={20} color={colors.primary} />

@@ -4,7 +4,12 @@ import { z } from 'zod';
 import { prisma } from '../prisma.js';
 import { env } from '../env.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser } from '../middleware/auth.js';
+import {
+  assertStoreAccess,
+  authenticate,
+  currentUser,
+  requireCapability,
+} from '../middleware/auth.js';
 import { dateKeyIn, periodStartIn, periodStartKey, REPORT_PERIODS, shiftDateKey } from '../lib/time.js';
 
 export const analyticsRouter = Router();
@@ -233,6 +238,11 @@ analyticsRouter.get(
  */
 analyticsRouter.get(
   '/profit-per-product',
+  // Profit is the selling price with the buying price taken off it, so anyone
+  // holding this figure and the receipt can work out what the business paid.
+  // These three routes are the reason the Analytics screen is closed to shop
+  // staff and to store managers — the owner was asked and said no.
+  requireCapability('costs.view'),
   asyncHandler(async (req, res) => {
     const q = z
       .object({ store_id: z.string().uuid().optional(), period: periodSchema.default('monthly') })
@@ -322,6 +332,7 @@ analyticsRouter.get(
 
 analyticsRouter.get(
   '/profit-per-branch',
+  requireCapability('costs.view'),
   asyncHandler(async (req, res) => {
     const q = z.object({ period: periodSchema.default('monthly') }).parse(req.query);
     const user = currentUser(req);
@@ -375,6 +386,7 @@ analyticsRouter.get(
  */
 analyticsRouter.get(
   '/margin-summary',
+  requireCapability('costs.view'),
   asyncHandler(async (req, res) => {
     const q = z
       .object({ store_id: z.string().uuid().optional(), period: periodSchema.default('monthly') })

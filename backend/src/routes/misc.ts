@@ -13,6 +13,7 @@ import {
   requireCapability,
 } from '../middleware/auth.js';
 import { num, serializeProduct, serializeUser } from '../lib/serialize.js';
+import { mayViewCosts } from '../lib/capabilities.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
 import { revokeAllSessions } from './devices.js';
@@ -267,10 +268,11 @@ warehousesRouter.get(
       orderBy: { product: { name: 'asc' } },
     });
 
+    const showCosts = await mayViewCosts(currentUser(req));
     res.json(
       rows.map((r) => ({
         product_id: r.productId,
-        product: serializeProduct(r.product),
+        product: serializeProduct(r.product, showCosts),
         quantity: num(r.quantity),
       }))
     );
@@ -483,10 +485,14 @@ syncRouter.get(
       take: 5000,
     });
 
+    // The offline catalogue lands in SQLite on the handset, so a cost price sent
+    // here does not just appear on a screen — it stays on the device.
+    const showCosts = await mayViewCosts(user);
+
     res.json({
       server_time: serverTime.toISOString(),
       products: products.map((p) => ({
-        ...serializeProduct(p),
+        ...serializeProduct(p, showCosts),
         selling_price: p.prices[0] ? num(p.prices[0].price) : num(p.sellingPrice),
         quantity: num(p.inventory[0]?.quantity ?? 0),
         reorder_level: num(p.inventory[0]?.reorderLevel ?? 10),

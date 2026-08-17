@@ -20,6 +20,12 @@ export const CAPABILITIES = [
   'products.import',
   'stock.adjust',
   'pricing.write',
+  // Seeing what the business paid, as opposed to what it charges. Held apart
+  // from every other capability because it guards *reading* rather than doing:
+  // shop staff price, count and sell stock all day without ever needing to know
+  // the margin on it, and the owner asked for it that way — the buying price is
+  // his business with his suppliers.
+  'costs.view',
   'warehouses.write',
   'transfers.create',
   'stores.write',
@@ -118,6 +124,37 @@ export function capabilitiesFor(input: CapabilityInput): Capability[] {
   }
 
   return CAPABILITIES.filter((c) => granted.has(c));
+}
+
+/**
+ * Whether this account may see buying prices, without loading the whole
+ * capability context.
+ *
+ * `costs.view` is checked on ordinary reads — the catalogue every till pulls on
+ * launch — rather than only on guarded writes, so the two queries
+ * `capabilityContext` runs would be paid on the hottest route in the API. This
+ * answers the same question with one query at most, and none at all for the
+ * owner. It must stay in step with `capabilitiesFor`: the capability is granted
+ * to an organisation administrator and to warehouse staff, and to nobody else.
+ */
+export async function mayViewCosts(user: {
+  role: string;
+  organizationId: string;
+  assignedStores: string[];
+}): Promise<boolean> {
+  if (user.role === 'ORG_ADMIN') return true;
+  // Warehouse access comes from an explicit store assignment, so an account
+  // with none cannot have it and there is nothing to look up.
+  if (user.assignedStores.length === 0) return false;
+
+  const warehouseCount = await prisma.store.count({
+    where: {
+      organizationId: user.organizationId,
+      id: { in: user.assignedStores },
+      staffFullAccess: true,
+    },
+  });
+  return warehouseCount > 0;
 }
 
 export interface CapabilityContext {
