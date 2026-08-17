@@ -323,7 +323,10 @@ export default function ProductFormScreen() {
                 prefix="K"
                 error={submitted ? errors.selling : null}
               />
-              <MarginCard cost={costValue ?? 0} selling={sellValue ?? 0} />
+              {/* Margin is the cost price with subtraction applied, so it goes
+                  wherever the cost price goes — same gate as the read-only
+                  view above and the Cost price field itself. */}
+              {showCosts ? <MarginCard cost={costValue ?? 0} selling={sellValue ?? 0} /> : null}
               <Select
                 label="Tax treatment"
                 value={taxType}

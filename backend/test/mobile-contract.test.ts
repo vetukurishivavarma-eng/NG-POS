@@ -524,8 +524,11 @@ describe('mobile API contract', () => {
     expectShape(removed.body, ['detail'], 'deactivate response');
   });
 
-  it('users.list is readable by a manager but not a cashier', async () => {
-    expect((await get('/api/users', world.tokens.manager)).status).toBe(200);
+  // Was readable by a manager; withdrawn from the shop login 2026-08-17 at
+  // the owner's request, alongside Devices and History.
+  it('users.list is readable by an admin but not a manager or cashier', async () => {
+    expect((await get('/api/users', world.tokens.admin)).status).toBe(200);
+    expect((await get('/api/users', world.tokens.manager)).status).toBe(403);
     expect((await get('/api/users', world.tokens.cashier)).status).toBe(403);
   });
 

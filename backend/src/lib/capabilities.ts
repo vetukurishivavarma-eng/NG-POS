@@ -32,6 +32,13 @@ export const CAPABILITIES = [
   'stores.delete',
   'suppliers.write',
   'suppliers.delete',
+  // Browsing the full supplier ledger — every wholesaler and what is owed to
+  // each. Deliberately separate from `suppliers.write`: a manager still needs
+  // to add a supplier and pick one while recording a delivery (both check
+  // `suppliers.write`/authentication alone), but the owner asked that the shop
+  // login not have a menu item that opens straight to "who are we behind
+  // with" — the same money-owed sensitivity as `costs.view`.
+  'suppliers.view',
   'purchases.write',
   'purchases.delete',
   'users.view',
@@ -57,13 +64,11 @@ const ROLE_CAPABILITIES: Record<string, Capability[]> = {
     'transfers.create',
     'suppliers.write',
     'purchases.write',
-    'users.view',
     'refunds.issue',
-    // A manager can read the history of their own shops — the route narrows it
-    // to the stores they are assigned to. Who changed a price or corrected a
-    // stock figure is the question they are asked, and sending them to the
-    // owner for the answer is how the answer stops being asked for.
-    'audit.read',
+    // Staff (users.view — also gates Devices), History (audit.read) and the
+    // supplier ledger (suppliers.view) were withdrawn from the shop login at
+    // the owner's explicit request 2026-08-17. `suppliers.write` stays: a
+    // manager can still add a supplier and record a delivery.
   ],
   CASHIER: [],
 };

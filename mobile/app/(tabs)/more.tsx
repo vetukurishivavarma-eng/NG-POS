@@ -43,6 +43,11 @@ export default function MoreScreen() {
   const canImport = useCan('products.import');
   const canShops = useCan('stores.write');
   const canBuy = useCan('purchases.write');
+  // Separate from `canBuy`: a manager still records deliveries and picks a
+  // supplier while doing it, but the standalone Suppliers list — every
+  // wholesaler and what is owed to them — is the owner's business, withdrawn
+  // from the shop login 2026-08-17 the same way cost price was.
+  const canViewSuppliers = useCan('suppliers.view');
   const canHistory = useCan('audit.read');
   const canPublish = useCan('releases.publish');
   // Analytics is every figure the business is judged on — margin, profit per
@@ -205,13 +210,17 @@ export default function MoreScreen() {
                 value="Stock in, invoice filed, payment tracked"
                 onPress={() => router.push('/purchases/new')}
               />
-              <View style={styles.divider} />
-              <LinkRow
-                icon="truck"
-                label="Suppliers"
-                value="Who we buy from, and what we owe them"
-                onPress={() => router.push('/suppliers')}
-              />
+              {canViewSuppliers ? (
+                <>
+                  <View style={styles.divider} />
+                  <LinkRow
+                    icon="truck"
+                    label="Suppliers"
+                    value="Who we buy from, and what we owe them"
+                    onPress={() => router.push('/suppliers')}
+                  />
+                </>
+              ) : null}
             </View>
           </View>
         ) : null}

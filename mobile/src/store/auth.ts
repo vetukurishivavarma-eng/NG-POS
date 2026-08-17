@@ -126,6 +126,7 @@ export type Permission =
   | 'stores.delete'
   | 'suppliers.write'
   | 'suppliers.delete'
+  | 'suppliers.view'
   | 'purchases.write'
   | 'purchases.delete'
   | 'users.view'
@@ -159,18 +160,24 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'stores.delete': ['admin'],
   'suppliers.write': ['admin', 'manager'],
   'suppliers.delete': ['admin'],
+  // Browsing the full supplier ledger (who is owed what) — separate from
+  // `suppliers.write`, which a manager keeps for adding a supplier and
+  // recording a delivery. Withdrawn from the shop login 2026-08-17.
+  'suppliers.view': ['admin'],
   'purchases.write': ['admin', 'manager'],
   'purchases.delete': ['admin'],
-  'users.view': ['admin', 'manager'],
+  // Staff and Devices withdrawn from the shop login 2026-08-17, at the
+  // owner's request — same change as `audit.read` below.
+  'users.view': ['admin'],
   'users.write': ['admin'],
   'settings.write': ['admin'],
   'refunds.issue': ['admin', 'manager'],
   'transactions.void': ['admin'],
   'reports.rebuild': ['admin'],
   'devices.remove': ['admin'],
-  // A manager reads the history of their own shops; the server narrows it to
-  // the stores they are assigned to.
-  'audit.read': ['admin', 'manager'],
+  // Was ['admin', 'manager'] — withdrawn from the shop login 2026-08-17 at the
+  // owner's request.
+  'audit.read': ['admin'],
   'releases.publish': ['admin'],
 };
 
