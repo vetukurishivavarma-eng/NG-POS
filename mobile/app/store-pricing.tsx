@@ -163,12 +163,9 @@ export default function StorePricingScreen() {
     );
   }
 
-  // Blank field means the user is mid-edit, not "free" — don't claim a difference.
-  const typed = price.trim() ? Number(price.replace(/[^0-9.]/g, '')) : null;
-  const previewHint =
-    draft && typed !== null && Number.isFinite(typed)
-      ? differenceLabel(typed - draft.cataloguePrice)
-      : 'Enter what this store charges.';
+  // The hint used to read out the difference from the catalogue price as the
+  // number was typed. Removed with the badge above it, for the same reason.
+  const previewHint = 'Enter what this store charges.';
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -326,11 +323,6 @@ export default function StorePricingScreen() {
               </Text>
               <Text style={styles.sku}>{draft.sku}</Text>
 
-              <View style={styles.catalogueLine}>
-                <Text style={styles.catalogueLabel}>Catalogue price</Text>
-                <Text style={styles.catalogueValue}>{formatKwacha(draft.cataloguePrice)}</Text>
-              </View>
-
               <Field
                 label={`Price at ${store.name}`}
                 value={price}
@@ -369,9 +361,19 @@ export default function StorePricingScreen() {
   );
 }
 
+/**
+ * One shop's price for one product.
+ *
+ * This row used to carry a badge reading "K7.00 more than catalogue" and a
+ * "was K248.00" beneath the price. Both were removed at the owner's request,
+ * and the reason is worth recording: the two numbers being compared came from
+ * two different columns of the *same* spreadsheet he uploads — the general
+ * price column and the per-shop price column. The badge was therefore telling
+ * him his own file disagreed with itself, once per product, and on rows where
+ * the general column was blank it announced the entire price as a difference
+ * ("K440.00 more than catalogue"). It answered a question nobody was asking.
+ */
 function PriceRow({ row, onPress }: { row: StorePriceRow; onPress?: () => void }) {
-  const higher = row.difference > 0;
-
   const body = (
     <>
       <View style={{ flex: 1 }}>
@@ -381,18 +383,10 @@ function PriceRow({ row, onPress }: { row: StorePriceRow; onPress?: () => void }
         <Text style={styles.sku} numberOfLines={1}>
           {row.sku}
         </Text>
-        <View style={{ marginTop: 6 }}>
-          <Badge
-            label={differenceLabel(row.difference)}
-            tone={Math.abs(row.difference) < 0.005 ? 'neutral' : higher ? 'accent' : 'success'}
-            dot
-          />
-        </View>
       </View>
 
       <View style={{ alignItems: 'flex-end' }}>
         <Text style={styles.storePrice}>{formatKwacha(row.store_price)}</Text>
-        <Text style={styles.wasPrice}>was {formatKwacha(row.default_price)}</Text>
       </View>
 
       {onPress ? <Icon name="chevron-right" size={18} color={colors.textFaint} /> : null}
@@ -406,18 +400,6 @@ function PriceRow({ row, onPress }: { row: StorePriceRow; onPress?: () => void }
       {body}
     </Pressable>
   );
-}
-
-/**
- * A signed number behind a counter is a puzzle; the sentence is not. Anything
- * under half a ngwee is treated as the same price so rounding noise doesn't
- * claim a difference.
- */
-function differenceLabel(difference: number): string {
-  if (!Number.isFinite(difference) || Math.abs(difference) < 0.005) return 'Same as catalogue';
-  return difference > 0
-    ? `${formatKwacha(difference)} more than catalogue`
-    : `${formatKwacha(Math.abs(difference))} less than catalogue`;
 }
 
 function round2(n: number): number {
@@ -455,13 +437,6 @@ const styles = StyleSheet.create({
   name: { fontFamily: font.semibold, fontSize: 15, color: colors.text },
   sku: { fontFamily: font.regular, fontSize: 11, color: colors.textFaint, marginTop: 2 },
   storePrice: { fontFamily: font.extrabold, fontSize: 18, color: colors.text, letterSpacing: -0.4 },
-  wasPrice: {
-    fontFamily: font.regular,
-    fontSize: 11,
-    color: colors.textFaint,
-    textDecorationLine: 'line-through',
-    marginTop: 2,
-  },
 
   actionBar: {
     paddingTop: spacing.sm,
@@ -531,17 +506,4 @@ const styles = StyleSheet.create({
     ...shadow.raised,
   },
   editorName: { fontFamily: font.bold, fontSize: 19, color: colors.text, letterSpacing: -0.4 },
-
-  catalogueLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surfaceSunken,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    marginVertical: spacing.md,
-  },
-  catalogueLabel: { fontFamily: font.medium, fontSize: 13, color: colors.textMuted },
-  catalogueValue: { fontFamily: font.semibold, fontSize: 15, color: colors.text },
 });
