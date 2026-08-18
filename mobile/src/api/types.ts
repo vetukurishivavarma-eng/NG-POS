@@ -21,6 +21,9 @@ export interface Product {
   chemical_name: string | null;
   /** `YYYY-MM-DD`, or null for a line that does not expire. */
   expiry_date: string | null;
+  /** Inbound transport per unit. Already inside `cost_price`. */
+  transport_cost: number;
+  /** The LANDED cost: transport included. */
   cost_price: number;
   selling_price: number;
   tax_type: TaxType;
@@ -325,6 +328,8 @@ export interface ProductDraft {
    * has, so an omission is safe where a zero would not be.
    */
   cost_price?: number;
+  /** Left out by an account without `costs.view`, for the same reason. */
+  transport_cost?: number;
   selling_price: number;
   tax_type: TaxType;
   unit?: string | null;

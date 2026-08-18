@@ -28,9 +28,9 @@ import {
   KNOWN_FIELDS,
   parseSheetDate,
   parseShopColumn,
+  landedCost,
   productNameFrom,
-  readCostPrice,
-  SHEET_COLUMNS,
+  sheetColumns,
   shopPriceColumn,
   shopStockColumn,
   synthesiseSku,
@@ -169,25 +169,32 @@ inventoryRouter.post(
  * the same invented number teaches nothing the first pair does not, and buries
  * the columns the operator actually has to fill in.
  */
-function sheetCsv(shopNames: string[]): string {
+function sheetCsv(shopNames: string[], showCosts: boolean): string {
   const line = (cells: (string | number)[]) => cells.map(csvCell).join(',');
 
   const shopCells = (stock: number | string, price: number | string) =>
     shopNames.flatMap((_, index) => (index === 0 ? [stock, price] : ['', '']));
 
+  /** The owner's two cost cells, or nothing at all on a shop's sheet. */
+  const cost = (buying: number, transport: number) =>
+    showCosts ? [buying, transport] : [];
+
   return [
-    line([...SHEET_COLUMNS, ...shopColumnHeadings(shopNames)]),
+    line([...sheetColumns(showCosts), ...shopColumnHeadings(shopNames)]),
     line([
-      '', 'STARKE AYRES', 'carrots', '100g', '', '', 'Veg Seed', 'packet', 'exempt', 205, 236,
+      '', 'STARKE AYRES', 'carrots', '100g', '', '', 'Veg Seed', 'packet', 'exempt',
+      ...cost(201.6, 3.4),
       ...shopCells(15, 236),
     ]),
     line([
-      '', 'Novatek', 'Dairy Meal', '50kg', '', '2027-07-31', 'Animal Feed', 'bag', 'exempt', 320, 395,
+      '', 'Novatek', 'Dairy Meal', '50kg', '', '2027-07-31', 'Animal Feed', 'bag', 'exempt',
+      ...cost(312, 8),
       ...shopCells(40, 395),
     ]),
     line([
       '', 'Kepro', 'Actellic Gold Dust', '250g', 'Pirimiphos-methyl 1.6%', '07/2027', 'Pesticides',
-      'tin', 'vat', 48, 72.5,
+      'tin', 'vat',
+      ...cost(45, 3),
       ...shopCells(12, 75),
     ]),
   ].join('\r\n');
@@ -305,6 +312,8 @@ interface Parsed {
   unit: string | null;
   chemicalName: string | null;
   expiryDate: Date | null;
+  /** Inbound transport per unit; already inside `costPrice`. */
+  transportCost: number | null;
   costPrice: number | null;
   sellingPrice: number | null;
   taxType: 'exempt' | 'vat' | null;
@@ -327,6 +336,7 @@ const MERGEABLE_FIELDS = [
   ['unit', 'The unit'],
   ['chemicalName', 'The chemical name'],
   ['expiryDate', 'The expiry date'],
+  ['transportCost', 'The transport cost'],
   ['costPrice', 'The cost price'],
   ['sellingPrice', 'The selling price'],
   ['taxType', 'The tax type'],
@@ -386,6 +396,35 @@ function sameValue(a: Parsed[keyof Parsed], b: Parsed[keyof Parsed]): boolean {
 /** A JSON cell as the text the rest of the importer works in. */
 function stringify(value: string | number | null | undefined): string {
   return value === null || value === undefined ? '' : String(value).trim();
+}
+
+/**
+ * The product's own selling price: the figure a shop charges when it has not
+ * set a price of its own.
+ *
+ * The sheet no longer has a column for it. It had one, called `SP`, and it sat
+ * two columns from "<shop> SP Per Stock" looking like the same thing written
+ * twice — so the obvious question was which of the two the till charges, and
+ * the obvious mistake was leaving it blank as redundant, which creates the
+ * product at zero and hands it to every unpriced shop for nothing.
+ *
+ * So it is taken from the shops instead: the first shop on the row that names a
+ * price. First rather than cheapest or dearest because it is the only choice
+ * that is not an opinion about the business — it is simply the leftmost filled
+ * cell, which is stable, explainable, and the same answer every time. A file
+ * that does carry an `SP` column still wins with it, which is what keeps the
+ * buyer's own price master importing unchanged.
+ */
+function sellingPriceFor(
+  record: Record<string, string>,
+  shopPrices: Map<string, number>,
+  numeric: (raw: string | undefined, label: string) => number | null
+): number | null {
+  const stated = numeric(record.selling_price, 'Selling price');
+  if (stated !== null) return stated;
+
+  const [first] = shopPrices.values();
+  return first ?? null;
 }
 
 /** Money and quantities as typed by a person: "K1,250.00", "1 250", "12.5". */
@@ -626,6 +665,7 @@ inventoryRouter.post(
     const writableStockColumns = writableShopColumns.filter((c) => c.kind === 'stock');
     const merged: number[] = [];
     let zeroShopPrices = 0;
+    let derivedSelling = 0;
 
     records.forEach((record, index) => {
       const line = index + 2;
@@ -724,6 +764,10 @@ inventoryRouter.post(
         );
       }
 
+      const transport = numeric(record.transport_cost, 'Transport cost');
+
+      if (record.selling_price === undefined && shopPrices.size > 0) derivedSelling += 1;
+
       const parsedRow: Parsed = {
         line,
         sku,
@@ -735,8 +779,15 @@ inventoryRouter.post(
         unit: (record.unit ?? '').trim() || null,
         chemicalName: (record.chemical_name ?? '').trim() || null,
         expiryDate: expiryDate ?? null,
-        costPrice: numeric(readCostPrice(record), 'Cost price'),
-        sellingPrice: numeric(record.selling_price, 'Selling price'),
+        transportCost: transport,
+        // The landed figure, which is what every margin in the system is
+        // measured against. See `landedCost` for which spelling wins.
+        costPrice: landedCost(
+          numeric(record.landing, 'Landed cost'),
+          numeric(record.cost_price, 'Cost price'),
+          transport
+        ),
+        sellingPrice: sellingPriceFor(record, shopPrices, numeric),
         taxType,
         quantity: numeric(record.quantity, 'Quantity'),
         reorderLevel: numeric(record.reorder_level, 'Reorder level'),
@@ -842,7 +893,14 @@ inventoryRouter.post(
 
     if (unpricedNewProducts > 0) {
       warnings.push(
-        `${unpricedNewProducts} new product${unpricedNewProducts === 1 ? ' has' : 's have'} no selling price and will be created at 0.`
+        `${unpricedNewProducts} new product${unpricedNewProducts === 1 ? ' has' : 's have'} no price in any shop and will be created at 0. ` +
+          'Fill in at least one shop price column for them.'
+      );
+    }
+    if (derivedSelling > 0) {
+      warnings.push(
+        `${derivedSelling} product${derivedSelling === 1 ? '' : 's'} took a fallback price from the first shop priced on the row — ` +
+          'that is what a shop charges where its own price column is left blank.'
       );
     }
 
@@ -1093,6 +1151,7 @@ inventoryRouter.post(
               unit: entry.parsed.unit,
               chemicalName: entry.parsed.chemicalName,
               expiryDate: entry.parsed.expiryDate,
+              transportCost: new Prisma.Decimal(entry.parsed.transportCost ?? 0),
               costPrice: new Prisma.Decimal(entry.parsed.costPrice ?? 0),
               sellingPrice: new Prisma.Decimal(entry.parsed.sellingPrice ?? 0),
               taxType: entry.parsed.taxType ?? 'exempt',
@@ -1114,6 +1173,9 @@ inventoryRouter.post(
               ...(p.unit ? { unit: p.unit } : {}),
               ...(p.chemicalName ? { chemicalName: p.chemicalName } : {}),
               ...(p.expiryDate ? { expiryDate: p.expiryDate } : {}),
+              ...(p.transportCost === null
+                ? {}
+                : { transportCost: new Prisma.Decimal(p.transportCost) }),
               ...(p.costPrice === null ? {} : { costPrice: new Prisma.Decimal(p.costPrice) }),
               ...(p.sellingPrice === null ? {} : { sellingPrice: new Prisma.Decimal(p.sellingPrice) }),
               ...(p.taxType === null ? {} : { taxType: p.taxType }),
@@ -1301,7 +1363,7 @@ inventoryRouter.get(
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
     const shops = await shopColumnsFor(user);
-    const csv = sheetCsv(shops.map((s) => s.name));
+    const csv = sheetCsv(shops.map((s) => s.name), await mayViewCosts(user));
 
     // Named after the shop when it is one shop's sheet, so a manager with four
     // downloads in their phone's Files app can tell them apart.
@@ -1324,16 +1386,17 @@ inventoryRouter.get(
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
     const shops = (await shopColumnsFor(user)).map((s) => s.name);
+    const showCosts = await mayViewCosts(user);
 
     res.json({
-      columns: [...SHEET_COLUMNS, ...shopColumnHeadings(shops)],
+      columns: [...sheetColumns(showCosts), ...shopColumnHeadings(shops)],
       required: ['PRODUCT'],
       notes:
         'One file for the whole chain. No product codes needed — a stable code is worked out ' +
-        'from COMPANY + PRODUCT + PACKSIZE for any row that leaves SKU blank. Each shop gets ' +
-        'two columns: "<shop> Closing Stock" is what is on its shelf, "<shop> SP Per Stock" is ' +
-        'what it charges.',
-      sample_csv: sheetCsv(shops),
+        'from COMPANY + PRODUCT + PACKSIZE for any row that leaves SKU blank. Prices live only ' +
+        'on the shops: "<shop> Closing Stock" is what that shop has on the shelf, "<shop> SP Per ' +
+        'Stock" is what it charges. A shop left blank charges the first price on the row.',
+      sample_csv: sheetCsv(shops, showCosts),
       shops: shops.map((name) => ({
         shop: name,
         stock_column: shopStockColumn(name),
@@ -1443,6 +1506,7 @@ inventoryRouter.get(
         unit: true,
         chemicalName: true,
         expiryDate: true,
+        transportCost: true,
         costPrice: true,
         sellingPrice: true,
         taxType: true,
@@ -1472,7 +1536,7 @@ inventoryRouter.get(
     const money = (value: number | null | undefined): string =>
       value === null || value === undefined || value === 0 ? '' : value.toFixed(2);
 
-    const columns = [...SHEET_COLUMNS, ...shopColumnHeadings(stores.map((s) => s.name))];
+    const columns = [...sheetColumns(showCosts), ...shopColumnHeadings(stores.map((s) => s.name))];
 
     const rows = products.map((p) =>
       [
@@ -1485,8 +1549,16 @@ inventoryRouter.get(
         p.category ?? '',
         p.unit ?? '',
         p.taxType,
-        showCosts ? money(num(p.costPrice)) : '',
-        money(num(p.sellingPrice)),
+        // Present only for an account that may see it; a shop's file has no
+        // such column at all rather than a permanently empty one.
+        //
+        // COST is written back as the buying price *without* transport, so the
+        // two columns add up to the landed cost the row came in with and a
+        // straight re-upload changes nothing. What is stored is the landed
+        // figure and the transport; the base is the subtraction of the two.
+        ...(showCosts
+          ? [money(num(p.costPrice) - num(p.transportCost)), money(num(p.transportCost))]
+          : []),
         ...stores.flatMap((s) => [
           String(stockBy.get(`${p.id}:${s.id}`) ?? 0),
           money(priceBy.get(`${p.id}:${s.id}`)),

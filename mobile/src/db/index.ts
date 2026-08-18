@@ -182,6 +182,7 @@ function rowToProduct(r: Record<string, unknown>): ProductWithStock {
     // screen reads them from the API, which is where they are shown.
     chemical_name: null,
     expiry_date: null,
+    transport_cost: 0,
     cost_price: Number(r.cost_price ?? 0),
     selling_price: Number(r.selling_price ?? 0),
     tax_type: (r.tax_type as ProductWithStock['tax_type']) ?? 'exempt',

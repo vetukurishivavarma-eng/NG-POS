@@ -50,6 +50,7 @@ export default function ProductFormScreen() {
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [cost, setCost] = useState('');
+  const [transport, setTransport] = useState('');
   const [selling, setSelling] = useState('');
   const [taxType, setTaxType] = useState<TaxType>('exempt');
   const [unit, setUnit] = useState('');
@@ -78,6 +79,7 @@ export default function ProductFormScreen() {
     setCategory(normaliseCategory(loaded.category) ?? '');
     setDescription(loaded.description ?? '');
     setCost(moneyToInput(loaded.cost_price));
+    setTransport(moneyToInput(loaded.transport_cost));
     setSelling(moneyToInput(loaded.selling_price));
     setTaxType(loaded.tax_type);
     setUnit(loaded.unit ?? '');
@@ -97,6 +99,7 @@ export default function ProductFormScreen() {
   }, [scanned, consumeScan]);
 
   const costValue = parseMoney(cost);
+  const transportValue = parseMoney(transport);
   const sellValue = parseMoney(selling);
 
   const errors = useMemo(
@@ -156,7 +159,9 @@ export default function ProductFormScreen() {
       // 0 in place of the real figure, so posting the field back would write
       // that 0 over a buying price it was never shown. The server drops it as
       // well; this is the half that does not depend on the server being right.
-      ...(showCosts ? { cost_price: costValue ?? 0 } : {}),
+      ...(showCosts
+        ? { cost_price: costValue ?? 0, transport_cost: transportValue ?? 0 }
+        : {}),
       selling_price: sellValue ?? 0,
       tax_type: taxType,
       unit: unit.trim() || null,
@@ -235,7 +240,9 @@ export default function ProductFormScreen() {
             {showCosts ? (
               <>
                 <RowDivider />
-                <StatRow label="Cost price" value={formatKwacha(loaded.cost_price)} />
+                <StatRow label="Cost price (landed)" value={formatKwacha(loaded.cost_price)} />
+                <RowDivider />
+                <StatRow label="of which transport" value={formatKwacha(loaded.transport_cost)} />
               </>
             ) : null}
             <RowDivider />
@@ -320,15 +327,27 @@ export default function ProductFormScreen() {
                   its place. The server drops the field from such an account's
                   updates too, so the real figure survives their edits. */}
               {showCosts ? (
-                <Field
-                  label="Cost price"
-                  value={cost}
-                  onChangeText={setCost}
-                  placeholder="0.00"
-                  keyboardType="decimal-pad"
-                  prefix="K"
-                  error={submitted ? errors.cost : null}
-                />
+                <>
+                  <Field
+                    label="Cost price (landed)"
+                    value={cost}
+                    onChangeText={setCost}
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
+                    prefix="K"
+                    error={submitted ? errors.cost : null}
+                    hint="What it costs delivered — transport included, not on top."
+                  />
+                  <Field
+                    label="Transport cost"
+                    value={transport}
+                    onChangeText={setTransport}
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
+                    prefix="K"
+                    hint="How much of the landed cost above is inbound transport."
+                  />
+                </>
               ) : null}
               <Field
                 label="Selling price"

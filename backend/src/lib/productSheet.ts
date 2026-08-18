@@ -78,9 +78,33 @@ export const SHEET_COLUMNS = [
   'CATEGORY',
   'UNIT',
   'TAX',
-  'COST',
-  'SP',
 ] as const;
+
+/**
+ * The buying price, which is the owner's column and nobody else's.
+ *
+ * Separate from the list above because it is the one heading that comes and
+ * goes with the account. It used to be written blank for a shop, to keep every
+ * account's file identical — but a column the person holding the sheet can
+ * never see and never fill is not consistency, it is a question they have to
+ * ask. Their file simply does not have it.
+ */
+export const COST_COLUMNS = ['COST', 'TRANSPORT COST'] as const;
+
+/**
+ * The product columns for an account, before the shop columns.
+ *
+ * There is deliberately no chain-wide selling price here. There was, called
+ * `SP`, and it sat two columns away from "<shop> SP Per Stock" looking like the
+ * same thing written twice — the reasonable question being which of the two the
+ * till actually charges. Now only the shops carry prices, and the fallback a
+ * product needs for a shop that has not priced it is worked out from them
+ * rather than typed a second time. `SP` is still *read*, so the buyer's own
+ * price master imports unchanged; it is no longer *written*.
+ */
+export function sheetColumns(showCosts: boolean): string[] {
+  return showCosts ? [...SHEET_COLUMNS, ...COST_COLUMNS] : [...SHEET_COLUMNS];
+}
 
 /** What a shop's two columns are called, in the order they are written. */
 export function shopStockColumn(shopName: string): string {
@@ -185,8 +209,12 @@ export const HEADER_ALIASES: Record<string, string> = {
   cost_usd: '',
   cost_zmw: 'cost_price',
   cost_k: 'cost_price',
-  transport_others: '',
-  transport: '',
+  transport_others: 'transport_cost',
+  transport: 'transport_cost',
+  transport_cost: 'transport_cost',
+  freight: 'transport_cost',
+  carriage: 'transport_cost',
+  delivery_cost: 'transport_cost',
   mark_up: '',
   markup: '',
   gp: '',
@@ -216,6 +244,7 @@ export const KNOWN_FIELDS = new Set<string>([
   'landing',
   'chemical_name',
   'expiry_date',
+  'transport_cost',
 ]);
 
 /* ------------------------------------------------------------------ naming */
@@ -381,6 +410,29 @@ function sentenceCase(value: string): string {
 export function readCostPrice(record: Record<string, string>): string | undefined {
   const landing = (record.landing ?? '').trim();
   return landing || record.cost_price;
+}
+
+/**
+ * What the item costs delivered, from however the sheet chose to say it.
+ *
+ * Three spellings of one figure. The buyer's price master works out `Landing`
+ * itself, so where that column is filled it is taken as final — it is his
+ * arithmetic and we should not redo it. Our own sheet has no Landing column
+ * and instead writes the two halves, so they are added.
+ *
+ * Transport with no buying price beside it leaves the landed cost unstated
+ * rather than making transport the whole of it: a row that fills one cost cell
+ * and not the other is half-finished, and half-finished is not the same as
+ * "this product costs three kwacha".
+ */
+export function landedCost(
+  landing: number | null,
+  cost: number | null,
+  transport: number | null
+): number | null {
+  if (landing !== null) return landing;
+  if (cost === null) return null;
+  return Math.round((cost + (transport ?? 0)) * 100) / 100;
 }
 
 /* -------------------------------------------------- a column named for a shop */

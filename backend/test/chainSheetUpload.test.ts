@@ -289,4 +289,139 @@ describe('the chain sheet', () => {
     });
     await expect(stockOf(shopByName('Katende').id, product.id)).resolves.toBe(0);
   });
+  /* --------------------------------------------------- the price a shop falls back to */
+
+  /*
+   * There is no chain-wide SP column any more. It sat two columns from
+   * "<shop> SP Per Stock" looking like the same thing written twice, and the
+   * obvious mistake — leaving it blank as redundant — created the product at
+   * zero and handed it to every unpriced shop for nothing.
+   */
+  it('takes the product fallback from the first shop priced on the row', async () => {
+    const header = 'PRODUCT,Katende SP Per Stock,Chinkuli SP Per Stock';
+    const res = await upload([header, 'Loose Thing,80,90'].join('\n'));
+
+    expect(res.status).toBe(201);
+    const product = await prisma.product.findFirstOrThrow({
+      where: { organizationId: world.organizationId, name: 'Loose Thing' },
+    });
+    // Katende is the leftmost priced column, so its price is what a shop with
+    // no price of its own charges. Never zero, which is the point.
+    expect(product.sellingPrice.toNumber()).toBe(80);
+    expect(res.body.warnings.join(' ')).toContain('fallback price');
+  });
+
+  it('skips a blank column when working the fallback out', async () => {
+    const header = 'PRODUCT,Katende SP Per Stock,Chinkuli SP Per Stock';
+    const res = await upload([header, 'Loose Thing,,90'].join('\n'));
+
+    expect(res.status).toBe(201);
+    const product = await prisma.product.findFirstOrThrow({
+      where: { organizationId: world.organizationId, name: 'Loose Thing' },
+    });
+    expect(product.sellingPrice.toNumber()).toBe(90);
+  });
+
+  /** The buyer's own price master carries SP, and it still wins where it does. */
+  it('lets a file that states a selling price keep it', async () => {
+    const res = await upload([HEADER, ACTELLIC].join('\n'));
+
+    expect(res.status).toBe(201);
+    const product = await prisma.product.findFirstOrThrow({
+      where: { organizationId: world.organizationId, brand: 'Kepro' },
+    });
+    // The row says SP 72.50 and prices Katende at 75; the stated figure stands.
+    expect(product.sellingPrice.toNumber()).toBe(72.5);
+  });
+
+  it('says plainly when a new product is priced in no shop at all', async () => {
+    const res = await upload(['PRODUCT,Katende Closing Stock', 'Unpriced Thing,4'].join('\n'), {
+      validate_only: true,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.warnings.join(' ')).toContain('no price in any shop');
+  });
+
+  /* ---------------------------------------------------------- transport cost */
+
+  /*
+   * Transport used to be one of the price master's working columns, read and
+   * thrown away. Now it is kept, because a figure that vanishes from the next
+   * download is a figure somebody has to type again.
+   */
+  it('adds transport onto the buying price to get what the item lands at', async () => {
+    const res = await upload(
+      ['PRODUCT,COST,TRANSPORT COST,Katende SP Per Stock', 'Landed Thing,180,20,300'].join('\n')
+    );
+
+    expect(res.status).toBe(201);
+    const product = await prisma.product.findFirstOrThrow({
+      where: { organizationId: world.organizationId, name: 'Landed Thing' },
+    });
+    // The margins are measured against the landed figure, so that is what is
+    // stored; the transport is kept beside it rather than inside it only.
+    expect(product.costPrice.toNumber()).toBe(200);
+    expect(product.transportCost.toNumber()).toBe(20);
+  });
+
+  it("keeps the buyer's own Landing column as final rather than redoing his sum", async () => {
+    // His sheet works Landing out itself, and COST + Transport there is 204.6
+    // against a Landing of 205 — his rounding, and not ours to correct.
+    const res = await upload(
+      [
+        'COMPANY,PRODUCT,PACKSIZE,COST,Transport & Others,Landing,SP',
+        'STARKE AYRES,carrots,100g,201.6,3,205,236',
+      ].join('\n')
+    );
+
+    expect(res.status).toBe(201);
+    const product = await prisma.product.findFirstOrThrow({
+      where: { organizationId: world.organizationId, brand: 'STARKE AYRES' },
+    });
+    expect(product.costPrice.toNumber()).toBe(205);
+    expect(product.transportCost.toNumber()).toBe(3);
+  });
+
+  it('leaves the landed cost unstated where only transport was filled in', async () => {
+    const res = await upload(
+      ['PRODUCT,TRANSPORT COST,Katende SP Per Stock', 'Half Filled,15,300'].join('\n')
+    );
+
+    expect(res.status).toBe(201);
+    const product = await prisma.product.findFirstOrThrow({
+      where: { organizationId: world.organizationId, name: 'Half Filled' },
+    });
+    // Transport alone is not what the thing costs.
+    expect(product.costPrice.toNumber()).toBe(0);
+    expect(product.transportCost.toNumber()).toBe(15);
+  });
+
+  it('splits the two cost columns back out on the way down, and re-imports level', async () => {
+    await upload(
+      ['PRODUCT,COST,TRANSPORT COST,Katende SP Per Stock', 'Landed Thing,180,20,300'].join('\n')
+    );
+
+    const current = await asAdmin('get', '/api/inventory/export');
+    const lines = current.text.replace(/^﻿/, '').split(/\r?\n/);
+    const columns = (lines[0] as string).split(',');
+    // The download carries the whole catalogue, so the row has to be found
+    // by name rather than assumed to be the first one under the header.
+    const row = (lines.find(
+      (l) => l.split(',')[columns.indexOf('PRODUCT')] === 'Landed Thing'
+    ) as string).split(',');
+
+    // Written back as the base and the transport, so the two still add up to
+    // the landed figure and a straight re-upload moves nothing.
+    expect(row[columns.indexOf('COST')]).toBe('180.00');
+    expect(row[columns.indexOf('TRANSPORT COST')]).toBe('20.00');
+
+    await upload(current.text);
+    const product = await prisma.product.findFirstOrThrow({
+      where: { organizationId: world.organizationId, name: 'Landed Thing' },
+    });
+    expect(product.costPrice.toNumber()).toBe(200);
+    expect(product.transportCost.toNumber()).toBe(20);
+  });
+
 });

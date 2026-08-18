@@ -84,6 +84,7 @@ export function serializeProduct(p: {
   category: string | null;
   chemicalName: string | null;
   expiryDate: Date | null;
+  transportCost: Prisma.Decimal;
   costPrice: Prisma.Decimal;
   sellingPrice: Prisma.Decimal;
   taxType: string;
@@ -106,6 +107,9 @@ export function serializeProduct(p: {
     chemical_name: p.chemicalName,
     /** Date only, no time: `2027-07-15`. It is a date on a packet. */
     expiry_date: p.expiryDate ? p.expiryDate.toISOString().slice(0, 10) : null,
+    /** Inbound transport per unit. Withheld with the rest of the costs. */
+    transport_cost: showCosts ? num(p.transportCost) : 0,
+    /** The LANDED cost: transport is already inside this figure. */
     cost_price: showCosts ? num(p.costPrice) : 0,
     selling_price: num(p.sellingPrice),
     tax_type: p.taxType,

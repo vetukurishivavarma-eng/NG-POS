@@ -1054,21 +1054,29 @@ describe('mobile API contract', () => {
     expect(headerOf(res.text)).toContain('SKU');
   });
 
-  it('inventory.exportCatalogue leaves the buying price blank for a store manager', async () => {
-    const res = await get('/api/inventory/export', world.tokens.manager);
+  it('gives a store manager no buying price column at all', async () => {
+    const columnsFor = async (token: string) => {
+      const res = await get('/api/inventory/export', token);
+      expect(res.status).toBe(200);
+      return (res.text.replace(/^\ufeff/, '').split(/\r?\n/)[0] as string).split(',');
+    };
 
-    expect(res.status).toBe(200);
+    // It used to be written empty, to keep every account's file identical. A
+    // column the holder can never see and never fill is not consistency — it
+    // is a question they have to ask — so their sheet simply does not have it.
+    expect(await columnsFor(world.tokens.manager)).not.toContain('COST');
+    expect(await columnsFor(world.tokens.admin)).toContain('COST');
+  });
 
-    // The COST column stays in the file rather than being dropped: both
-    // downloads have to be the same document for every account, or a manager
-    // and an owner would be pasting rows between sheets with different
-    // columns. It arrives empty, which the importer reads as "says nothing
-    // about cost" and leaves the stored buying price alone.
-    const [header, first] = res.text.replace(/^\ufeff/, '').split(/\r?\n/);
-    const columns = (header as string).split(',');
-    expect(columns).toContain('COST');
-    expect(columns).toContain('SP');
-    expect((first as string).split(',')[columns.indexOf('COST')]).toBe('');
+  it('writes no chain-wide selling price, only the shops', async () => {
+    const res = await get('/api/inventory/export', world.tokens.admin);
+    const columns = (res.text.replace(/^\ufeff/, '').split(/\r?\n/)[0] as string).split(',');
+
+    // "SP" beside "<shop> SP Per Stock" read as the same thing written twice,
+    // and the obvious mistake — leaving it blank as redundant — created the
+    // product at zero. The fallback is worked out from the shop columns now.
+    expect(columns).not.toContain('SP');
+    expect(columns).toContain('Test Store SP Per Stock');
   });
 
   /* ----------------------------------------------- buying prices are withheld */

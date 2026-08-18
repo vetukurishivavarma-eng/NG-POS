@@ -420,6 +420,11 @@ export default function StockImportScreen() {
             Leave a cell blank to change nothing there.
           </Text>
           <Text style={styles.hint}>
+            Prices live only on the shops — there is no separate chain price to fill in. A shop
+            whose price column is blank charges the first price on that row, so a line priced in
+            one shop is never sold for nothing in another.
+          </Text>
+          <Text style={styles.hint}>
             An <Text style={styles.mono}>.xlsx</Text> goes up as it is — no need to save it as CSV
             first. Keep the header row; every line needs a{' '}
             <Text style={styles.mono}>PRODUCT</Text>. Leave <Text style={styles.mono}>SKU</Text>{' '}

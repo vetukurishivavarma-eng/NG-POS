@@ -47,6 +47,7 @@ const productSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => (value ? new Date(`${value}T00:00:00.000Z`) : value)),
+  transport_cost: z.number().min(0).default(0),
   cost_price: z.number().min(0).default(0),
   selling_price: z.number().min(0).default(0),
   tax_type: z.enum(['exempt', 'vat']).default('exempt'),
@@ -263,6 +264,7 @@ productsRouter.post(
         category: body.category ?? null,
         chemicalName: body.chemical_name ?? null,
         expiryDate: body.expiry_date ?? null,
+        transportCost: body.transport_cost,
         costPrice: body.cost_price,
         sellingPrice: body.selling_price,
         taxType: body.tax_type,
@@ -307,7 +309,9 @@ productsRouter.put(
         category: body.category,
         chemicalName: body.chemical_name,
         expiryDate: body.expiry_date,
-        ...(showCosts ? { costPrice: body.cost_price } : {}),
+        ...(showCosts
+          ? { costPrice: body.cost_price, transportCost: body.transport_cost }
+          : {}),
         sellingPrice: body.selling_price,
         taxType: body.tax_type,
         unit: body.unit,
@@ -369,6 +373,7 @@ productsRouter.post(
         category: p.category ?? null,
         chemicalName: p.chemical_name ?? null,
         expiryDate: p.expiry_date ?? null,
+        transportCost: p.transport_cost,
         costPrice: p.cost_price,
         sellingPrice: p.selling_price,
         taxType: p.tax_type,
