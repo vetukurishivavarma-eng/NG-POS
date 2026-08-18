@@ -270,6 +270,13 @@ model Product {
   barcode        String?
   brand          String?
   category       String?
+  /// The active ingredient, e.g. "Pirimiphos-methyl 1.6%". An agrovet counter is
+  /// asked for the chemical as often as for the brand on the tin, and the two
+  /// are not the same field: several brands share one chemical.
+  chemicalName   String?  @map("chemical_name")
+  /// Product-level rather than per-batch, because that is how the shops keep it:
+  /// one date per line on the stock sheet they already fill in by hand.
+  expiryDate     DateTime? @map("expiry_date") @db.Date
   costPrice      Decimal  @default(0) @map("cost_price") @db.Decimal(12, 2)
   sellingPrice   Decimal  @default(0) @map("selling_price") @db.Decimal(12, 2)
   taxType        TaxType  @default(exempt) @map("tax_type")

@@ -177,6 +177,11 @@ function rowToProduct(r: Record<string, unknown>): ProductWithStock {
     barcode: (r.barcode as string) ?? null,
     brand: (r.brand as string) ?? null,
     category: (r.category as string) ?? null,
+    // Not cached: this table is what the till needs to ring a sale offline, and
+    // neither the chemical nor the expiry date is part of that. The product
+    // screen reads them from the API, which is where they are shown.
+    chemical_name: null,
+    expiry_date: null,
     cost_price: Number(r.cost_price ?? 0),
     selling_price: Number(r.selling_price ?? 0),
     tax_type: (r.tax_type as ProductWithStock['tax_type']) ?? 'exempt',

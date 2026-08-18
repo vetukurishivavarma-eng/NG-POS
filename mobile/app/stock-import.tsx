@@ -10,7 +10,6 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { inventory as inventoryApi } from '../src/api/endpoints';
 import { errorBodyIfStatus, errorMessage } from '../src/api/client';
 import { useCan } from '../src/store/auth';
-import { useStoreSelection } from '../src/store/storeSelection';
 import { useLayout } from '../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../src/theme';
 import {
@@ -63,19 +62,24 @@ function describeFile(file: PickedFile): string {
 }
 
 /**
- * Loading a shop's whole catalogue and its opening stock from one spreadsheet.
+ * Loading the whole chain's catalogue, closing stock and prices from one
+ * spreadsheet.
  *
- * Three deliberate steps — pick, check, apply — because this writes hundreds of
- * rows at once and there is no undo. The check is a real server-side dry run,
- * not a guess made on the device: it reports the exact stock level every product
- * would move from and to, which shop columns it recognised, and changes nothing.
+ * Nothing here asks which shop. The file says so itself, twice per shop —
+ * "Lusaka Closing Stock" is what is on Lusaka's shelf tonight and "Lusaka SP
+ * Per Stock" is what Lusaka charges — so thirteen shops are one upload rather
+ * than thirteen, each with a shop to pick correctly first.
+ *
+ * Three deliberate steps — pick, check, apply — because this writes thousands
+ * of rows at once and there is no undo. The check is a real server-side dry
+ * run, not a guess made on the device: it reports the exact stock level every
+ * product would move from and to, which shop columns it recognised and which it
+ * could not, and changes nothing.
  */
 export default function StockImportScreen() {
   const layout = useLayout();
   const queryClient = useQueryClient();
-  const store = useStoreSelection((s) => s.selected);
   const canImport = useCan('products.import');
-  const storeId = store?.id ?? null;
 
   const [file, setFile] = useState<PickedFile | null>(null);
   const [mode, setMode] = useState<BulkUploadMode>('set');
@@ -155,13 +159,12 @@ export default function StockImportScreen() {
   }
 
   async function check() {
-    if (!file || !storeId) return;
+    if (!file) return;
     setBusy(true);
     setErrors(null);
     setErrorDetail(null);
     try {
       const result = await inventoryApi.bulkUpload({
-        store_id: storeId,
         ...payloadFor(file),
         mode,
         validate_only: true,
@@ -175,35 +178,75 @@ export default function StockImportScreen() {
     }
   }
 
+  /** One line describing what the import does, shared by both confirmations. */
+  function importSummary(result: BulkUploadResult): string {
+    return (
+      `${result.products_to_create} product${result.products_to_create === 1 ? '' : 's'} will be created and ${result.products_to_update} updated` +
+      (result.shops_counted > 0
+        ? `, across ${result.shops_counted} shop${result.shops_counted === 1 ? '' : 's'}`
+        : '') +
+      `. ${
+        mode === 'set'
+          ? 'Each shop’s stock becomes its Closing Stock column.'
+          : 'Each shop’s Closing Stock column is added to what is already there.'
+      } There is no undo.`
+    );
+  }
+
+  /**
+   * Rows the file lists but never counts.
+   *
+   * There are two honest readings of an empty Closing Stock column and only the
+   * person holding the sheet knows which is meant: either the file is silent
+   * about those products, or those products have run out. Guessing the second
+   * would empty shelves nobody asked about; guessing the first leaves an
+   * empty shelf reading as full at the till. So it is asked, with the product
+   * names in the question — four names someone recognises is worth more than a
+   * count they will wave through.
+   */
   function confirmApply() {
     if (!checked) return;
+
+    if (checked.rows_without_stock === 0) {
+      Alert.alert(`Import ${checked.total_rows} rows?`, importSummary(checked), [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Import', onPress: () => void apply(false) },
+      ]);
+      return;
+    }
+
+    const names = checked.products_without_stock;
+    const shown = names.slice(0, 6).join(', ');
+    const rest = checked.rows_without_stock - Math.min(names.length, 6);
+
     Alert.alert(
-      `Import ${checked.total_rows} rows into ${store?.name}?`,
-      `${checked.products_to_create} product${checked.products_to_create === 1 ? '' : 's'} will be created and ${checked.products_to_update} updated. ${
-        mode === 'set'
-          ? 'Stock levels become the quantities in the file.'
-          : 'The quantities in the file are added to what is already there.'
-      } There is no undo.`,
+      `${checked.rows_without_stock} product${checked.rows_without_stock === 1 ? ' has' : 's have'} no stock in the file`,
+      `${shown}${rest > 0 ? `, and ${rest} more` : ''}.\n\n` +
+        'Their Closing Stock cells are empty. Mark them out of stock, or leave their current ' +
+        `stock as it is?\n\n${importSummary(checked)}`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Import', onPress: () => void apply() },
+        { text: 'Leave as they are', onPress: () => void apply(false) },
+        { text: 'Mark out of stock', onPress: () => void apply(true) },
       ]
     );
   }
 
-  async function apply() {
-    if (!file || !storeId) return;
+  async function apply(zeroMissingStock: boolean) {
+    if (!file) return;
     setBusy(true);
     try {
       const result = await inventoryApi.bulkUpload({
-        store_id: storeId,
         ...payloadFor(file),
         mode,
+        zero_missing_stock: zeroMissingStock,
         note: `Imported from ${file.name}`,
       });
 
-      void queryClient.invalidateQueries({ queryKey: ['catalogue', storeId] });
-      void queryClient.invalidateQueries({ queryKey: ['movements', storeId] });
+      // Every shop's shelf may have moved, so the whole key is invalidated
+      // rather than one store's branch of it.
+      void queryClient.invalidateQueries({ queryKey: ['catalogue'] });
+      void queryClient.invalidateQueries({ queryKey: ['movements'] });
       void queryClient.invalidateQueries({ queryKey: ['products'] });
 
       reset();
@@ -232,129 +275,70 @@ export default function StockImportScreen() {
     Alert.alert("The import didn't run", errorMessage(err));
   }
 
-  function chooseTemplate() {
-    Alert.alert(
-      'Which template?',
-      'The price list is the sheet the buyer keeps — company, product, pack size, and a price column for each of your shops. The coded sheet is for a catalogue that already has product codes.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Price list', onPress: () => void shareTemplate('price-master') },
-        { text: 'Coded sheet', onPress: () => void shareTemplate('sku') },
-      ]
-    );
-  }
-
-  async function shareTemplate(format: 'price-master' | 'sku') {
-    setBusy(true);
-    try {
-      const text = await inventoryApi.bulkUploadTemplate(format);
-      const dir = new Directory(Paths.cache, 'templates');
-      if (!dir.exists) dir.create({ intermediates: true });
-
-      const name =
-        format === 'sku' ? 'ng-pos-stock-template.csv' : 'ng-pos-price-list.csv';
-      const target = new File(dir, name);
-      if (target.exists) target.delete();
-      target.create();
-      target.write(text);
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(target.uri, {
-          mimeType: 'text/csv',
-          dialogTitle: 'NG POS stock template',
-        });
-      } else {
-        Alert.alert('Template saved', `Saved to ${target.uri}`);
-      }
-    } catch (err) {
-      Alert.alert("Couldn't fetch the template", errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   /**
-   * The other direction: the catalogue as it stands, to fill in and send back.
+   * The two downloads, which are the same document twice: the template is the
+   * blank one and the current list is the filled-in one, column for column.
    *
-   * The two choices are not cosmetic. A price list carries no quantity column
-   * at all, so returning it cannot touch a single shelf; a stock count sheet
-   * carries this shop's counted numbers, and uploading that back with "Counted
-   * on the shelf" set writes them in as the truth. Anyone downloading the price
-   * list to fill in buying prices wants the first one, and would not find out
-   * they had the second until a week of sales went missing.
+   * There used to be a dialog in front of each of these offering two shapes,
+   * and picking wrong was silent — a shop that took the price list to send its
+   * counts back had a file with no stock column in it, and found out a week
+   * later when nothing had moved. One shape, no dialog.
    */
-  function chooseExport() {
-    Alert.alert(
-      'Download the current list',
-      'The price list has every product with the prices as they stand now — fill in the cost prices and upload the same file back. The stock count sheet adds what this shop currently has on the shelf.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Price list', onPress: () => void shareExport(false) },
-        { text: 'With stock counts', onPress: () => void shareExport(true) },
-      ]
+  async function downloadTemplate() {
+    await saveAndShare(
+      () => inventoryApi.bulkUploadTemplate(),
+      'ng-pos-stock-template.csv',
+      'NG POS stock template'
     );
   }
 
-  async function shareExport(includeStock: boolean) {
+  async function downloadCurrentList() {
+    const day = new Date().toISOString().slice(0, 10);
+    await saveAndShare(
+      async () => {
+        const text = await inventoryApi.exportCatalogue();
+        // A header row and nothing under it. Sharing that would look like the
+        // download failed quietly, so it is said plainly instead.
+        if (text.split(/\r?\n/).filter((line) => line.trim() !== '').length < 2) {
+          throw new Error(
+            'There are no products yet. Upload a filled-in template first, then download the current list.'
+          );
+        }
+        return text;
+      },
+      `ng-pos-stock-list-${day}.csv`,
+      'NG POS stock list'
+    );
+  }
+
+  /** Fetch a CSV, put it in the cache directory, and hand it to the share sheet. */
+  async function saveAndShare(
+    fetchCsv: () => Promise<string>,
+    name: string,
+    dialogTitle: string
+  ) {
     setBusy(true);
     try {
-      const text = await inventoryApi.exportCatalogue(storeId, includeStock);
+      const text = await fetchCsv();
 
-      // A header row and nothing under it. Sharing that would look like the
-      // export failed quietly, so it is said plainly instead.
-      if (text.split(/\r?\n/).filter((line) => line.trim() !== '').length < 2) {
-        Alert.alert(
-          'Nothing to download yet',
-          'There are no products in the catalogue. Upload a spreadsheet first, then download it back to fill in the prices.'
-        );
-        return;
-      }
-
-      const dir = new Directory(Paths.cache, 'exports');
+      const dir = new Directory(Paths.cache, 'sheets');
       if (!dir.exists) dir.create({ intermediates: true });
 
-      const day = new Date().toISOString().slice(0, 10);
-      const name = includeStock
-        ? `ng-pos-stock-count-${day}.csv`
-        : `ng-pos-price-list-${day}.csv`;
       const target = new File(dir, name);
       if (target.exists) target.delete();
       target.create();
       target.write(text);
 
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(target.uri, {
-          mimeType: 'text/csv',
-          dialogTitle: includeStock ? 'NG POS stock count' : 'NG POS price list',
-        });
+        await Sharing.shareAsync(target.uri, { mimeType: 'text/csv', dialogTitle });
       } else {
         Alert.alert('Saved', `Saved to ${target.uri}`);
       }
     } catch (err) {
-      Alert.alert("Couldn't download the list", errorMessage(err));
+      Alert.alert("Couldn't download that", errorMessage(err));
     } finally {
       setBusy(false);
     }
-  }
-
-  if (!store) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['bottom']}>
-        <EmptyState
-          icon="home"
-          title="No shop selected"
-          hint="Stock is held per shop. Choose the one this spreadsheet belongs to."
-          action={
-            <Button
-              label="Choose shop"
-              icon="home"
-              variant="secondary"
-              onPress={() => router.push('/store-picker')}
-            />
-          }
-        />
-      </SafeAreaView>
-    );
   }
 
   if (!canImport) {
@@ -378,15 +362,14 @@ export default function StockImportScreen() {
         <View>
           <Text style={styles.title}>Load stock from a spreadsheet</Text>
           <Text style={styles.lead}>
-            Excel or CSV. A sheet with no product codes is matched on company, product and pack
-            size, so a second upload of a corrected file updates the same rows instead of
-            duplicating them.
+            Excel or CSV. No shop to choose — each shop has its own two columns in the file, and a
+            second upload of a corrected file updates the same rows instead of duplicating them.
           </Text>
         </View>
 
         <View style={styles.shopTag}>
           <Icon name="home" size={14} color={colors.primary} />
-          <Text style={styles.shopTagText}>Loading into {store.name}</Text>
+          <Text style={styles.shopTagText}>Every shop you cover, one file</Text>
         </View>
 
         {/* ------------------------------------------------------ 1. the file */}
@@ -415,32 +398,39 @@ export default function StockImportScreen() {
             icon="download"
             variant="secondary"
             loading={busy && !file}
-            onPress={chooseTemplate}
+            onPress={() => void downloadTemplate()}
           />
           <Button
             label="Download the Current List"
             icon="share"
             variant="secondary"
             loading={busy && !file}
-            onPress={chooseExport}
+            onPress={() => void downloadCurrentList()}
           />
           <Text style={styles.hint}>
-            Uploaded the stock with no prices? Have the shops type the selling prices in, then
-            download the current list, fill in the cost prices beside them and upload the same file
-            back.
+            Both files have the same columns — the template is the blank one, the current list is
+            the same sheet already filled in. Download the current list, correct it in Excel, and
+            upload it straight back. An owner's copy covers every shop; a shop's copy covers its
+            own lines and its own two columns.
+          </Text>
+          <Text style={styles.hint}>
+            Each shop has two columns:{' '}
+            <Text style={styles.mono}>Lusaka Closing Stock</Text> is what is left on Lusaka's shelf,
+            and <Text style={styles.mono}>Lusaka SP Per Stock</Text> is what Lusaka sells it for.
+            Leave a cell blank to change nothing there.
           </Text>
           <Text style={styles.hint}>
             An <Text style={styles.mono}>.xlsx</Text> goes up as it is — no need to save it as CSV
             first. Keep the header row; every line needs a{' '}
-            <Text style={styles.mono}>PRODUCT</Text> (or an <Text style={styles.mono}>sku</Text>, on
-            a coded sheet).
+            <Text style={styles.mono}>PRODUCT</Text>. Leave <Text style={styles.mono}>SKU</Text>{' '}
+            blank and a code is worked out from the company, product and pack size.
           </Text>
         </View>
 
         {/* ------------------------------------------------------ 2. the mode */}
         {file ? (
           <View style={{ gap: spacing.md }}>
-            <SectionLabel>Step 2 · What the quantity means</SectionLabel>
+            <SectionLabel>Step 2 · What Closing Stock means</SectionLabel>
             <Select<BulkUploadMode>
               value={mode}
               onChange={(next) => {
@@ -453,8 +443,8 @@ export default function StockImportScreen() {
               ]}
               hint={
                 mode === 'set'
-                  ? 'The stock level becomes the number in the file. This is what an opening stock take means, and it is safe to re-run.'
-                  : 'The number in the file is added to what is already there. Running it twice adds it twice.'
+                  ? "Each shop's stock becomes the number in its Closing Stock column. This is what an end-of-day count means, and it is safe to re-run — but a list downloaded last week will roll the shelves back to last week."
+                  : 'The number in each Closing Stock column is added to what that shop already has. Running it twice adds it twice.'
               }
             />
           </View>
@@ -497,11 +487,23 @@ export default function StockImportScreen() {
                 <StatRow label="Rows in the file" value={String(checked.total_rows)} />
                 <StatRow label="New products" value={String(checked.products_to_create)} />
                 <StatRow label="Existing products updated" value={String(checked.products_to_update)} />
-                <StatRow label="Stock levels touched" value={String(checked.stock_rows)} />
-                {checked.shop_columns.length > 0 ? (
+                <StatRow
+                  label="Stock levels to set"
+                  value={`${checked.shop_stock_writes} across ${checked.shops_counted} shop${
+                    checked.shops_counted === 1 ? '' : 's'
+                  }`}
+                />
+                {checked.shop_prices_to_write > 0 ? (
+                  <StatRow label="Shop prices to set" value={String(checked.shop_prices_to_write)} />
+                ) : null}
+                {/* Flagged here as well as in the popup, so it is visible
+                    before the operator commits to pressing Import at all. */}
+                {checked.rows_without_stock > 0 ? (
                   <StatRow
-                    label="Shop prices to set"
-                    value={String(checked.shop_prices_to_write)}
+                    label="No stock in the file"
+                    value={`${checked.rows_without_stock} product${
+                      checked.rows_without_stock === 1 ? '' : 's'
+                    }`}
                   />
                 ) : null}
 
@@ -510,13 +512,15 @@ export default function StockImportScreen() {
                 {checked.shop_columns.length > 0 ? (
                   <>
                     <View style={styles.previewDivider} />
-                    <Text style={styles.previewLabel}>Shop price columns</Text>
+                    <Text style={styles.previewLabel}>Shop columns</Text>
                     {checked.shop_columns.map((column) => (
                       <View key={column.column} style={styles.shopRow}>
                         <Text style={styles.shopName} numberOfLines={1}>
                           {column.column}
                         </Text>
-                        <Text style={styles.shopCount}>{column.values} priced</Text>
+                        <Text style={styles.shopCount}>
+                          {column.values} {column.kind === 'stock' ? 'counted' : 'priced'}
+                        </Text>
                         <Badge
                           label={column.status === 'ok' ? 'WILL APPLY' : 'SKIPPED'}
                           tone={column.status === 'ok' ? 'success' : 'warning'}
@@ -579,6 +583,8 @@ export default function StockImportScreen() {
 function PreviewRow({ row }: { row: BulkUploadRowPreview }) {
   const up = row.change > 0;
   const down = row.change < 0;
+  // Totalled across the shops this row counts, which is what the server sends:
+  // a per-shop breakdown of 500 rows is not something anyone reads on a phone.
 
   return (
     <View style={styles.preview}>
@@ -588,6 +594,7 @@ function PreviewRow({ row }: { row: BulkUploadRowPreview }) {
         </Text>
         <Text style={styles.previewSku} numberOfLines={1}>
           {row.sku} · {row.product_action === 'create' ? 'new product' : 'existing'}
+          {row.shops > 0 ? ` · ${row.shops} shop${row.shops === 1 ? '' : 's'}` : ''}
         </Text>
       </View>
       <Text style={styles.previewFrom}>{row.quantity_before}</Text>

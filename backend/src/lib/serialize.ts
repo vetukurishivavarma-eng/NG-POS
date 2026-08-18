@@ -82,6 +82,8 @@ export function serializeProduct(p: {
   barcode: string | null;
   brand: string | null;
   category: string | null;
+  chemicalName: string | null;
+  expiryDate: Date | null;
   costPrice: Prisma.Decimal;
   sellingPrice: Prisma.Decimal;
   taxType: string;
@@ -101,6 +103,9 @@ export function serializeProduct(p: {
     barcode: p.barcode,
     brand: p.brand,
     category: p.category,
+    chemical_name: p.chemicalName,
+    /** Date only, no time: `2027-07-15`. It is a date on a packet. */
+    expiry_date: p.expiryDate ? p.expiryDate.toISOString().slice(0, 10) : null,
     cost_price: showCosts ? num(p.costPrice) : 0,
     selling_price: num(p.sellingPrice),
     tax_type: p.taxType,

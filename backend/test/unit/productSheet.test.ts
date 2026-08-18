@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { normaliseHeader, normaliseHeaderFull, resolveHeader, tableToObjects } from '../../src/lib/csv.js';
 import {
+  formatSheetDate,
   HEADER_ALIASES,
   identityOf,
+  parseSheetDate,
+  parseShopColumn,
   productNameFrom,
   readCostPrice,
+  shopPriceColumn,
+  shopStockColumn,
   synthesiseSku,
 } from '../../src/lib/productSheet.js';
 
@@ -153,3 +158,93 @@ describe('product names', () => {
     expect(productNameFrom('Macro source D.compound', '50kg ')).toBe('Macro source D.compound 50kg');
   });
 });
+
+/*
+ * Two columns per shop, which is what turned thirteen uploads into one. The
+ * suffix says which of the two it is; everything before it has to match a shop
+ * the organisation actually has, and that match is the caller's job.
+ */
+describe('a column named for a shop', () => {
+  it('reads a closing stock column and a price column apart', () => {
+    expect(parseShopColumn('Lusaka Closing Stock')).toEqual({ shop: 'lusaka', kind: 'stock' });
+    expect(parseShopColumn('Lusaka SP Per Stock')).toEqual({ shop: 'lusaka', kind: 'price' });
+  });
+
+  it('strips the longest suffix, not the first one that fits', () => {
+    // "Closing Stock" ends in "Stock". Taking the short one would leave a shop
+    // called "Lusaka Closing", which matches nothing and is silently dropped.
+    expect(parseShopColumn('Lusaka Closing Stock')?.shop).toBe('lusaka');
+  });
+
+  it('reads a bare shop name as its price, the way older files meant it', () => {
+    expect(parseShopColumn('Katende')).toEqual({ shop: 'katende', kind: 'price' });
+  });
+
+  it('keeps a two-word shop name together', () => {
+    expect(parseShopColumn('Katende East Closing Stock')?.shop).toBe('katende east');
+    expect(parseShopColumn('Katende East SP Per Stock')?.shop).toBe('katende east');
+  });
+
+  it('round-trips the headings the downloads write', () => {
+    for (const name of ['Lusaka', 'Katende East', 'Chinkuli']) {
+      expect(parseShopColumn(shopStockColumn(name))).toEqual({
+        shop: name.toLowerCase(),
+        kind: 'stock',
+      });
+      expect(parseShopColumn(shopPriceColumn(name))).toEqual({
+        shop: name.toLowerCase(),
+        kind: 'price',
+      });
+    }
+  });
+
+  it('gives nothing back for an empty heading', () => {
+    expect(parseShopColumn('   ')).toBeNull();
+  });
+});
+
+/*
+ * The expiry column. A date typed by a person, printed on a packet, or handed
+ * over by Excel as a serial number — all of them arrive in this one field.
+ */
+describe('expiry dates', () => {
+  it('reads the shape both downloads write', () => {
+    expect(parseSheetDate('2027-07-15')?.toISOString()).toBe('2027-07-15T00:00:00.000Z');
+  });
+
+  it('reads day first, because that is how the shops write it', () => {
+    expect(parseSheetDate('03/04/2027')?.toISOString()).toBe('2027-04-03T00:00:00.000Z');
+  });
+
+  it('takes the only possible reading when one number is over twelve', () => {
+    expect(parseSheetDate('07/15/2027')?.toISOString()).toBe('2027-07-15T00:00:00.000Z');
+  });
+
+  it('reads a month with no day as the end of that month, as a packet means it', () => {
+    expect(parseSheetDate('07/2027')?.toISOString()).toBe('2027-07-31T00:00:00.000Z');
+    expect(parseSheetDate('Jul 2027')?.toISOString()).toBe('2027-07-31T00:00:00.000Z');
+  });
+
+  it('reads a two-digit year as this century', () => {
+    expect(parseSheetDate('15-JUL-27')?.toISOString()).toBe('2027-07-15T00:00:00.000Z');
+  });
+
+  it("reads Excel's serial number, which is what an .xlsx date cell holds", () => {
+    // 46583 = 2027-07-15 in Excel's own reckoning.
+    expect(parseSheetDate('46583')?.toISOString()).toBe('2027-07-15T00:00:00.000Z');
+  });
+
+  it('says nothing for an empty cell, and refuses one it cannot read', () => {
+    expect(parseSheetDate('')).toBeNull();
+    expect(parseSheetDate('   ')).toBeNull();
+    // Not a guess: importing "soon" as a date would put a fiction on a label.
+    expect(parseSheetDate('soon')).toBeUndefined();
+    expect(parseSheetDate('31/02/2027')).toBeUndefined();
+  });
+
+  it('writes back what it reads', () => {
+    expect(formatSheetDate(parseSheetDate('15/07/2027') as Date)).toBe('2027-07-15');
+    expect(formatSheetDate(null)).toBe('');
+  });
+});
+

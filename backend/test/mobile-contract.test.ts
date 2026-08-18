@@ -985,6 +985,9 @@ describe('mobile API contract', () => {
         'products_to_create',
         'products_to_update',
         'stock_rows',
+        'shop_stock_writes',
+        'shops_counted',
+        'shop_columns',
         'warnings',
         'preview',
       ],
@@ -992,7 +995,7 @@ describe('mobile API contract', () => {
     );
     expectShape(
       dry.body.preview[0],
-      ['row', 'sku', 'name', 'product_action', 'quantity_before', 'quantity_after', 'change'],
+      ['row', 'sku', 'name', 'product_action', 'shops', 'quantity_before', 'quantity_after', 'change'],
       'BulkUploadRowPreview'
     );
 
@@ -1018,7 +1021,7 @@ describe('mobile API contract', () => {
     expectShape(rejected.body.errors[0], ['row', 'sku', 'message'], 'bulk upload row error');
   });
 
-  it('inventory.bulkUploadTemplate defaults to the price list, columned by shop', async () => {
+  it('inventory.bulkUploadTemplate serves one sheet, two columns per shop', async () => {
     const res = await get('/api/inventory/bulk-upload/template', world.tokens.admin);
 
     expect(res.status).toBe(200);
@@ -1027,59 +1030,45 @@ describe('mobile API contract', () => {
     const header = res.text.split(/\r?\n/)[0] as string;
     expect(header).toContain('PRODUCT');
     expect(header).toContain('PACKSIZE');
-    // One column per shop, taken from the organisation's own shops.
-    expect(header).toContain('Test Store');
+    expect(header).toContain('CHEMICAL NAME');
+    expect(header).toContain('EXPIRY DATE');
+    // Two columns per shop, taken from the organisation's own shops. The app
+    // no longer asks which shop is uploading, so the file has to say.
+    expect(header).toContain('Test Store Closing Stock');
+    expect(header).toContain('Test Store SP Per Stock');
   });
 
-  it('inventory.bulkUploadTemplate still serves the coded sheet on request', async () => {
-    const res = await get('/api/inventory/bulk-upload/template?format=sku', world.tokens.admin);
-
-    expect(res.status).toBe(200);
-    expect(res.text.split(/\r?\n/)[0]).toContain('sku');
-  });
-
-  it('inventory.exportCatalogue writes the catalogue in the shape the importer reads', async () => {
+  it('inventory.exportCatalogue writes the same sheet the template does', async () => {
     const res = await get('/api/inventory/export', world.tokens.admin);
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
 
-    const header = res.text.split(/\r?\n/)[0] as string;
-    // `sku` is what makes a re-upload an update rather than a second catalogue.
-    expect(header).toContain('sku');
-    expect(header).toContain('selling_price');
-    expect(header).toContain('cost_price');
-    // One column per shop, so a row that prices one shop does not blank the rest.
-    expect(header).toContain('Test Store');
-    // No quantity unless it was asked for: the importer reads one as the
-    // counted total, and returning this file must not move any stock.
-    expect(header).not.toContain('quantity');
+    const template = await get('/api/inventory/bulk-upload/template', world.tokens.admin);
+    const headerOf = (text: string) => (text.split(/\r?\n/)[0] as string).replace(/^\ufeff/, '');
+
+    // The whole design of the two downloads: one document, blank or filled in.
+    // If these ever diverge, a shop pasting rows from one into the other pastes
+    // them into the wrong columns.
+    expect(headerOf(res.text)).toBe(headerOf(template.text));
+    expect(headerOf(res.text)).toContain('SKU');
   });
 
-  it('inventory.exportCatalogue adds stock counts only for a named shop', async () => {
-    const res = await get('/api/inventory/export', world.tokens.admin, {
-      store_id: world.storeId,
-      include_stock: 'true',
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.text.split(/\r?\n/)[0]).toContain('quantity');
-
-    // Stock is per shop, so asking for it without naming one is a 400 rather
-    // than a file that quietly counts nothing.
-    const noShop = await get('/api/inventory/export', world.tokens.admin, {
-      include_stock: 'true',
-    });
-    expect(noShop.status).toBe(400);
-  });
-
-  it('inventory.exportCatalogue leaves the buying price out for a store manager', async () => {
+  it('inventory.exportCatalogue leaves the buying price blank for a store manager', async () => {
     const res = await get('/api/inventory/export', world.tokens.manager);
 
     expect(res.status).toBe(200);
-    const header = res.text.split(/\r?\n/)[0] as string;
-    expect(header).not.toContain('cost_price');
-    expect(header).toContain('selling_price');
+
+    // The COST column stays in the file rather than being dropped: both
+    // downloads have to be the same document for every account, or a manager
+    // and an owner would be pasting rows between sheets with different
+    // columns. It arrives empty, which the importer reads as "says nothing
+    // about cost" and leaves the stored buying price alone.
+    const [header, first] = res.text.replace(/^\ufeff/, '').split(/\r?\n/);
+    const columns = (header as string).split(',');
+    expect(columns).toContain('COST');
+    expect(columns).toContain('SP');
+    expect((first as string).split(',')[columns.indexOf('COST')]).toBe('');
   });
 
   /* ----------------------------------------------- buying prices are withheld */

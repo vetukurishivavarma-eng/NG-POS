@@ -5,6 +5,7 @@ import type { Express } from 'express';
 import { prisma } from '../src/prisma.js';
 import { api, seedWorld, stockOf, type World } from './fixtures.js';
 import { normaliseHeader, parseCsv, parseCsvObjects } from '../src/lib/csv.js';
+import { synthesiseSku } from '../src/lib/productSheet.js';
 
 /**
  * The reader, on its own. Everything here is a real shape a spreadsheet arrives
@@ -209,14 +210,32 @@ describe('stock bulk upload', () => {
     expect(res.body.errors[0].message).toContain('line 2');
   });
 
-  it('rejects a row with no SKU', async () => {
+  /*
+   * A blank SKU cell is no longer an error: the template hands out an empty SKU
+   * column on purpose, and a code is worked out from the company, product and
+   * pack size. What is still refused is a row that identifies nothing at all.
+   */
+  it('works a code out for a row that leaves the SKU blank', async () => {
     const res = await asAdmin('post', '/api/inventory/bulk-upload').send({
       store_id: world.storeId,
-      csv: [header, ',Nameless,,,,1,2,exempt,5,1'].join('\n'),
+      csv: [header, ',Nameless Thing,Novatek,,,1,2,exempt,5,1'].join('\n'),
+    });
+
+    expect(res.status).toBe(201);
+    const created = await prisma.product.findFirstOrThrow({
+      where: { organizationId: world.organizationId, name: 'Nameless Thing' },
+    });
+    expect(created.sku).toBe(synthesiseSku('Novatek', 'Nameless Thing', ''));
+  });
+
+  it('rejects a row with neither a code nor a name', async () => {
+    const res = await asAdmin('post', '/api/inventory/bulk-upload').send({
+      store_id: world.storeId,
+      csv: [header, ',,,,,1,2,exempt,5,1'].join('\n'),
     });
 
     expect(res.status).toBe(422);
-    expect(res.body.errors[0].message).toContain('SKU');
+    expect(res.body.errors[0].message).toContain('cannot be identified');
   });
 
   it('changes nothing on a dry run, but says what would happen', async () => {
@@ -310,20 +329,20 @@ describe('stock bulk upload', () => {
 
   // The template is the instructions. If it cannot be imported as it stands,
   // everyone who follows it gets an error on their first attempt.
-  it.each([
-    ['price-master', 3],
-    ['sku', 5],
-  ])('serves a %s template whose own columns import cleanly', async (format, rows) => {
-    const template = await asAdmin('get', `/api/inventory/bulk-upload/template?format=${format}`);
+  it('serves one template whose own columns import cleanly', async () => {
+    const template = await asAdmin('get', '/api/inventory/bulk-upload/template');
     expect(template.status).toBe(200);
 
     const res = await asAdmin('post', '/api/inventory/bulk-upload').send({
-      store_id: world.storeId,
       csv: template.text,
       validate_only: true,
     });
 
     expect(res.status).toBe(200);
-    expect(res.body.total_rows).toBe(rows);
+    expect(res.body.total_rows).toBe(3);
+    // Its own example rows count the first shop, so the sheet demonstrates the
+    // column rather than only naming it.
+    expect(res.body.shop_stock_writes).toBe(3);
+    expect(res.body.ignored_columns).toEqual([]);
   });
 });

@@ -17,6 +17,10 @@ export interface Product {
   barcode: string | null;
   brand: string | null;
   category: string | null;
+  /** The active ingredient, e.g. "Pirimiphos-methyl 1.6%". */
+  chemical_name: string | null;
+  /** `YYYY-MM-DD`, or null for a line that does not expire. */
+  expiry_date: string | null;
   cost_price: number;
   selling_price: number;
   tax_type: TaxType;
@@ -324,6 +328,9 @@ export interface ProductDraft {
   selling_price: number;
   tax_type: TaxType;
   unit?: string | null;
+  chemical_name?: string | null;
+  /** `YYYY-MM-DD`. The server refuses anything else rather than guess. */
+  expiry_date?: string | null;
   is_active?: boolean;
   image_base64?: string | null;
 }
@@ -710,7 +717,12 @@ export interface SupplierOutstandingSummary {
 export type BulkUploadMode = 'set' | 'add';
 
 export interface BulkUploadRequest {
-  store_id: string;
+  /**
+   * Normally absent. The sheet carries every shop in its own columns, so the
+   * screen no longer asks which shop is uploading. Kept for a one-shop file
+   * with a single bare quantity column.
+   */
+  store_id?: string;
   /** The sheet as CSV text. Exactly one of `csv` or `xlsx_base64`. */
   csv?: string;
   /** The .xlsx itself, so nobody has to remember to save it as CSV first. */
@@ -722,6 +734,15 @@ export interface BulkUploadRequest {
   update_existing_products?: boolean;
   /** Whether the per-shop price columns are written. Server default is true. */
   apply_shop_prices?: boolean;
+  /** The same switch for the per-shop closing stock columns. */
+  apply_shop_stock?: boolean;
+  /**
+   * What a row with every closing stock cell empty means. Left off it means
+   * "says nothing", and those shelves are untouched; sent true it means "none
+   * of these shops has any", and they are written to zero so the product reads
+   * as out of stock. The screen asks before sending it.
+   */
+  zero_missing_stock?: boolean;
   validate_only?: boolean;
   reference?: string;
   note?: string;
@@ -736,10 +757,12 @@ export interface BulkUploadRequest {
  */
 export interface BulkUploadShopColumn {
   column: string;
+  /** That shop's closing stock, or that shop's selling price. */
+  kind: 'stock' | 'price';
   store_id: string | null;
   store_name: string | null;
   status: 'ok' | 'unknown_shop' | 'no_access' | 'no_permission';
-  /** How many rows carry a price in this column. */
+  /** How many rows carry a value in this column. */
   values: number;
 }
 
@@ -748,6 +771,11 @@ export interface BulkUploadRowPreview {
   sku: string;
   name: string;
   product_action: 'create' | 'update' | 'unchanged';
+  /** How many shops this row counts. */
+  shops: number;
+  /** True where the file lists the product but counts it in no shop. */
+  unstocked: boolean;
+  /** Summed across the shops the row counts, not one shop's shelf. */
   quantity_before: number;
   quantity_after: number;
   change: number;
@@ -756,12 +784,23 @@ export interface BulkUploadRowPreview {
 export interface BulkUploadResult {
   applied: boolean;
   detail: string;
-  store_id: string;
+  /** Only set when a single-shop file named one. Normally null. */
+  store_id: string | null;
   mode: BulkUploadMode;
   total_rows: number;
   products_to_create: number;
   products_to_update: number;
+  /** Rows that move at least one shelf. */
   stock_rows: number;
+  /** Shelves moved, counting each shop separately. */
+  shop_stock_writes: number;
+  shops_counted: number;
+  /** Rows the file lists but counts in no shop — what the popup is about. */
+  rows_without_stock: number;
+  /** The first twenty of them by name, so the popup can show which. */
+  products_without_stock: string[];
+  /** What this request did with them. */
+  zeroed_missing_stock: boolean;
   /** Every shop-named column found, applied or not, with the reason. */
   shop_columns: BulkUploadShopColumn[];
   /** Rows that price at least one shop. */

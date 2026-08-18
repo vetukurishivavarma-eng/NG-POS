@@ -260,40 +260,24 @@ export const inventory = {
   /**
    * The blank spreadsheet, as CSV text, to save or share from the device.
    *
-   * `price-master` is the buyer's own sheet — company, product, pack size and
-   * a price column per shop, filled in from the organisation's real shops.
-   * `sku` is our coded template, for a shop that already has product codes.
+   * One shape only. Every shop gets two columns — "<shop> Closing Stock" and
+   * "<shop> SP Per Stock" — so the whole chain goes up in one file and nobody
+   * is asked which shop they are uploading.
    */
-  bulkUploadTemplate: (format: 'price-master' | 'sku' = 'price-master') =>
+  bulkUploadTemplate: () =>
     api
-      .get<string>('/inventory/bulk-upload/template', {
-        params: { format },
-        responseType: 'text',
-      })
+      .get<string>('/inventory/bulk-upload/template', { responseType: 'text' })
       .then((r) => r.data),
 
   /**
-   * The catalogue as it stands, as CSV, in the shape the importer reads back.
+   * The catalogue as it stands, as CSV, in the shape the importer reads back —
+   * the same document as the template, filled in.
    *
-   * The point of it is the round trip: send the shops a list with no prices,
-   * let them type the selling prices in, then take this file away, fill the
-   * buying prices in beside them and upload the same file again.
-   *
-   * `includeStock` adds this shop's counted quantity. Left off by default
-   * because the importer reads a quantity column as the counted total, so a
-   * price list carrying stock would roll the shelves back to the day it was
-   * downloaded.
+   * The point of it is the round trip: download the current list, correct it in
+   * Excel where correcting it is easy, and upload the same file again.
    */
-  exportCatalogue: (storeId: string | null, includeStock = false) =>
-    api
-      .get<string>('/inventory/export', {
-        params: {
-          ...(storeId ? { store_id: storeId } : {}),
-          include_stock: includeStock ? 'true' : 'false',
-        },
-        responseType: 'text',
-      })
-      .then((r) => r.data),
+  exportCatalogue: () =>
+    api.get<string>('/inventory/export', { responseType: 'text' }).then((r) => r.data),
 };
 
 export const transactions = {

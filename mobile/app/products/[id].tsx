@@ -53,6 +53,8 @@ export default function ProductFormScreen() {
   const [selling, setSelling] = useState('');
   const [taxType, setTaxType] = useState<TaxType>('exempt');
   const [unit, setUnit] = useState('');
+  const [chemicalName, setChemicalName] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
   const [isActive, setIsActive] = useState(true);
   /** Field errors stay hidden until the first save attempt, so an empty new form isn't red. */
   const [submitted, setSubmitted] = useState(false);
@@ -79,6 +81,8 @@ export default function ProductFormScreen() {
     setSelling(moneyToInput(loaded.selling_price));
     setTaxType(loaded.tax_type);
     setUnit(loaded.unit ?? '');
+    setChemicalName(loaded.chemical_name ?? '');
+    setExpiryDate(loaded.expiry_date ?? '');
     setIsActive(loaded.is_active);
   }, [loaded]);
 
@@ -105,8 +109,14 @@ export default function ProductFormScreen() {
       // button would simply stop working with no explanation anywhere.
       cost: showCosts ? priceError(costValue) : null,
       selling: priceError(sellValue),
+      // Blank is fine — most lines do not expire. Anything else has to be the
+      // one shape the server stores, because a date typed 07/15 could be July
+      // or could be the fifteenth and neither of us should be guessing.
+      expiry: expiryDate.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(expiryDate.trim())
+        ? 'Write it year first: 2027-07-15.'
+        : null,
     }),
-    [name, sku, costValue, sellValue, showCosts]
+    [name, sku, costValue, sellValue, showCosts, expiryDate]
   );
 
   const save = useMutation({
@@ -133,7 +143,7 @@ export default function ProductFormScreen() {
 
   function submit() {
     setSubmitted(true);
-    if (errors.name || errors.sku || errors.cost || errors.selling) return;
+    if (errors.name || errors.sku || errors.cost || errors.selling || errors.expiry) return;
 
     save.mutate({
       name: name.trim(),
@@ -150,6 +160,8 @@ export default function ProductFormScreen() {
       selling_price: sellValue ?? 0,
       tax_type: taxType,
       unit: unit.trim() || null,
+      chemical_name: chemicalName.trim() || null,
+      expiry_date: expiryDate.trim() || null,
       is_active: isActive,
     });
   }
@@ -237,6 +249,10 @@ export default function ProductFormScreen() {
             />
             <RowDivider />
             <StatRow label="Unit" value={loaded.unit || '—'} />
+            <RowDivider />
+            <StatRow label="Chemical" value={loaded.chemical_name || '—'} />
+            <RowDivider />
+            <StatRow label="Expires" value={loaded.expiry_date || '—'} />
             <RowDivider />
             <StatRow label="Barcode" value={loaded.barcode || '—'} />
           </Card>
@@ -366,6 +382,25 @@ export default function ProductFormScreen() {
                 placeholder="e.g. bottle"
                 autoCapitalize="none"
                 hint="How it is sold: bottle, kg, litre, bag, each."
+              />
+              {/* The counter is asked for the chemical as often as for the
+                  brand on the tin, and several brands share one. */}
+              <Field
+                label="Chemical name"
+                value={chemicalName}
+                onChangeText={setChemicalName}
+                placeholder="e.g. Pirimiphos-methyl 1.6%"
+                autoCapitalize="sentences"
+                hint="The active ingredient, as printed on the label."
+              />
+              <Field
+                label="Expiry date"
+                value={expiryDate}
+                onChangeText={setExpiryDate}
+                placeholder="2027-07-15"
+                autoCapitalize="none"
+                error={submitted ? errors.expiry : null}
+                hint="Year first: 2027-07-15. Leave blank if the line does not expire."
               />
               <Field
                 label="Description"

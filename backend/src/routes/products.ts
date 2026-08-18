@@ -35,6 +35,18 @@ const productSchema = z.object({
   barcode: z.string().nullable().optional(),
   brand: z.string().nullable().optional(),
   category: categoryField,
+  /** The active ingredient — several brands share one, so it is its own field. */
+  chemical_name: z.string().nullable().optional(),
+  /**
+   * `YYYY-MM-DD`, and stored as midnight UTC so a phone in another time zone
+   * cannot shift the date it shows by a day.
+   */
+  expiry_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Write the expiry date as YYYY-MM-DD.')
+    .nullable()
+    .optional()
+    .transform((value) => (value ? new Date(`${value}T00:00:00.000Z`) : value)),
   cost_price: z.number().min(0).default(0),
   selling_price: z.number().min(0).default(0),
   tax_type: z.enum(['exempt', 'vat']).default('exempt'),
@@ -249,6 +261,8 @@ productsRouter.post(
         barcode: body.barcode ?? null,
         brand: body.brand ?? null,
         category: body.category ?? null,
+        chemicalName: body.chemical_name ?? null,
+        expiryDate: body.expiry_date ?? null,
         costPrice: body.cost_price,
         sellingPrice: body.selling_price,
         taxType: body.tax_type,
@@ -291,6 +305,8 @@ productsRouter.put(
         barcode: body.barcode,
         brand: body.brand,
         category: body.category,
+        chemicalName: body.chemical_name,
+        expiryDate: body.expiry_date,
         ...(showCosts ? { costPrice: body.cost_price } : {}),
         sellingPrice: body.selling_price,
         taxType: body.tax_type,
@@ -351,6 +367,8 @@ productsRouter.post(
         barcode: p.barcode ?? null,
         brand: p.brand ?? null,
         category: p.category ?? null,
+        chemicalName: p.chemical_name ?? null,
+        expiryDate: p.expiry_date ?? null,
         costPrice: p.cost_price,
         sellingPrice: p.selling_price,
         taxType: p.tax_type,
