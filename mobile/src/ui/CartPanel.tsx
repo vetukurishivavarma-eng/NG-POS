@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { computeTotals, PAYMENT_METHODS, useCart } from '../store/cart';
+import { computeTotals, maxSellable, PAYMENT_METHODS, useCart } from '../store/cart';
 import { useCheckout } from '../hooks/useCheckout';
 import { useSync } from '../db/sync';
 import { colors, font, formatKwacha, radius, spacing, splitAmount } from '../theme';
@@ -56,7 +56,7 @@ export function CartPanel({ onDone, docked = false }: { onDone?: () => void; doc
             <View style={styles.lineBottom}>
               <QtyStepper
                 value={line.quantity}
-                max={line.product.quantity}
+                max={maxSellable(line.product)}
                 onChange={(next) => setQuantity(line.product.id, next)}
               />
 
@@ -73,10 +73,14 @@ export function CartPanel({ onDone, docked = false }: { onDone?: () => void; doc
 
             {/* The cap is only obvious once you have hit it, so say why the plus
                 has stopped responding rather than leaving it looking broken. */}
-            {line.quantity >= line.product.quantity && line.product.quantity > 0 ? (
+            {line.quantity >= maxSellable(line.product) ? (
               <View style={styles.capNote}>
                 <Icon name="alert-circle" size={12} color={colors.accentDeep} />
-                <Text style={styles.capText}>All {line.product.quantity} in stock are on this sale.</Text>
+                <Text style={styles.capText}>
+                  {line.product.quantity > 0
+                    ? `All ${line.product.quantity} in stock are on this sale.`
+                    : 'This is oversold to the limit — count the shelf before selling more.'}
+                </Text>
               </View>
             ) : null}
           </View>

@@ -6,7 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useStoreSelection } from '../src/store/storeSelection';
-import { useCart } from '../src/store/cart';
+import { maxSellable, useCart } from '../src/store/cart';
 import { useScanCapture } from '../src/store/scanCapture';
 import { findCachedByBarcode } from '../src/db';
 import { colors, font, radius, spacing } from '../src/theme';
@@ -17,7 +17,7 @@ import type { ProductWithStock } from '../src/api/types';
 /** Read straight from the store: this runs inside a scan callback, not a render. */
 function alreadyAtStockLimit(product: ProductWithStock): boolean {
   const line = useCart.getState().lines.find((l) => l.product.id === product.id);
-  return line != null && line.quantity >= product.quantity;
+  return line != null && line.quantity >= maxSellable(product);
 }
 
 export default function ScanScreen() {
@@ -58,13 +58,20 @@ export default function ScanScreen() {
 
       if (!product) {
         setMessage(`No product with barcode ${data}`);
-      } else if (product.quantity <= 0) {
-        setMessage(`${product.name} is out of stock`);
+      } else if (maxSellable(product) <= 0) {
+        // Out of stock alone no longer refuses the scan — selling past zero is
+        // allowed up to the oversell floor (cart.ts). This only fires once that
+        // floor is actually reached.
+        setMessage(`${product.name} is already oversold to the limit — count the shelf before selling more.`);
       } else if (alreadyAtStockLimit(product)) {
         // Without this the scanner would close on a scan that changed nothing —
         // the cart silently caps at the stock on hand, and a cashier scanning a
         // sixth unit of a five-unit product would have no way to tell.
-        setMessage(`All ${product.quantity} of ${product.name} are already on this sale`);
+        setMessage(
+          product.quantity > 0
+            ? `All ${product.quantity} of ${product.name} are already on this sale`
+            : `${product.name} is already oversold to the limit — count the shelf before selling more.`
+        );
       } else {
         add(product);
         router.back();

@@ -83,28 +83,40 @@ export const useCart = create<CartState>((set) => ({
 }));
 
 /**
- * The most a line may hold: what the store has on the shelf.
+ * How far a product may be sold past what the shelf shows, once it is
+ * already at or below zero. A real item can be physically in the shop while
+ * the count is stale or simply wrong, so a sale must not be refused outright
+ * — but an unbounded shortfall is more likely a miscount than ten more
+ * customers, so it stops here rather than climbing forever.
+ */
+export const OVERSELL_FLOOR = -10;
+
+/**
+ * The most a line may hold.
  *
  * Nothing downstream enforces this. The server reprices from product ids and
  * then lets the level go negative on purpose, because an offline till replaying
  * yesterday's sales must not be rejected for stock it did not know about — so a
  * basket of 50 units of a 3-unit product posts cleanly and the shortfall only
- * surfaces at the next count. The sell screen already refuses to add anything
- * with no stock at all; this is the same rule applied to the second tap
- * onwards.
+ * surfaces at the next count.
+ *
+ * While stock is positive this is simply what's on the shelf. Once it is at
+ * or below zero, selling is still allowed — the sell screen no longer refuses
+ * it — but only until the count would reach `OVERSELL_FLOOR`.
  *
  * `quantity` is as of the last catalogue sync. That is the number the cashier
  * is looking at on the same screen, so capping to it can never contradict what
  * they can see.
  */
-export function capToStock(product: ProductWithStock, wanted: number): number {
+export function maxSellable(product: ProductWithStock): number {
   const available = Number(product.quantity ?? 0);
-  // Zero, missing or nonsense stock is left uncapped rather than pinned to nil:
-  // a barcode scanned off an item that is physically in the shop must still
-  // sell, and capping to 0 would empty the line as fast as it was added. The
-  // sell grid is where a no-stock product is refused, deliberately and visibly.
-  if (!Number.isFinite(available) || available <= 0) return Math.max(0, wanted);
-  return Math.max(0, Math.min(wanted, available));
+  if (!Number.isFinite(available)) return Number.POSITIVE_INFINITY;
+  if (available > 0) return available;
+  return Math.max(0, available - OVERSELL_FLOOR);
+}
+
+export function capToStock(product: ProductWithStock, wanted: number): number {
+  return Math.max(0, Math.min(wanted, maxSellable(product)));
 }
 
 export interface CartTotals {

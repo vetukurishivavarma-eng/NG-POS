@@ -13,7 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
 import { useStoreSelection } from '../../src/store/storeSelection';
-import { computeTotals, useCart } from '../../src/store/cart';
+import { computeTotals, maxSellable, useCart } from '../../src/store/cart';
 import { useSync } from '../../src/db/sync';
 import { useCatalogue, filterCatalogue } from '../../src/hooks/useCatalogue';
 import { useLayout } from '../../src/ui/responsive';
@@ -171,9 +171,12 @@ export default function SellScreen() {
               },
               onSetQuantity: (next: number) => setQuantity(item.id, next),
               onLimit: (edge: 'min' | 'max') => {
-                if (edge === 'max') {
-                  flashLimit(`Only ${formatStock(item.quantity)} of ${item.name} in stock.`);
-                }
+                if (edge !== 'max') return;
+                flashLimit(
+                  item.quantity > 0
+                    ? `Only ${formatStock(item.quantity)} of ${item.name} in stock.`
+                    : `${item.name} is already oversold to the limit — count the shelf before selling more.`
+                );
               },
             };
             return layout.productColumns > 1 ? (
@@ -292,7 +295,11 @@ function formatStock(n: number): string {
 }
 
 function stockTone(p: ProductWithStock) {
-  if (p.quantity <= 0) return { label: 'Out of stock', tone: 'danger' as const };
+  // Oversold gets its own label rather than a flat "Out of stock": once a sale
+  // can push the count negative, the badge needs to say by how much, not just
+  // that it's at zero.
+  if (p.quantity < 0) return { label: `${formatStock(Math.abs(p.quantity))} oversold`, tone: 'danger' as const };
+  if (p.quantity === 0) return { label: 'Out of stock', tone: 'danger' as const };
   if (p.quantity <= p.reorder_level)
     return { label: `${formatStock(p.quantity)} left`, tone: 'warning' as const };
   return { label: `${formatStock(p.quantity)} in stock`, tone: 'success' as const };
@@ -351,7 +358,9 @@ function useFlightOrigin(onAdd: (from: Rect) => void) {
 }
 
 function ProductRow({ product, quantity, onAdd, onSetQuantity, onLimit }: ProductProps) {
-  const out = product.quantity <= 0;
+  // Disabled only once the oversell floor (see cart.ts) is actually reached —
+  // an out-of-stock product can still be sold, up to that point.
+  const out = maxSellable(product) <= 0;
   const stock = stockTone(product);
   const depth = usePressDepth();
   const { ref, launch } = useFlightOrigin(onAdd);
@@ -394,7 +403,7 @@ function ProductRow({ product, quantity, onAdd, onSetQuantity, onLimit }: Produc
             <QtyStepper
               size="sm"
               value={quantity}
-              max={product.quantity}
+              max={maxSellable(product)}
               onChange={onSetQuantity}
               onLimit={onLimit}
             />
@@ -410,7 +419,9 @@ function ProductRow({ product, quantity, onAdd, onSetQuantity, onLimit }: Produc
 }
 
 function ProductTile({ product, quantity, onAdd, onSetQuantity, onLimit }: ProductProps) {
-  const out = product.quantity <= 0;
+  // Disabled only once the oversell floor (see cart.ts) is actually reached —
+  // an out-of-stock product can still be sold, up to that point.
+  const out = maxSellable(product) <= 0;
   const stock = stockTone(product);
   const depth = usePressDepth();
   const { ref, launch } = useFlightOrigin(onAdd);
@@ -448,7 +459,7 @@ function ProductTile({ product, quantity, onAdd, onSetQuantity, onLimit }: Produ
             <QtyStepper
               size="sm"
               value={quantity}
-              max={product.quantity}
+              max={maxSellable(product)}
               onChange={onSetQuantity}
               onLimit={onLimit}
             />
