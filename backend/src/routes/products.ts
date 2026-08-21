@@ -3,7 +3,13 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
 import { asyncHandler } from '../middleware/error.js';
-import { assertStoreAccess, authenticate, currentUser, requireCapability } from '../middleware/auth.js';
+import {
+  assertStoreAccess,
+  authenticate,
+  currentUser,
+  requireAnyCapability,
+  requireCapability,
+} from '../middleware/auth.js';
 import { serializeProduct, serializeProductWithStock } from '../lib/serialize.js';
 import { mayViewCosts } from '../lib/capabilities.js';
 import { notFound } from '../lib/errors.js';
@@ -279,7 +285,12 @@ productsRouter.post(
 
 productsRouter.put(
   '/:id',
-  requireCapability('products.write'),
+  // Two doors: `products.write` (full edit — an admin, or a shop's own
+  // permanent grant while the entry window is open) or `pricing.write`
+  // (permanent for shop staff, and only ever enough for the selling price —
+  // see the fullWrite/showCosts split below). Either is enough to reach the
+  // handler; which one applies decides how much of the body gets honoured.
+  requireAnyCapability('products.write', 'pricing.write'),
   asyncHandler(async (req, res) => {
     const body = productSchema.partial().parse(req.body);
     const user = currentUser(req);
@@ -298,26 +309,37 @@ productsRouter.put(
     // shop did nothing wrong by sending back what it was given.
     const showCosts = await mayViewCosts(user);
 
+    // The same trust tier that may see the buying price is the only one that
+    // may rewrite the product record itself (name, SKU, category, ...). Every
+    // other account — every ordinary shop login — reaches this route to move
+    // the shelf price and nothing else; the rest of the body is silently
+    // dropped rather than rejected, the same treatment cost/transport already
+    // get from an account that cannot see them.
+    const fullWrite = showCosts;
+
     const product = await prisma.product.update({
       where: { id: existing.id },
-      data: {
-        name: body.name,
-        description: body.description,
-        sku: body.sku,
-        barcode: body.barcode,
-        brand: body.brand,
-        category: body.category,
-        chemicalName: body.chemical_name,
-        expiryDate: body.expiry_date,
-        ...(showCosts
-          ? { costPrice: body.cost_price, transportCost: body.transport_cost }
-          : {}),
-        sellingPrice: body.selling_price,
-        taxType: body.tax_type,
-        unit: body.unit,
-        isActive: body.is_active,
-        imageBase64: body.image_base64,
-      },
+      data: fullWrite
+        ? {
+            name: body.name,
+            description: body.description,
+            sku: body.sku,
+            barcode: body.barcode,
+            brand: body.brand,
+            category: body.category,
+            chemicalName: body.chemical_name,
+            expiryDate: body.expiry_date,
+            costPrice: body.cost_price,
+            transportCost: body.transport_cost,
+            sellingPrice: body.selling_price,
+            taxType: body.tax_type,
+            unit: body.unit,
+            isActive: body.is_active,
+            imageBase64: body.image_base64,
+          }
+        : {
+            sellingPrice: body.selling_price,
+          },
     });
 
     res.json(serializeProduct(product, showCosts));

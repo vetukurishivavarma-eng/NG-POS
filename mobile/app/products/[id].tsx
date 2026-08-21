@@ -39,9 +39,18 @@ export default function ProductFormScreen() {
 
   const layout = useLayout();
   const canWrite = useCan('products.write');
+  const canWritePrice = useCan('pricing.write');
   const canDelete = useCan('products.delete');
   const showCosts = useCan('costs.view');
   const queryClient = useQueryClient();
+
+  // The server draws the same line: only an account that may see the buying
+  // price (an admin, or staff at the warehouse) may rewrite the product
+  // record itself. Everyone else — every ordinary shop login — reaches this
+  // screen with `pricing.write` and only that: the selling price and nothing
+  // else. `showCosts` doubles as that flag rather than a separate check,
+  // because it is exactly the same population on both sides of the API call.
+  const fullWrite = showCosts;
 
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
@@ -134,6 +143,19 @@ export default function ProductFormScreen() {
       Alert.alert(isNew ? "Couldn't create product" : "Couldn't save changes", errorMessage(err)),
   });
 
+  // A separate mutation rather than reusing `save`: that one's mutationFn is
+  // typed for the full create-or-update draft (`create` needs every field),
+  // and a shop login's request here is deliberately just the one field.
+  const savePrice = useMutation({
+    mutationFn: (selling_price: number) => productsApi.update(productId, { selling_price }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+      void queryClient.invalidateQueries({ queryKey: ['catalogue'] });
+      router.back();
+    },
+    onError: (err) => Alert.alert("Couldn't save price", errorMessage(err)),
+  });
+
   const deactivate = useMutation({
     mutationFn: () => productsApi.remove(productId),
     onSuccess: () => {
@@ -171,6 +193,13 @@ export default function ProductFormScreen() {
     });
   }
 
+  /** For a shop login on an existing product: the one field it may change. */
+  function submitPriceOnly() {
+    setSubmitted(true);
+    if (errors.selling) return;
+    savePrice.mutate(sellValue ?? 0);
+  }
+
   function confirmDeactivate() {
     Alert.alert(
       `Deactivate ${loaded?.name ?? 'this product'}?`,
@@ -181,6 +210,8 @@ export default function ProductFormScreen() {
       ]
     );
   }
+
+  const busy = save.isPending || savePrice.isPending || deactivate.isPending;
 
   if (!isNew && detail.isLoading) {
     return (
@@ -210,66 +241,119 @@ export default function ProductFormScreen() {
     );
   }
 
-  if (!canWrite) {
-    // A cashier can land here from the catalogue list. The server would refuse
-    // the write anyway, so show the figures rather than a form that can't save.
-    if (isNew || !loaded) {
-      return (
-        <SafeAreaView style={styles.safe} edges={['bottom']}>
-          <EmptyState
-            icon="lock"
-            title="Not your permission"
-            hint="Only a manager or an admin can add or change products."
-          />
-        </SafeAreaView>
-      );
-    }
-
+  // Adding a brand-new product is still all-or-nothing on `products.write` —
+  // unchanged from before. Nothing to fill in yet means nothing for a
+  // selling-price-only account to usefully do here.
+  if (isNew && !canWrite) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
-        <ScrollView contentContainerStyle={[styles.scroll, { padding: layout.gutter }]}>
-          <View>
-            <Text style={styles.readTitle}>{loaded.name}</Text>
-            <Text style={styles.readMeta}>{loaded.sku}</Text>
-          </View>
-          {/* The margin card is the cost price with subtraction applied, so it
-              goes wherever the cost price goes. */}
-          {showCosts ? <MarginCard cost={loaded.cost_price} selling={loaded.selling_price} /> : null}
-          <Card>
-            <StatRow label="Selling price" value={formatKwacha(loaded.selling_price)} emphasis />
-            {showCosts ? (
-              <>
-                <RowDivider />
-                <StatRow label="Cost price (landed)" value={formatKwacha(loaded.cost_price)} />
-                <RowDivider />
-                <StatRow label="of which transport" value={formatKwacha(loaded.transport_cost)} />
-              </>
-            ) : null}
-            <RowDivider />
-            <StatRow label="Tax" value={loaded.tax_type === 'vat' ? 'VAT' : 'Exempt'} />
-            <RowDivider />
-            <StatRow label="Brand" value={loaded.brand || '—'} />
-            <RowDivider />
-            <StatRow
-              label="Category"
-              value={normaliseCategory(loaded.category) ?? loaded.category ?? '—'}
-            />
-            <RowDivider />
-            <StatRow label="Unit" value={loaded.unit || '—'} />
-            <RowDivider />
-            <StatRow label="Chemical" value={loaded.chemical_name || '—'} />
-            <RowDivider />
-            <StatRow label="Expires" value={loaded.expiry_date || '—'} />
-            <RowDivider />
-            <StatRow label="Barcode" value={loaded.barcode || '—'} />
-          </Card>
-          {loaded.description ? <Text style={styles.readBody}>{loaded.description}</Text> : null}
-        </ScrollView>
+        <EmptyState
+          icon="lock"
+          title="Not your permission"
+          hint="Only a manager or an admin can add new products."
+        />
       </SafeAreaView>
     );
   }
 
-  const busy = save.isPending || deactivate.isPending;
+  // An existing product, and this account may see the buying price (an
+  // admin, or staff at the warehouse) — the full form below, unchanged.
+  // Everyone else falls through to one of the two views below instead.
+  if (!isNew && loaded && !fullWrite) {
+    // No permission on this product at all — shouldn't happen in practice
+    // (`pricing.write` is granted to every shop login), but a fully read-only
+    // fallback is safer than assuming it always will be.
+    if (!canWritePrice) {
+      return (
+        <SafeAreaView style={styles.safe} edges={['bottom']}>
+          <ScrollView contentContainerStyle={[styles.scroll, { padding: layout.gutter }]}>
+            <View>
+              <Text style={styles.readTitle}>{loaded.name}</Text>
+              <Text style={styles.readMeta}>{loaded.sku}</Text>
+            </View>
+            <Card>
+              <StatRow label="Selling price" value={formatKwacha(loaded.selling_price)} emphasis />
+              <RowDivider />
+              <StatRow label="Tax" value={loaded.tax_type === 'vat' ? 'VAT' : 'Exempt'} />
+              <RowDivider />
+              <StatRow label="Brand" value={loaded.brand || '—'} />
+              <RowDivider />
+              <StatRow
+                label="Category"
+                value={normaliseCategory(loaded.category) ?? loaded.category ?? '—'}
+              />
+              <RowDivider />
+              <StatRow label="Unit" value={loaded.unit || '—'} />
+              <RowDivider />
+              <StatRow label="Chemical" value={loaded.chemical_name || '—'} />
+              <RowDivider />
+              <StatRow label="Expires" value={loaded.expiry_date || '—'} />
+              <RowDivider />
+              <StatRow label="Barcode" value={loaded.barcode || '—'} />
+            </Card>
+            {loaded.description ? <Text style={styles.readBody}>{loaded.description}</Text> : null}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    // Ordinary shop login: every other field is shown but not editable —
+    // the server would silently drop a change to any of them anyway (see
+    // PUT /products/:id) — and the selling price is a real, saveable field.
+    return (
+      <SafeAreaView style={styles.safe} edges={['bottom']}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+          <ScrollView
+            contentContainerStyle={[styles.scroll, { padding: layout.gutter }]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
+            <View>
+              <Text style={styles.readTitle}>{loaded.name}</Text>
+              <Text style={styles.readMeta}>{loaded.sku}</Text>
+            </View>
+
+            <View style={styles.section}>
+              <SectionLabel>Pricing</SectionLabel>
+              <View style={styles.stack}>
+                <Field
+                  label="Selling price"
+                  value={selling}
+                  onChangeText={setSelling}
+                  placeholder="0.00"
+                  keyboardType="decimal-pad"
+                  prefix="K"
+                  error={submitted ? errors.selling : null}
+                  autoFocus
+                />
+                <Button label="Save Price" onPress={submitPriceOnly} loading={savePrice.isPending} disabled={busy} />
+              </View>
+            </View>
+
+            <Card>
+              <StatRow label="Tax" value={loaded.tax_type === 'vat' ? 'VAT' : 'Exempt'} />
+              <RowDivider />
+              <StatRow label="Brand" value={loaded.brand || '—'} />
+              <RowDivider />
+              <StatRow
+                label="Category"
+                value={normaliseCategory(loaded.category) ?? loaded.category ?? '—'}
+              />
+              <RowDivider />
+              <StatRow label="Unit" value={loaded.unit || '—'} />
+              <RowDivider />
+              <StatRow label="Chemical" value={loaded.chemical_name || '—'} />
+              <RowDivider />
+              <StatRow label="Expires" value={loaded.expiry_date || '—'} />
+              <RowDivider />
+              <StatRow label="Barcode" value={loaded.barcode || '—'} />
+            </Card>
+            {loaded.description ? <Text style={styles.readBody}>{loaded.description}</Text> : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>

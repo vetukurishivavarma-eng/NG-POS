@@ -201,6 +201,36 @@ export function requireCapability(capability: Capability) {
   };
 }
 
+/**
+ * Passes if the account holds ANY of the given capabilities.
+ *
+ * Used where an action has more than one door into it — e.g. changing a
+ * product's selling price needs `products.write` (which a cashier only holds
+ * while the product-entry window is open) OR `pricing.write` (which shop
+ * staff hold permanently). Either is enough to pass the guard; it is up to
+ * the handler to decide afterwards how much of the request it will actually
+ * honour for whichever capability let the caller through.
+ */
+export function requireAnyCapability(...capabilities: Capability[]) {
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      const user = currentUser(req);
+      const context = await capabilityContext(user);
+
+      if (capabilities.some((c) => context.capabilities.includes(c))) return next();
+
+      if (capabilities.includes('products.write') && !context.productEntryOpen) {
+        throw forbidden(
+          `Adding and editing products was open until ${context.productEntryUntil?.toDateString()}. Ask your administrator to extend it.`
+        );
+      }
+      throw forbidden('Your role does not allow this action.');
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
 export function currentUser(req: Request): AuthUser {
   if (!req.user) throw unauthorized();
   return req.user;
