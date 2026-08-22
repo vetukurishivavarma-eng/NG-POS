@@ -41,6 +41,18 @@ export interface Product {
    */
   default_selling_price?: number;
   default_expiry_date?: string | null;
+  /**
+   * Only present on the master record (`GET /products/:id` with no
+   * `store_id`) — every shop that has diverged from the base price and/or
+   * expiry above, so admin can see a shop quietly charging something else
+   * without checking each one by hand.
+   */
+  store_overrides?: {
+    store_id: string;
+    store_name: string;
+    price: number | null;
+    expiry_date: string | null;
+  }[];
 }
 
 /** `/products/with-stock/{store_id}` — product joined with that store's stock. */

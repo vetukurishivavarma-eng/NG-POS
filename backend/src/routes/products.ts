@@ -10,7 +10,7 @@ import {
   requireAnyCapability,
   requireCapability,
 } from '../middleware/auth.js';
-import { serializeProduct, serializeProductWithStock } from '../lib/serialize.js';
+import { num, serializeProduct, serializeProductWithStock } from '../lib/serialize.js';
 import { mayViewCosts } from '../lib/capabilities.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
@@ -76,6 +76,16 @@ const listQuery = z.object({
     .enum(['true', 'false', '1', '0'])
     .optional()
     .transform((value) => value === 'true' || value === '1'),
+  /**
+   * Default excludes a deactivated product — matching what the till already
+   * shows (`with-stock` filters `isActive: true`) so the same catalogue reads
+   * the same count everywhere. Same non-coerce trick as `uncategorized`:
+   * `z.coerce.boolean()` would read `?include_inactive=false` as true.
+   */
+  include_inactive: z
+    .enum(['true', 'false', '1', '0'])
+    .optional()
+    .transform((value) => value === 'true' || value === '1'),
   limit: z.coerce.number().min(1).max(1000).default(200),
   offset: z.coerce.number().min(0).default(0),
 });
@@ -110,6 +120,7 @@ productsRouter.get(
     const products = await prisma.product.findMany({
       where: {
         organizationId,
+        ...(q.include_inactive ? {} : { isActive: true }),
         ...(q.brand ? { brand: q.brand } : {}),
         ...(q.category
           ? { category: { in: stored.filter((c) => normaliseCategory(c) === head) } }
@@ -257,11 +268,48 @@ productsRouter.get(
     if (!product) throw notFound('Product not found.');
     const showCosts = await mayViewCosts(user);
 
-    // Without a store, this is the master record — same as before. With one,
-    // the editor is about to change a store-scoped field (price or expiry)
-    // and needs to see that store's own value, not the org-wide default.
+    // Without a store, this is the master record. A shop's own price or
+    // expiry silently outranks this on the till (see with-stock), and admin
+    // had no way to know one existed short of checking every shop by hand —
+    // this is genuinely confusing on a product like "master price K272, but
+    // Chilyabale quietly charges K271." So the master view also lists every
+    // shop that has diverged, price and/or expiry, right beside the base
+    // value it's overriding.
     if (!store_id) {
-      res.json(serializeProduct(product, showCosts));
+      const [overridePrices, overrideExpiries] = await Promise.all([
+        prisma.storePrice.findMany({
+          where: { productId: product.id },
+          select: { price: true, store: { select: { id: true, name: true } } },
+        }),
+        prisma.inventory.findMany({
+          where: { productId: product.id, expiryDate: { not: null } },
+          select: { expiryDate: true, store: { select: { id: true, name: true } } },
+        }),
+      ]);
+
+      const byStore = new Map<
+        string,
+        { store_id: string; store_name: string; price: number | null; expiry_date: string | null }
+      >();
+      for (const row of overridePrices) {
+        byStore.set(row.store.id, {
+          store_id: row.store.id,
+          store_name: row.store.name,
+          price: num(row.price),
+          expiry_date: null,
+        });
+      }
+      for (const row of overrideExpiries) {
+        const existing = byStore.get(row.store.id);
+        const expiry_date = row.expiryDate!.toISOString().slice(0, 10);
+        if (existing) existing.expiry_date = expiry_date;
+        else byStore.set(row.store.id, { store_id: row.store.id, store_name: row.store.name, price: null, expiry_date });
+      }
+
+      res.json({
+        ...serializeProduct(product, showCosts),
+        store_overrides: [...byStore.values()].sort((a, b) => a.store_name.localeCompare(b.store_name)),
+      });
       return;
     }
     await assertStoreAccess(user, store_id);

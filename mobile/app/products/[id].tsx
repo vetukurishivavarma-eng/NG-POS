@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -34,7 +34,7 @@ const TAX_OPTIONS: { value: TaxType; label: string }[] = [
 ];
 
 export default function ProductFormScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, store: initialStoreParam } = useLocalSearchParams<{ id: string; store?: string }>();
   const productId = typeof id === 'string' ? id : '';
   const isNew = productId === 'new';
 
@@ -116,6 +116,25 @@ export default function ProductFormScreen() {
     setExpiryDate(loaded.expiry_date ?? '');
     setIsActive(loaded.is_active);
   }, [loaded]);
+
+  // Arriving from a shop-scoped Products list (`?store=`) means the admin was
+  // just looking at this shop's own price/expiry there — land the "Applies
+  // to" picker on it and prefill the fields with what that shop actually has,
+  // instead of the master values the effect above just set. Once only, so it
+  // doesn't fight further picks made by hand.
+  const appliedInitialStore = useRef(false);
+  useEffect(() => {
+    if (appliedInitialStore.current || !loaded || !fullWrite || isNew) return;
+    if (typeof initialStoreParam !== 'string' || !initialStoreParam) return;
+    appliedInitialStore.current = true;
+    setPriceStoreId(initialStoreParam);
+    // No match means this shop has no override — it already follows the
+    // master value the effect above set, so there's nothing to overwrite.
+    const match = loaded.store_overrides?.find((o) => o.store_id === initialStoreParam);
+    if (!match) return;
+    if (match.price !== null) setSelling(moneyToInput(match.price));
+    if (match.expiry_date !== null) setExpiryDate(match.expiry_date);
+  }, [loaded, fullWrite, isNew, initialStoreParam]);
 
   // The scanner has no way to return a value through the router, so it parks
   // the code in a store; this picks it up when that modal closes.
@@ -546,6 +565,21 @@ export default function ProductFormScreen() {
                   }
                 />
               ) : null}
+              {/* The gap this screen used to hide: a shop's own price/expiry
+                  silently outranks the base value above on the till. Tapping
+                  a row loads that shop into the picker and its own values
+                  into the fields, ready to edit and save. */}
+              {!isNew && loaded?.store_overrides && loaded.store_overrides.length > 0 ? (
+                <StoreOverridesCard
+                  overrides={loaded.store_overrides}
+                  basePrice={loaded.selling_price}
+                  onPick={(o) => {
+                    setPriceStoreId(o.store_id);
+                    if (o.price !== null) setSelling(moneyToInput(o.price));
+                    setExpiryDate(o.expiry_date ?? '');
+                  }}
+                />
+              ) : null}
               {/* Margin is the cost price with subtraction applied, so it goes
                   wherever the cost price goes — same gate as the read-only
                   view above and the Cost price field itself. */}
@@ -673,6 +707,62 @@ export default function ProductFormScreen() {
   );
 }
 
+/* ------------------------------------------------------------- store overrides */
+
+/**
+ * Every shop that has diverged from the base price and/or expiry above.
+ * Exists because a shop's own value silently wins on the till — this is what
+ * makes "master says K272, Chilyabale quietly charges K271" visible instead
+ * of something admin only discovers by checking each shop by hand.
+ */
+interface StoreOverride {
+  store_id: string;
+  store_name: string;
+  price: number | null;
+  expiry_date: string | null;
+}
+
+function StoreOverridesCard({
+  overrides,
+  basePrice,
+  onPick,
+}: {
+  overrides: StoreOverride[];
+  basePrice: number;
+  onPick: (o: StoreOverride) => void;
+}) {
+  return (
+    <View style={styles.overridesCard}>
+      <View style={styles.overridesHead}>
+        <Icon name="alert-triangle" size={14} color={colors.accentDeep} />
+        <Text style={styles.overridesTitle}>
+          {overrides.length} shop{overrides.length === 1 ? '' : 's'} priced differently
+        </Text>
+      </View>
+      <Text style={styles.overridesHint}>
+        Base is {formatKwacha(basePrice)}. Tap a shop to load its own value into the fields above.
+      </Text>
+      {overrides.map((o) => (
+        <Pressable key={o.store_id} style={styles.overrideRow} onPress={() => onPick(o)}>
+          <Text style={styles.overrideStore} numberOfLines={1}>
+            {o.store_name}
+          </Text>
+          <View style={{ alignItems: 'flex-end' }}>
+            {o.price !== null ? (
+              <Text
+                style={[styles.overridePrice, o.price !== basePrice && styles.overridePriceDiff]}
+              >
+                {formatKwacha(o.price)}
+              </Text>
+            ) : null}
+            {o.expiry_date ? <Text style={styles.overrideExpiry}>exp {o.expiry_date}</Text> : null}
+          </View>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 /* -------------------------------------------------------------------- margin */
 
 /**
@@ -746,6 +836,36 @@ const styles = StyleSheet.create({
   scroll: { gap: spacing.xl, paddingBottom: spacing.xxl },
   section: { gap: spacing.sm },
   stack: { gap: spacing.lg },
+
+  overridesCard: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  overridesHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  overridesTitle: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    color: colors.accentDeep,
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  overridesHint: { fontFamily: font.regular, fontSize: 12, color: colors.textMuted, lineHeight: 17 },
+  overrideRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.accent,
+  },
+  overrideStore: { flex: 1, fontFamily: font.medium, fontSize: 13, color: colors.text, marginRight: spacing.sm },
+  overridePrice: { fontFamily: font.semibold, fontSize: 13, color: colors.text },
+  overridePriceDiff: { color: colors.danger },
+  overrideExpiry: { fontFamily: font.regular, fontSize: 10, color: colors.textFaint, marginTop: 1 },
 
   margin: {
     backgroundColor: colors.accentSoft,

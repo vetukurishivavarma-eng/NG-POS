@@ -215,6 +215,8 @@ export const products = {
     category?: string;
     /** Products not yet filed under any head. */
     uncategorized?: boolean;
+    /** Default excludes a deactivated product, matching what the till shows. */
+    include_inactive?: boolean;
   }) => api.get<Product[]>('/products', { params }).then((r) => r.data),
   /** `storeId` overlays that store's own price/expiry — see `Product.default_*`. */
   get: (id: string, storeId?: string) =>

@@ -503,6 +503,47 @@ describe('regressions', () => {
       expect(master.body.chemical_name).toBe('Cypermethrin 10%');
       expect(master.body.category).toBe('Pesticides');
     });
+
+    it('lists a diverged store on the master record, so admin can see it without checking every shop', async () => {
+      const product = world.products[0]!;
+      const otherStore = await prisma.store.create({
+        data: { organizationId: world.organizationId, name: 'Second Store', code: 'SECOND', city: 'Kitwe' },
+      });
+
+      await request(app)
+        .put(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`)
+        .send({ selling_price: product.price + 3, store_id: otherStore.id });
+
+      const master = await request(app)
+        .get(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+
+      expect(master.body.selling_price).toBe(product.price);
+      expect(master.body.store_overrides).toEqual([
+        { store_id: otherStore.id, store_name: 'Second Store', price: product.price + 3, expiry_date: null },
+      ]);
+    });
+  });
+
+  describe('the product list excludes inactive by default', () => {
+    it('leaves an inactive product out unless include_inactive is asked for', async () => {
+      const product = world.products[0]!;
+      await request(app)
+        .delete(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+
+      const defaultList = await request(app)
+        .get('/api/products')
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+      expect(defaultList.body.some((p: { id: string }) => p.id === product.id)).toBe(false);
+
+      const withInactive = await request(app)
+        .get('/api/products')
+        .query({ include_inactive: 'true' })
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+      expect(withInactive.body.some((p: { id: string }) => p.id === product.id)).toBe(true);
+    });
   });
 
   describe('login is throttled', () => {

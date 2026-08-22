@@ -5,13 +5,13 @@ import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
-import { products as productsApi } from '../../src/api/endpoints';
+import { products as productsApi, stores as storesApi } from '../../src/api/endpoints';
 import { PRODUCT_CATEGORIES } from '../../src/api/categories';
 import { useCan } from '../../src/store/auth';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/theme';
 import { Badge, Button, EmptyState, Icon, Loading } from '../../src/ui/components';
-import type { Product } from '../../src/api/types';
+import type { Product, ProductWithStock } from '../../src/api/types';
 
 const SEARCH_DEBOUNCE_MS = 300;
 const PAGE_LIMIT = 300;
@@ -28,6 +28,10 @@ export default function ProductsScreen() {
   const [brand, setBrand] = useState<string | null>(null);
   /** A category name, the UNFILED sentinel, or null for "all". */
   const [category, setCategory] = useState<string | null>(null);
+  /** Off by default: a deactivated product no longer inflates "N products". */
+  const [includeInactive, setIncludeInactive] = useState(false);
+  /** null = All Shops (the org-wide master list, today's only mode). */
+  const [storeId, setStoreId] = useState<string | null>(null);
 
   // Search runs on the server so it reaches the whole catalogue, but only after
   // typing settles — a request per keystroke is what kills a rural link.
@@ -36,23 +40,50 @@ export default function ProductsScreen() {
     return () => clearTimeout(timer);
   }, [search]);
 
+  const storesQuery = useQuery({ queryKey: ['stores', 'list'], queryFn: () => storesApi.list() });
+
+  // `with-stock` has no search/brand/category/inactive params of its own — it's
+  // one store's whole active catalogue with that store's own price and stock
+  // baked in, which is the point: browsing "in a shop" should show exactly
+  // what that shop would sell at, not the master price. The same filters are
+  // then applied client-side below so the toolbar behaves the same either way.
   const query = useQuery({
-    queryKey: ['products', 'list', term, brand, category],
+    queryKey: ['products', 'list', term, brand, category, includeInactive, storeId],
     queryFn: () =>
-      productsApi.list({
-        limit: PAGE_LIMIT,
-        ...(term ? { search: term } : {}),
-        ...(brand ? { brand } : {}),
-        ...(category === UNFILED
-          ? { uncategorized: true }
-          : category
-            ? { category }
-            : {}),
-      }),
+      storeId
+        ? productsApi.withStock(storeId)
+        : productsApi.list({
+            limit: PAGE_LIMIT,
+            ...(term ? { search: term } : {}),
+            ...(brand ? { brand } : {}),
+            ...(category === UNFILED
+              ? { uncategorized: true }
+              : category
+                ? { category }
+                : {}),
+            include_inactive: includeInactive,
+          }),
     // Keeps the previous rows on screen while a new filter loads, so the list
     // doesn't blink back to a spinner on every debounced keystroke.
     placeholderData: keepPreviousData,
   });
+
+  const filteredRows = useMemo(() => {
+    const source = query.data ?? [];
+    if (!storeId) return source;
+    const needle = term.trim().toLowerCase();
+    return source.filter((p) => {
+      if (brand && p.brand !== brand) return false;
+      if (category === UNFILED && p.category) return false;
+      if (category && category !== UNFILED && p.category !== category) return false;
+      if (!needle) return true;
+      return (
+        p.name.toLowerCase().includes(needle) ||
+        p.sku.toLowerCase().includes(needle) ||
+        (p.barcode ?? '').toLowerCase().includes(needle)
+      );
+    });
+  }, [query.data, storeId, term, brand, category]);
 
   // Nested under ['products'] so a write on the edit screen refreshes the brand
   // chips too — a new brand appears the moment its first product is saved.
@@ -68,7 +99,7 @@ export default function ProductsScreen() {
     queryFn: () => productsApi.categories(),
   });
 
-  const rows = query.data ?? [];
+  const rows = filteredRows;
   const brandOptions = useMemo(
     () => (brands.data ?? []).filter((b) => Boolean(b && b.trim())),
     [brands.data]
@@ -109,6 +140,36 @@ export default function ProductsScreen() {
             </Pressable>
           ) : null}
         </View>
+
+        {/* Browsing "in a shop" shows that shop's own price and stock, not
+            the master — the same override the till uses. Also what makes
+            Add/Edit shop-wise: opening a product from here carries the shop
+            through to its screen. */}
+        {(storesQuery.data ?? []).length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.brandRow}
+          >
+            <BrandChip label="All Shops" active={storeId === null} onPress={() => setStoreId(null)} />
+            {(storesQuery.data ?? []).map((s) => (
+              <BrandChip
+                key={s.id}
+                label={s.name}
+                active={storeId === s.id}
+                onPress={() => setStoreId(storeId === s.id ? null : s.id)}
+              />
+            ))}
+          </ScrollView>
+        ) : null}
+
+        {!storeId ? (
+          <BrandChip
+            label={includeInactive ? 'Showing inactive' : 'Include inactive'}
+            active={includeInactive}
+            onPress={() => setIncludeInactive((v) => !v)}
+          />
+        ) : null}
 
         {brandOptions.length > 0 ? (
           <ScrollView
@@ -200,6 +261,9 @@ export default function ProductsScreen() {
                 <Text style={styles.countText}>
                   {rows.length} product{rows.length === 1 ? '' : 's'}
                   {brand ? ` · ${brand}` : ''}
+                  {storeId
+                    ? ` · ${storesQuery.data?.find((s) => s.id === storeId)?.name ?? 'this shop'}`
+                    : ''}
                 </Text>
                 {inactiveCount > 0 ? (
                   <Text style={styles.countMuted}>{inactiveCount} inactive</Text>
@@ -227,7 +291,7 @@ export default function ProductsScreen() {
               }
             />
           }
-          renderItem={({ item }) => <ProductRow product={item} />}
+          renderItem={({ item }) => <ProductRow product={item} storeId={storeId} />}
         />
       )}
 
@@ -245,14 +309,18 @@ export default function ProductsScreen() {
   );
 }
 
-function ProductRow({ product }: { product: Product }) {
+function ProductRow({ product, storeId }: { product: Product | ProductWithStock; storeId: string | null }) {
   const inactive = !product.is_active;
   const meta = [product.sku, product.brand].filter(Boolean).join('  ·  ');
 
   return (
     <Pressable
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-      onPress={() => router.push(`/products/${product.id}`)}
+      onPress={() =>
+        router.push(
+          storeId ? `/products/${product.id}?store=${storeId}` : `/products/${product.id}`
+        )
+      }
     >
       <View style={[styles.rowIcon, inactive && styles.rowIconMuted]}>
         <Icon name="package" size={17} color={inactive ? colors.textFaint : colors.primary} />
