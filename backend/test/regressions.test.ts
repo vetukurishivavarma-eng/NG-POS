@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 
 import { api, clientRef, PASSWORD, seedWorld, stockOf, type World } from './fixtures.js';
+import { prisma } from '../src/prisma.js';
 
 /**
  * One test per hole found by probing the running server on 2026-08-04.
@@ -377,6 +378,40 @@ describe('regressions', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.detail).toMatch(/exceeds the line total/i);
+    });
+  });
+
+  describe('editing a product price clears any stale store override', () => {
+    it('with-stock reflects the new price even when a StorePrice override existed', async () => {
+      const product = world.products[0]!;
+
+      // Simulate a shop-specific override the way a bulk price-sheet upload
+      // would create one.
+      await prisma.storePrice.create({
+        data: { storeId: world.storeId, productId: product.id, price: product.price + 5 },
+      });
+
+      const before = await request(app)
+        .get(`/api/products/with-stock/${world.storeId}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+      const beforeItem = before.body.find((p: { id: string }) => p.id === product.id);
+      expect(beforeItem.selling_price).toBe(product.price + 5);
+
+      const newPrice = product.price + 20;
+      const edit = await request(app)
+        .put(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`)
+        .send({ selling_price: newPrice });
+      expect(edit.status).toBe(200);
+
+      const after = await request(app)
+        .get(`/api/products/with-stock/${world.storeId}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+      const afterItem = after.body.find((p: { id: string }) => p.id === product.id);
+
+      // The bug: this stayed at product.price + 5 because the override was
+      // never cleared, so the till kept charging the old price forever.
+      expect(afterItem.selling_price).toBe(newPrice);
     });
   });
 

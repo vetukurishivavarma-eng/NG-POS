@@ -317,29 +317,42 @@ productsRouter.put(
     // get from an account that cannot see them.
     const fullWrite = showCosts;
 
-    const product = await prisma.product.update({
-      where: { id: existing.id },
-      data: fullWrite
-        ? {
-            name: body.name,
-            description: body.description,
-            sku: body.sku,
-            barcode: body.barcode,
-            brand: body.brand,
-            category: body.category,
-            chemicalName: body.chemical_name,
-            expiryDate: body.expiry_date,
-            costPrice: body.cost_price,
-            transportCost: body.transport_cost,
-            sellingPrice: body.selling_price,
-            taxType: body.tax_type,
-            unit: body.unit,
-            isActive: body.is_active,
-            imageBase64: body.image_base64,
-          }
-        : {
-            sellingPrice: body.selling_price,
-          },
+    // A per-shop StorePrice override (set by a past bulk price-sheet upload)
+    // otherwise wins over this route forever — `with-stock` prefers it over
+    // Product.sellingPrice, so an edit here would silently never reach the
+    // till. Editing the base price here is the admin correcting the price,
+    // so it clears any shop-specific override rather than leaving it stale.
+    const product = await prisma.$transaction(async (tx) => {
+      const updated = await tx.product.update({
+        where: { id: existing.id },
+        data: fullWrite
+          ? {
+              name: body.name,
+              description: body.description,
+              sku: body.sku,
+              barcode: body.barcode,
+              brand: body.brand,
+              category: body.category,
+              chemicalName: body.chemical_name,
+              expiryDate: body.expiry_date,
+              costPrice: body.cost_price,
+              transportCost: body.transport_cost,
+              sellingPrice: body.selling_price,
+              taxType: body.tax_type,
+              unit: body.unit,
+              isActive: body.is_active,
+              imageBase64: body.image_base64,
+            }
+          : {
+              sellingPrice: body.selling_price,
+            },
+      });
+
+      if (body.selling_price !== undefined) {
+        await tx.storePrice.deleteMany({ where: { productId: existing.id } });
+      }
+
+      return updated;
     });
 
     res.json(serializeProduct(product, showCosts));
