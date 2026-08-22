@@ -23,8 +23,8 @@ describe('regressions', () => {
   const sell = (token: string, body: Record<string, unknown>) =>
     request(app).post('/api/transactions').set('Authorization', `Bearer ${token}`).send(body);
 
-  describe('a till cannot dictate prices', () => {
-    it('ignores unit_price and charges the catalogue price', async () => {
+  describe('a till may reprice a line, but never below cost', () => {
+    it('rejects a price below cost price, for a cashier same as anyone', async () => {
       const product = world.products[0]!;
 
       const res = await sell(world.tokens.cashier, {
@@ -34,9 +34,33 @@ describe('regressions', () => {
         payments: [{ method: 'cash', amount: 0.01 }],
       });
 
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('PRICE_BELOW_COST');
+    });
+
+    it('honours an override at or above cost, and it becomes the new catalogue price', async () => {
+      const { prisma } = await import('../src/prisma.js');
+      const product = world.products[1]!;
+      const newPrice = product.price - 10; // still comfortably above cost (price / 2)
+
+      const res = await sell(world.tokens.cashier, {
+        store_id: world.storeId,
+        client_reference: clientRef('reprice'),
+        items: [{ product_id: product.id, quantity: 1, unit_price: newPrice }],
+        payments: [{ method: 'cash', amount: newPrice }],
+      });
+
       expect(res.status).toBe(201);
-      expect(res.body.total).toBe(product.price);
-      expect(res.body.items[0].unit_price).toBe(product.price);
+      expect(res.body.items[0].unit_price).toBe(newPrice);
+
+      const catalogue = await prisma.product.findUnique({ where: { id: product.id } });
+      expect(catalogue?.sellingPrice.toNumber()).toBe(newPrice);
+
+      const withStock = await request(app)
+        .get(`/api/products/with-stock/${world.storeId}`)
+        .set('Authorization', `Bearer ${world.tokens.cashier}`);
+      const item = withStock.body.find((p: { id: string }) => p.id === product.id);
+      expect(item.selling_price).toBe(newPrice);
     });
 
     it('still accepts the extra fields the mobile app sends', async () => {

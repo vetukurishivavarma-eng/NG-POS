@@ -74,9 +74,11 @@ transactionsRouter.get(
  *
  * Deliberately narrower than `SaleInput`:
  *
- *  - **No `unit_price`.** The service accepts one so a refund can be priced at
- *    what the customer originally paid, but exposing it here let any cashier
- *    sell a K85 item for one ngwee. Prices come from the catalogue.
+ *  - **`unit_price` is allowed, but floored at the product's cost price.**
+ *    Every role (cashier included, per the client's explicit ask) may reprice
+ *    a line at the point of sale; `createSale` rejects anything below
+ *    `product.costPrice` server-side regardless of what the till believes the
+ *    cost is, so a stale or tampered client still cannot sell at a loss.
  *  - **`sale` only.** A client posting `transaction_type: "refund"` walked
  *    straight past the manager approval on `POST /:id/refund`, minting negative
  *    money and stock out of nothing. Reversals go through that route.
@@ -90,6 +92,7 @@ const saleSchema = z.object({
       z.object({
         product_id: z.string().uuid(),
         quantity: z.number().positive(),
+        unit_price: z.number().positive().optional(),
         discount_amount: z.number().min(0).optional(),
       })
     )

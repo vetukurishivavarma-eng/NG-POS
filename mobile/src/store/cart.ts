@@ -17,6 +17,13 @@ export interface CartLine {
   quantity: number;
   /** Per-line discount in Kwacha, not a percentage. */
   discount: number;
+  /**
+   * Reprices this line at checkout. Server-floored at the product's cost
+   * price for every role (see `createSale` in the backend) — once accepted,
+   * it also becomes the new catalogue selling price and clears any per-shop
+   * override, so the Sell screen and the product catalogue both pick it up.
+   */
+  priceOverride?: number;
 }
 
 interface CartState {
@@ -28,6 +35,7 @@ interface CartState {
   add: (product: ProductWithStock, quantity?: number) => void;
   setQuantity: (productId: string, quantity: number) => void;
   setDiscount: (productId: string, discount: number) => void;
+  setPriceOverride: (productId: string, price: number | undefined) => void;
   remove: (productId: string) => void;
   clear: () => void;
   setCustomer: (name: string, phone?: string) => void;
@@ -71,6 +79,15 @@ export const useCart = create<CartState>((set) => ({
     set((s) => ({
       lines: s.lines.map((l) =>
         l.product.id === productId ? { ...l, discount: Math.max(0, discount) } : l
+      ),
+    })),
+
+  setPriceOverride: (productId, price) =>
+    set((s) => ({
+      lines: s.lines.map((l) =>
+        l.product.id === productId
+          ? { ...l, priceOverride: price === undefined || price < 0 ? undefined : price }
+          : l
       ),
     })),
 
@@ -127,8 +144,24 @@ export interface CartTotals {
   itemCount: number;
 }
 
+export function unitPriceOf(line: CartLine): number {
+  return line.priceOverride ?? line.product.selling_price;
+}
+
+/**
+ * True once a typed-in price is known to undercut cost. `cost_price` reads
+ * as 0 for an account that cannot see costs, so this is a soft client-side
+ * hint only — the server floors it authoritatively either way and returns a
+ * cost-free message to such an account (see `createSale`'s `PRICE_BELOW_COST`).
+ */
+export function isBelowCost(line: CartLine): boolean {
+  const price = line.priceOverride;
+  return price !== undefined && line.product.cost_price > 0 && price < line.product.cost_price;
+}
+
 export function lineToTransactionItem(line: CartLine): TransactionItem {
-  const gross = line.product.selling_price * line.quantity;
+  const unitPrice = unitPriceOf(line);
+  const gross = unitPrice * line.quantity;
   const net = Math.max(0, gross - line.discount);
 
   let taxable = 0;
@@ -149,7 +182,7 @@ export function lineToTransactionItem(line: CartLine): TransactionItem {
     sku: line.product.sku,
     brand: line.product.brand ?? null,
     quantity: line.quantity,
-    unit_price: line.product.selling_price,
+    unit_price: unitPrice,
     discount_amount: round2(line.discount),
     tax_type: line.product.tax_type,
     tax_amount: round2(tax),

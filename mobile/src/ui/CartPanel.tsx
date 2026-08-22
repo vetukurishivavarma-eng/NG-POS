@@ -1,7 +1,15 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { computeTotals, maxSellable, PAYMENT_METHODS, useCart } from '../store/cart';
+import {
+  computeTotals,
+  isBelowCost,
+  maxSellable,
+  PAYMENT_METHODS,
+  unitPriceOf,
+  useCart,
+  type CartLine,
+} from '../store/cart';
 import { useCheckout } from '../hooks/useCheckout';
 import { useSync } from '../db/sync';
 import { colors, font, formatKwacha, radius, spacing, splitAmount } from '../theme';
@@ -14,6 +22,7 @@ import { Button, EmptyState, Icon, QtyStepper } from './components';
 export function CartPanel({ onDone, docked = false }: { onDone?: () => void; docked?: boolean }) {
   const lines = useCart((s) => s.lines);
   const setQuantity = useCart((s) => s.setQuantity);
+  const setPriceOverride = useCart((s) => s.setPriceOverride);
   const remove = useCart((s) => s.remove);
   const clearCart = useCart((s) => s.clear);
   const customerName = useCart((s) => s.customerName);
@@ -23,6 +32,7 @@ export function CartPanel({ onDone, docked = false }: { onDone?: () => void; doc
   const { method, setMethod, busy, complete, canComplete } = useCheckout(onDone);
   const totals = useMemo(() => computeTotals(lines), [lines]);
   const amount = splitAmount(totals.total);
+  const hasBelowCostLine = lines.some(isBelowCost);
 
   if (lines.length === 0) {
     return (
@@ -43,47 +53,13 @@ export function CartPanel({ onDone, docked = false }: { onDone?: () => void; doc
         keyboardShouldPersistTaps="handled"
       >
         {lines.map((line) => (
-          <View key={line.product.id} style={styles.line}>
-            <View style={styles.lineTop}>
-              <Text style={styles.lineName} numberOfLines={2}>
-                {line.product.name}
-              </Text>
-              <Pressable onPress={() => remove(line.product.id)} hitSlop={10}>
-                <Icon name="x" size={16} color={colors.textFaint} />
-              </Pressable>
-            </View>
-
-            <View style={styles.lineBottom}>
-              <QtyStepper
-                value={line.quantity}
-                max={maxSellable(line.product)}
-                onChange={(next) => setQuantity(line.product.id, next)}
-              />
-
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.lineTotal}>
-                  {formatKwacha(line.product.selling_price * line.quantity)}
-                </Text>
-                <Text style={styles.lineUnit}>
-                  {formatKwacha(line.product.selling_price)} each
-                  {line.product.tax_type === 'vat' ? ' · VAT' : ''}
-                </Text>
-              </View>
-            </View>
-
-            {/* The cap is only obvious once you have hit it, so say why the plus
-                has stopped responding rather than leaving it looking broken. */}
-            {line.quantity >= maxSellable(line.product) ? (
-              <View style={styles.capNote}>
-                <Icon name="alert-circle" size={12} color={colors.accentDeep} />
-                <Text style={styles.capText}>
-                  {line.product.quantity > 0
-                    ? `All ${line.product.quantity} in stock are on this sale.`
-                    : 'This is oversold to the limit — count the shelf before selling more.'}
-                </Text>
-              </View>
-            ) : null}
-          </View>
+          <CartLineRow
+            key={line.product.id}
+            line={line}
+            onQuantity={(next) => setQuantity(line.product.id, next)}
+            onPrice={(next) => setPriceOverride(line.product.id, next)}
+            onRemove={() => remove(line.product.id)}
+          />
         ))}
 
         <View style={styles.customerField}>
@@ -149,9 +125,120 @@ export function CartPanel({ onDone, docked = false }: { onDone?: () => void; doc
           icon="check-circle"
           onPress={complete}
           loading={busy}
-          disabled={!canComplete}
+          disabled={!canComplete || hasBelowCostLine}
         />
       </View>
+    </View>
+  );
+}
+
+/**
+ * One cart line, with its own tap-to-edit selling price. Every logged-in
+ * role may reprice a line here — the client asked for this to apply to admin
+ * and every shop login alike, with no in-app cap; the backend floors any
+ * override at the product's cost price regardless of role, and an accepted
+ * override becomes the new catalogue price, so the Sell screen and the
+ * product screen pick it up too.
+ */
+function CartLineRow({
+  line,
+  onQuantity,
+  onPrice,
+  onRemove,
+}: {
+  line: CartLine;
+  onQuantity: (next: number) => void;
+  onPrice: (next: number | undefined) => void;
+  onRemove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(unitPriceOf(line)));
+  const belowCost = isBelowCost(line);
+
+  const commit = () => {
+    setEditing(false);
+    const parsed = Number(draft.replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setDraft(String(unitPriceOf(line)));
+      return;
+    }
+    onPrice(parsed === line.product.selling_price ? undefined : parsed);
+  };
+
+  return (
+    <View style={styles.line}>
+      <View style={styles.lineTop}>
+        <Text style={styles.lineName} numberOfLines={2}>
+          {line.product.name}
+        </Text>
+        <Pressable onPress={onRemove} hitSlop={10}>
+          <Icon name="x" size={16} color={colors.textFaint} />
+        </Pressable>
+      </View>
+
+      <View style={styles.lineBottom}>
+        <QtyStepper
+          value={line.quantity}
+          max={maxSellable(line.product)}
+          onChange={onQuantity}
+        />
+
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={styles.lineTotal}>{formatKwacha(unitPriceOf(line) * line.quantity)}</Text>
+
+          {editing ? (
+            <View style={styles.priceEditRow}>
+              <Text style={styles.priceEditPrefix}>K</Text>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                onBlur={commit}
+                onSubmitEditing={commit}
+                keyboardType="decimal-pad"
+                autoFocus
+                selectTextOnFocus
+                style={styles.priceEditInput}
+              />
+            </View>
+          ) : (
+            <Pressable
+              onPress={() => {
+                setDraft(String(unitPriceOf(line)));
+                setEditing(true);
+              }}
+              hitSlop={6}
+            >
+              <Text style={[styles.lineUnit, styles.lineUnitEditable]}>
+                {formatKwacha(unitPriceOf(line))} each
+                {line.product.tax_type === 'vat' ? ' · VAT' : ''}
+                {line.priceOverride !== undefined ? ' · edited' : ''}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+
+      {belowCost ? (
+        <View style={styles.capNote}>
+          <Icon name="alert-circle" size={12} color={colors.danger} />
+          <Text style={[styles.capText, { color: colors.danger }]}>
+            Below cost price — the sale will be rejected until this is raised.
+          </Text>
+        </View>
+      ) : null}
+
+      {/* The cap is only obvious once you have hit it, so say why the plus
+          has stopped responding rather than leaving it looking broken. */}
+      {line.quantity >= maxSellable(line.product) ? (
+        <View style={styles.capNote}>
+          <Icon name="alert-circle" size={12} color={colors.accentDeep} />
+          <Text style={styles.capText}>
+            {line.product.quantity > 0
+              ? `All ${line.product.quantity} in stock are on this sale.`
+              : 'This is oversold to the limit — count the shelf before selling more.'}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -236,6 +323,24 @@ const styles = StyleSheet.create({
 
   lineTotal: { fontFamily: font.bold, fontSize: 15, color: colors.text },
   lineUnit: { fontFamily: font.regular, fontSize: 11, color: colors.textMuted, marginTop: 1 },
+  lineUnitEditable: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
+
+  priceEditRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 1,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.primary,
+  },
+  priceEditPrefix: { fontFamily: font.medium, fontSize: 11, color: colors.textMuted, marginRight: 2 },
+  priceEditInput: {
+    fontFamily: font.semibold,
+    fontSize: 12,
+    color: colors.text,
+    minWidth: 48,
+    padding: 0,
+    textAlign: 'right',
+  },
 
   customerField: {
     flexDirection: 'row',

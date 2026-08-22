@@ -4,6 +4,7 @@ import { prisma, type TxClient } from '../prisma.js';
 import { env } from '../env.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { dateKeyIn } from '../lib/time.js';
+import { mayViewCosts } from '../lib/capabilities.js';
 import type { AuthUser } from '../middleware/auth.js';
 
 const D = Prisma.Decimal;
@@ -155,6 +156,12 @@ export async function createSale(user: AuthUser, input: SaleInput) {
       const isReversal = input.transaction_type === 'refund' || input.transaction_type === 'credit_note';
       const sign = isReversal ? -1 : 1;
 
+      // Only checked/used for a live sale's own override, never for a refund's
+      // derived unit_price (that one is history, already validated when the
+      // original sale was made).
+      const repriceOverride = !isReversal && input.items.some((i) => i.unit_price !== undefined);
+      const showCosts = repriceOverride ? await mayViewCosts(user) : false;
+
       let subtotal = new D(0);
       let discountTotal = new D(0);
       let taxTotal = new D(0);
@@ -168,10 +175,35 @@ export async function createSale(user: AuthUser, input: SaleInput) {
         if (line.quantity <= 0) throw badRequest(`Quantity must be positive for ${product.name}.`);
 
         const quantity = new D(line.quantity);
-        const unitPrice =
-          line.unit_price !== undefined
-            ? new D(line.unit_price)
-            : (priceById.get(product.id) ?? product.sellingPrice);
+        const overriding = !isReversal && line.unit_price !== undefined;
+        const unitPrice = overriding
+          ? new D(line.unit_price!)
+          : (priceById.get(product.id) ?? product.sellingPrice);
+
+        // A price override may never undercut what the item cost to land on
+        // the shelf, for any role — the client explicitly asked for this to
+        // apply to admin and every shop login alike, with no per-role cap
+        // like the discount one below. The message omits the actual cost
+        // figure for an account that cannot otherwise see costs, so this
+        // floor can't be used to read the cost price back out.
+        if (overriding && unitPrice.lt(product.costPrice)) {
+          throw badRequest(
+            showCosts
+              ? `${product.name} cannot be sold below its cost price of ${round2(product.costPrice).toFixed(2)}.`
+              : `${product.name} cannot be sold below its cost price.`,
+            'PRICE_BELOW_COST'
+          );
+        }
+
+        // The override is also the new catalogue price from here on — the
+        // client asked that a price changed at the till update both the Sell
+        // screen and the product catalogue, not just this one receipt. Clears
+        // any per-shop StorePrice the same way a catalogue edit does (see
+        // PUT /products/:id), so a stale override can't keep outranking it.
+        if (overriding) {
+          await tx.product.update({ where: { id: product.id }, data: { sellingPrice: unitPrice } });
+          await tx.storePrice.deleteMany({ where: { productId: product.id } });
+        }
 
         const gross = unitPrice.mul(quantity);
         const discount = new D(line.discount_amount ?? 0);
