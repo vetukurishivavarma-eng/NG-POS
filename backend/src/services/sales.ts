@@ -195,14 +195,18 @@ export async function createSale(user: AuthUser, input: SaleInput) {
           );
         }
 
-        // The override is also the new catalogue price from here on — the
-        // client asked that a price changed at the till update both the Sell
-        // screen and the product catalogue, not just this one receipt. Clears
-        // any per-shop StorePrice the same way a catalogue edit does (see
-        // PUT /products/:id), so a stale override can't keep outranking it.
+        // The override becomes this STORE's new standing price from here on —
+        // the client asked that a price changed at the till update the Sell
+        // screen and "catalogue" for that shop, but explicitly NOT change any
+        // other shop's price. So this writes/updates only this store's
+        // StorePrice row, never Product.sellingPrice (the org-wide base) and
+        // never another store's row.
         if (overriding) {
-          await tx.product.update({ where: { id: product.id }, data: { sellingPrice: unitPrice } });
-          await tx.storePrice.deleteMany({ where: { productId: product.id } });
+          await tx.storePrice.upsert({
+            where: { storeId_productId: { storeId: store.id, productId: product.id } },
+            create: { storeId: store.id, productId: product.id, price: unitPrice },
+            update: { price: unitPrice },
+          });
         }
 
         const gross = unitPrice.mul(quantity);
