@@ -216,7 +216,11 @@ export const products = {
     /** Products not yet filed under any head. */
     uncategorized?: boolean;
   }) => api.get<Product[]>('/products', { params }).then((r) => r.data),
-  get: (id: string) => api.get<Product>(`/products/${id}`).then((r) => r.data),
+  /** `storeId` overlays that store's own price/expiry — see `Product.default_*`. */
+  get: (id: string, storeId?: string) =>
+    api
+      .get<Product>(`/products/${id}`, storeId ? { params: { store_id: storeId } } : undefined)
+      .then((r) => r.data),
   withStock: (storeId: string) =>
     api.get<ProductWithStock[]>(`/products/with-stock/${storeId}`).then((r) => r.data),
   brands: () => api.get<string[]>('/products/brands').then((r) => r.data),

@@ -122,13 +122,14 @@ export function serializeProduct(p: {
   };
 }
 
-/** Product joined with a store's stock level and any store-specific price. */
+/** Product joined with a store's stock level, its own price and its own expiry. */
 export function serializeProductWithStock(
   p: Parameters<typeof serializeProduct>[0],
   quantity: Prisma.Decimal | number,
   reorderLevel: Prisma.Decimal | number,
   overridePrice: Prisma.Decimal | null | undefined,
-  showCosts: boolean
+  showCosts: boolean,
+  overrideExpiry?: Date | null
 ) {
   const base = serializeProduct(p, showCosts);
   return {
@@ -136,6 +137,9 @@ export function serializeProductWithStock(
     selling_price: overridePrice ? num(overridePrice) : base.selling_price,
     /** Present so a client can tell an override from the catalogue price. */
     default_selling_price: base.selling_price,
+    expiry_date: overrideExpiry ? overrideExpiry.toISOString().slice(0, 10) : base.expiry_date,
+    /** Present so a client can tell this store's own expiry from the master default. */
+    default_expiry_date: base.expiry_date,
     quantity: num(quantity),
     reorder_level: num(reorderLevel),
   };

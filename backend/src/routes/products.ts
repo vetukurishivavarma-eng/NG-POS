@@ -12,7 +12,7 @@ import {
 } from '../middleware/auth.js';
 import { serializeProduct, serializeProductWithStock } from '../lib/serialize.js';
 import { mayViewCosts } from '../lib/capabilities.js';
-import { notFound } from '../lib/errors.js';
+import { badRequest, notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
 import {
   CATEGORY_LIST_HINT,
@@ -223,7 +223,7 @@ productsRouter.get(
       where: { organizationId: user.organizationId, isActive: true },
       orderBy: { name: 'asc' },
       include: {
-        inventory: { where: { storeId }, select: { quantity: true, reorderLevel: true } },
+        inventory: { where: { storeId }, select: { quantity: true, reorderLevel: true, expiryDate: true } },
         prices: { where: { storeId }, select: { price: true } },
       },
     });
@@ -236,21 +236,57 @@ productsRouter.get(
           p.inventory[0]?.quantity ?? 0,
           p.inventory[0]?.reorderLevel ?? 10,
           p.prices[0]?.price ?? null,
-          showCosts
+          showCosts,
+          p.inventory[0]?.expiryDate ?? null
         )
       )
     );
   })
 );
 
+const productDetailQuery = z.object({ store_id: z.string().uuid().optional() });
+
 productsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
+    const { store_id } = productDetailQuery.parse(req.query);
+    const user = currentUser(req);
     const product = await prisma.product.findFirst({
-      where: { id: req.params.id, organizationId: currentUser(req).organizationId },
+      where: { id: req.params.id, organizationId: user.organizationId },
     });
     if (!product) throw notFound('Product not found.');
-    res.json(serializeProduct(product, await mayViewCosts(currentUser(req))));
+    const showCosts = await mayViewCosts(user);
+
+    // Without a store, this is the master record — same as before. With one,
+    // the editor is about to change a store-scoped field (price or expiry)
+    // and needs to see that store's own value, not the org-wide default.
+    if (!store_id) {
+      res.json(serializeProduct(product, showCosts));
+      return;
+    }
+    await assertStoreAccess(user, store_id);
+
+    const [price, inventory] = await Promise.all([
+      prisma.storePrice.findUnique({
+        where: { storeId_productId: { storeId: store_id, productId: product.id } },
+        select: { price: true },
+      }),
+      prisma.inventory.findUnique({
+        where: { storeId_productId: { storeId: store_id, productId: product.id } },
+        select: { quantity: true, reorderLevel: true, expiryDate: true },
+      }),
+    ]);
+
+    res.json(
+      serializeProductWithStock(
+        product,
+        inventory?.quantity ?? 0,
+        inventory?.reorderLevel ?? 10,
+        price?.price ?? null,
+        showCosts,
+        inventory?.expiryDate ?? null
+      )
+    );
   })
 );
 
@@ -292,7 +328,10 @@ productsRouter.put(
   // handler; which one applies decides how much of the body gets honoured.
   requireAnyCapability('products.write', 'pricing.write'),
   asyncHandler(async (req, res) => {
-    const body = productSchema.partial().parse(req.body);
+    const body = productSchema
+      .partial()
+      .extend({ store_id: z.string().uuid().optional() })
+      .parse(req.body);
     const user = currentUser(req);
     const organizationId = user.organizationId;
 
@@ -310,18 +349,39 @@ productsRouter.put(
     const showCosts = await mayViewCosts(user);
 
     // The same trust tier that may see the buying price is the only one that
-    // may rewrite the product record itself (name, SKU, category, ...). Every
-    // other account — every ordinary shop login — reaches this route to move
-    // the shelf price and nothing else; the rest of the body is silently
-    // dropped rather than rejected, the same treatment cost/transport already
-    // get from an account that cannot see them.
+    // may rewrite the identity/commerce fields of the product record itself
+    // (name, SKU, barcode, tax type, cost, ...). A shop login reaches this
+    // route with `pricing.write` and a narrower set: selling price and expiry
+    // (both store-scoped, below), plus chemical name and category, which the
+    // client asked to always update the shared master list regardless of who
+    // edits them — a product with a different name/chemical/category per shop
+    // reads as a different product, which is worse than one shop's edit
+    // reaching everyone.
     const fullWrite = showCosts;
 
-    // A per-shop StorePrice override (set by a past bulk price-sheet upload)
-    // otherwise wins over this route forever — `with-stock` prefers it over
-    // Product.sellingPrice, so an edit here would silently never reach the
-    // till. Editing the base price here is the admin correcting the price,
-    // so it clears any shop-specific override rather than leaving it stale.
+    // Where a `selling_price` or `expiry_date` edit lands, so it never spills
+    // onto a shop that did not ask for it:
+    //  - A shop login always writes just their own store's row (StorePrice /
+    //    Inventory.expiryDate) — the app sends the store it is currently
+    //    signed into as `store_id`, never the org-wide Product fields. Batches
+    //    (and hence expiry) genuinely differ by shop, and the client was
+    //    explicit that a price or expiry change must not touch another shop.
+    //  - An admin/warehouse account picks a store from a list in the app;
+    //    that edit is scoped the same way. Only when they leave the picker on
+    //    "All Shops" (no `store_id`) does it become the org-wide base/master
+    //    value — and, same as before, that clears every store's own
+    //    override, since a new base value with a stale override still
+    //    outranking it would be worse than no base value at all.
+    const wantsStoreScopedField = body.selling_price !== undefined || body.expiry_date !== undefined;
+    let storeScopeId: string | null = null;
+    if (wantsStoreScopedField) {
+      if (!fullWrite && !body.store_id) {
+        throw badRequest('store_id is required to change the selling price or expiry date.');
+      }
+      storeScopeId = body.store_id ?? null;
+      if (storeScopeId) await assertStoreAccess(user, storeScopeId);
+    }
+
     const product = await prisma.$transaction(async (tx) => {
       const updated = await tx.product.update({
         where: { id: existing.id },
@@ -334,22 +394,44 @@ productsRouter.put(
               brand: body.brand,
               category: body.category,
               chemicalName: body.chemical_name,
-              expiryDate: body.expiry_date,
+              expiryDate: storeScopeId ? undefined : body.expiry_date,
               costPrice: body.cost_price,
               transportCost: body.transport_cost,
-              sellingPrice: body.selling_price,
+              sellingPrice: storeScopeId ? undefined : body.selling_price,
               taxType: body.tax_type,
               unit: body.unit,
               isActive: body.is_active,
               imageBase64: body.image_base64,
             }
           : {
-              sellingPrice: body.selling_price,
+              // Always the master list — never store-scoped.
+              category: body.category,
+              chemicalName: body.chemical_name,
             },
       });
 
       if (body.selling_price !== undefined) {
-        await tx.storePrice.deleteMany({ where: { productId: existing.id } });
+        if (storeScopeId) {
+          await tx.storePrice.upsert({
+            where: { storeId_productId: { storeId: storeScopeId, productId: existing.id } },
+            create: { storeId: storeScopeId, productId: existing.id, price: body.selling_price },
+            update: { price: body.selling_price },
+          });
+        } else {
+          await tx.storePrice.deleteMany({ where: { productId: existing.id } });
+        }
+      }
+
+      if (body.expiry_date !== undefined) {
+        if (storeScopeId) {
+          await tx.inventory.upsert({
+            where: { storeId_productId: { storeId: storeScopeId, productId: existing.id } },
+            create: { storeId: storeScopeId, productId: existing.id, expiryDate: body.expiry_date },
+            update: { expiryDate: body.expiry_date },
+          });
+        } else {
+          await tx.inventory.updateMany({ where: { productId: existing.id }, data: { expiryDate: null } });
+        }
       }
 
       return updated;

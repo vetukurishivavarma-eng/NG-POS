@@ -439,6 +439,72 @@ describe('regressions', () => {
     });
   });
 
+  describe('a shop login editing a product only touches its own store', () => {
+    it('scopes selling_price and expiry_date to store_id, and requires it', async () => {
+      const product = world.products[0]!;
+      const otherStore = await prisma.store.create({
+        data: { organizationId: world.organizationId, name: 'Other Store', code: 'OTHER', city: 'Ndola' },
+      });
+
+      // No store_id at all: refused outright, not silently applied anywhere.
+      const noStore = await request(app)
+        .put(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.manager}`)
+        .send({ selling_price: product.price + 1 });
+      expect(noStore.status).toBe(400);
+
+      const edited = await request(app)
+        .put(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.manager}`)
+        .send({
+          selling_price: product.price + 15,
+          expiry_date: '2027-01-01',
+          store_id: world.storeId,
+        });
+      expect(edited.status).toBe(200);
+
+      const here = await request(app)
+        .get(`/api/products/${product.id}`)
+        .query({ store_id: world.storeId })
+        .set('Authorization', `Bearer ${world.tokens.manager}`);
+      expect(here.body.selling_price).toBe(product.price + 15);
+      expect(here.body.expiry_date).toBe('2027-01-01');
+
+      // The other store never carried this product (no Inventory row), so
+      // there's nothing to have been touched — the master default still
+      // stands there.
+      const elsewhere = await request(app)
+        .get(`/api/products/${product.id}`)
+        .query({ store_id: otherStore.id })
+        .set('Authorization', `Bearer ${world.tokens.manager}`);
+      expect(elsewhere.body.selling_price).toBe(product.price);
+      expect(elsewhere.body.expiry_date).toBeNull();
+
+      // The org-wide master record is untouched by a store-scoped edit.
+      const master = await request(app)
+        .get(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+      expect(master.body.selling_price).toBe(product.price);
+      expect(master.body.expiry_date).toBeNull();
+    });
+
+    it('always writes chemical_name and category to the shared master record', async () => {
+      const product = world.products[0]!;
+
+      const res = await request(app)
+        .put(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.cashier}`)
+        .send({ chemical_name: 'Cypermethrin 10%', category: 'Pesticides', store_id: world.storeId });
+      expect(res.status).toBe(200);
+
+      const master = await request(app)
+        .get(`/api/products/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+      expect(master.body.chemical_name).toBe('Cypermethrin 10%');
+      expect(master.body.category).toBe('Pesticides');
+    });
+  });
+
   describe('login is throttled', () => {
     it('stops guessing after a handful of attempts', async () => {
       const codes: number[] = [];

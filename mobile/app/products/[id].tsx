@@ -4,11 +4,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { products as productsApi } from '../../src/api/endpoints';
+import { products as productsApi, stores as storesApi } from '../../src/api/endpoints';
 import { PRODUCT_CATEGORIES, normaliseCategory } from '../../src/api/categories';
 import { errorMessage } from '../../src/api/client';
 import { useCan } from '../../src/store/auth';
 import { useScanCapture } from '../../src/store/scanCapture';
+import { useStoreSelection } from '../../src/store/storeSelection';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/theme';
 import {
@@ -68,11 +69,30 @@ export default function ProductFormScreen() {
   const [isActive, setIsActive] = useState(true);
   /** Field errors stay hidden until the first save attempt, so an empty new form isn't red. */
   const [submitted, setSubmitted] = useState(false);
+  /**
+   * Which shop a price edit applies to. "" is "All Shops" — the org-wide base
+   * price, only offered to a full-write account (an admin/warehouse account
+   * picks explicitly; a shop login is scoped to its own signed-in store
+   * automatically and never sees this control).
+   */
+  const [priceStoreId, setPriceStoreId] = useState('');
 
+  const currentStore = useStoreSelection((s) => s.selected);
+  const storesQuery = useQuery({
+    queryKey: ['stores', 'list'],
+    queryFn: () => storesApi.list(),
+    enabled: fullWrite && !isNew,
+  });
+
+  // A shop login's own price/expiry for this product — not the master
+  // default — is what they need to see before editing either. An admin sees
+  // the master record; the store they'll write to is a separate choice made
+  // at save time via the "Applies to" picker below.
+  const detailStoreId = !fullWrite ? currentStore?.id : undefined;
   const detail = useQuery({
-    queryKey: ['products', 'detail', productId],
+    queryKey: ['products', 'detail', productId, detailStoreId ?? null],
     enabled: !isNew && productId.length > 0,
-    queryFn: () => productsApi.get(productId),
+    queryFn: () => productsApi.get(productId, detailStoreId),
   });
 
   const loaded = detail.data;
@@ -145,9 +165,16 @@ export default function ProductFormScreen() {
 
   // A separate mutation rather than reusing `save`: that one's mutationFn is
   // typed for the full create-or-update draft (`create` needs every field),
-  // and a shop login's request here is deliberately just the one field.
+  // and a shop login's request here is deliberately just its own fields —
+  // price and expiry scoped to its own store, category/chemical shared.
   const savePrice = useMutation({
-    mutationFn: (selling_price: number) => productsApi.update(productId, { selling_price }),
+    mutationFn: (draft: {
+      selling_price: number;
+      expiry_date: string | null;
+      category: string | null;
+      chemical_name: string | null;
+      store_id?: string;
+    }) => productsApi.update(productId, draft),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['products'] });
       void queryClient.invalidateQueries({ queryKey: ['catalogue'] });
@@ -190,14 +217,28 @@ export default function ProductFormScreen() {
       chemical_name: chemicalName.trim() || null,
       expiry_date: expiryDate.trim() || null,
       is_active: isActive,
+      // Only meaningful on an existing product — a brand-new one has no other
+      // store's price to leave alone. "" (All Shops) omits the field, which is
+      // the org-wide base price, same as before this picker existed.
+      ...(!isNew && priceStoreId ? { store_id: priceStoreId } : {}),
     });
   }
 
-  /** For a shop login on an existing product: the one field it may change. */
-  function submitPriceOnly() {
+  /** For a shop login on an existing product: its own price/expiry, plus the shared classification fields. */
+  function submitShopEdit() {
     setSubmitted(true);
-    if (errors.selling) return;
-    savePrice.mutate(sellValue ?? 0);
+    if (errors.selling || errors.expiry) return;
+    if (!currentStore) {
+      Alert.alert('No store selected', 'Select a store before changing the price or expiry.');
+      return;
+    }
+    savePrice.mutate({
+      selling_price: sellValue ?? 0,
+      expiry_date: expiryDate.trim() || null,
+      category: category.trim() || null,
+      chemical_name: chemicalName.trim() || null,
+      store_id: currentStore.id,
+    });
   }
 
   function confirmDeactivate() {
@@ -297,9 +338,14 @@ export default function ProductFormScreen() {
       );
     }
 
-    // Ordinary shop login: every other field is shown but not editable —
-    // the server would silently drop a change to any of them anyway (see
-    // PUT /products/:id) — and the selling price is a real, saveable field.
+    // Ordinary shop login. Per the client's ask: selling price and expiry
+    // date are this shop's own and never touch another shop's; chemical name
+    // and category are shared identity fields, so an edit here updates the
+    // master list the same as an admin's would — otherwise the same product
+    // could read with a different name/chemical/category per shop, which is
+    // worse than a shared field one shop can change. Everything else stays
+    // read-only, and the server would silently drop a change to any of it
+    // anyway (see PUT /products/:id).
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
@@ -314,7 +360,7 @@ export default function ProductFormScreen() {
             </View>
 
             <View style={styles.section}>
-              <SectionLabel>Pricing</SectionLabel>
+              <SectionLabel>{currentStore ? `Pricing at ${currentStore.name}` : 'Pricing'}</SectionLabel>
               <View style={styles.stack}>
                 <Field
                   label="Selling price"
@@ -324,27 +370,66 @@ export default function ProductFormScreen() {
                   keyboardType="decimal-pad"
                   prefix="K"
                   error={submitted ? errors.selling : null}
+                  hint={
+                    currentStore
+                      ? `Saves for ${currentStore.name} only — other shops keep their own price.`
+                      : 'Select a store on the Sell screen before changing the price or expiry.'
+                  }
                   autoFocus
                 />
-                <Button label="Save Price" onPress={submitPriceOnly} loading={savePrice.isPending} disabled={busy} />
+                <Field
+                  label="Expiry date"
+                  value={expiryDate}
+                  onChangeText={setExpiryDate}
+                  placeholder="2027-07-15"
+                  autoCapitalize="none"
+                  error={submitted ? errors.expiry : null}
+                  hint={
+                    currentStore
+                      ? `This shop's own batch — year first: 2027-07-15. Other shops are unaffected.`
+                      : undefined
+                  }
+                />
               </View>
             </View>
+
+            <View style={styles.section}>
+              <SectionLabel>Classification</SectionLabel>
+              <View style={styles.stack}>
+                <Select
+                  label="Category"
+                  value={category}
+                  onChange={setCategory}
+                  options={[
+                    { value: '', label: 'Not set' },
+                    ...PRODUCT_CATEGORIES.map((c) => ({ value: c as string, label: c })),
+                  ]}
+                  hint="Shared across every shop — changing it here updates the master list."
+                />
+                <Field
+                  label="Chemical name"
+                  value={chemicalName}
+                  onChangeText={setChemicalName}
+                  placeholder="e.g. Pirimiphos-methyl 1.6%"
+                  autoCapitalize="sentences"
+                  hint="Shared across every shop — changing it here updates the master list."
+                />
+              </View>
+            </View>
+
+            <Button
+              label="Save Changes"
+              onPress={submitShopEdit}
+              loading={savePrice.isPending}
+              disabled={busy || !currentStore}
+            />
 
             <Card>
               <StatRow label="Tax" value={loaded.tax_type === 'vat' ? 'VAT' : 'Exempt'} />
               <RowDivider />
               <StatRow label="Brand" value={loaded.brand || '—'} />
               <RowDivider />
-              <StatRow
-                label="Category"
-                value={normaliseCategory(loaded.category) ?? loaded.category ?? '—'}
-              />
-              <RowDivider />
               <StatRow label="Unit" value={loaded.unit || '—'} />
-              <RowDivider />
-              <StatRow label="Chemical" value={loaded.chemical_name || '—'} />
-              <RowDivider />
-              <StatRow label="Expires" value={loaded.expiry_date || '—'} />
               <RowDivider />
               <StatRow label="Barcode" value={loaded.barcode || '—'} />
             </Card>
@@ -442,6 +527,25 @@ export default function ProductFormScreen() {
                 prefix="K"
                 error={submitted ? errors.selling : null}
               />
+              {/* Which shop the price AND expiry date below apply to. Existing
+                  products only — a new product has no other shop's price or
+                  expiry to leave alone. */}
+              {!isNew ? (
+                <Select
+                  label="Price & expiry apply to"
+                  value={priceStoreId}
+                  onChange={setPriceStoreId}
+                  options={[
+                    { value: '', label: 'All Shops (base/master value)' },
+                    ...(storesQuery.data ?? []).map((s) => ({ value: s.id, label: s.name })),
+                  ]}
+                  hint={
+                    priceStoreId
+                      ? 'Only this shop gets the new price and expiry — every other shop keeps its own.'
+                      : "Resets every shop's price and expiry to this, including one that had set its own — pick a shop above instead if that shouldn't happen."
+                  }
+                />
+              ) : null}
               {/* Margin is the cost price with subtraction applied, so it goes
                   wherever the cost price goes — same gate as the read-only
                   view above and the Cost price field itself. */}

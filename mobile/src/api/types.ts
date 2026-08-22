@@ -33,6 +33,14 @@ export interface Product {
   image_base64: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Only present when the request was scoped to a store (`?store_id=`),
+   * whether via `with-stock` or `GET /products/:id?store_id=`. That store's
+   * own price/expiry may be overriding these — this is what "no override"
+   * falls back to, so the editor can show both.
+   */
+  default_selling_price?: number;
+  default_expiry_date?: string | null;
 }
 
 /** `/products/with-stock/{store_id}` — product joined with that store's stock. */
@@ -338,6 +346,14 @@ export interface ProductDraft {
   expiry_date?: string | null;
   is_active?: boolean;
   image_base64?: string | null;
+  /**
+   * Scopes a `selling_price` change to one store's own StorePrice instead of
+   * the org-wide base price. Left out (or "" in the picker) on an admin edit
+   * means "All Shops" — the base price, clearing every store's override, same
+   * as before this field existed. A shop login must always send its own
+   * store's id; the server rejects a price change with neither.
+   */
+  store_id?: string;
 }
 
 /* --------------------------------------------------------------- stock moves */
