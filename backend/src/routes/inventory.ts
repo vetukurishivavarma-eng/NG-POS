@@ -16,7 +16,7 @@ import {
 import { capabilityContext, mayViewCosts } from '../lib/capabilities.js';
 import { recordAudit } from '../lib/audit.js';
 import { num } from '../lib/serialize.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { parseCsvObjects, tableToObjects, type TableObjects } from '../lib/csv.js';
 import { readXlsx, XlsxError } from '../lib/xlsx.js';
 import { CATEGORY_LIST_HINT, normaliseCategory } from '../lib/categories.js';
@@ -44,6 +44,65 @@ const listQuery = z.object({
   store_id: z.string().uuid(),
   low_only: z.coerce.boolean().default(false),
 });
+
+const byProductParams = z.object({ productId: z.string().uuid() });
+
+/**
+ * Every active store's count of one product, plus the chain-wide total.
+ * Built for the "where is this stock?" question on the Stock Transfer screen:
+ * an administrator picking what to move needs to see which shop is holding it.
+ *
+ * Admin only, on purpose. A shop login only ever sees its own shelf anywhere
+ * else in the app, and the whole-chain picture is not theirs to browse.
+ */
+inventoryRouter.get(
+  '/by-product/:productId',
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    if (user.role !== 'ORG_ADMIN') {
+      throw forbidden('Only an administrator can see stock across every shop.');
+    }
+
+    const { productId } = byProductParams.parse(req.params);
+    const product = await prisma.product.findFirst({
+      where: { id: productId, organizationId: user.organizationId },
+      select: { id: true, name: true, sku: true },
+    });
+    if (!product) throw notFound('Product not found.');
+
+    const [stores, rows] = await Promise.all([
+      prisma.store.findMany({
+        where: { organizationId: user.organizationId, isActive: true },
+        select: { id: true, name: true, staffFullAccess: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.inventory.findMany({
+        where: { productId, store: { organizationId: user.organizationId, isActive: true } },
+        select: { storeId: true, quantity: true, reorderLevel: true },
+      }),
+    ]);
+
+    const byStore = new Map(rows.map((r) => [r.storeId, r]));
+    const stock = stores.map((s) => {
+      const inv = byStore.get(s.id);
+      return {
+        store_id: s.id,
+        store_name: s.name,
+        is_warehouse: s.staffFullAccess,
+        quantity: inv ? num(inv.quantity) : 0,
+        reorder_level: inv ? num(inv.reorderLevel) : 0,
+      };
+    });
+
+    res.json({
+      product_id: product.id,
+      product_name: product.name,
+      sku: product.sku,
+      total_quantity: stock.reduce((sum, s) => sum + s.quantity, 0),
+      stores: stock,
+    });
+  })
+);
 
 inventoryRouter.get(
   '/',

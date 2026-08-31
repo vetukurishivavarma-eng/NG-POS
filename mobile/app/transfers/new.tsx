@@ -12,7 +12,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { stores as storesApi, transfers as transfersApi } from '../../src/api/endpoints';
+import {
+  inventory as inventoryApi,
+  stores as storesApi,
+  transfers as transfersApi,
+} from '../../src/api/endpoints';
 import { errorMessage } from '../../src/api/client';
 import { printTransferNote, shareTransferPdf } from '../../src/printing/print';
 import type { TransferNoteData } from '../../src/printing/transferNote';
@@ -43,6 +47,9 @@ export default function NewTransferScreen() {
   const user = useAuth((s) => s.user);
   const selectedStore = useStoreSelection((s) => s.selected);
   const canCreate = useCan('transfers.create');
+  // The chain-wide stock breakdown under each line is for an administrator
+  // deciding what to move; a shop login only ever sees its own shelf.
+  const isAdmin = roleLevel(user) === 'admin';
 
   const [fromStoreId, setFromStoreId] = useState(selectedStore?.id ?? '');
   const [toStoreId, setToStoreId] = useState('');
@@ -543,6 +550,10 @@ export default function NewTransferScreen() {
                       </View>
 
                       {problem ? <Text style={styles.lineError}>{problem}</Text> : null}
+
+                      {isAdmin ? (
+                        <StockAcrossShops productId={line.product_id} sourceStoreId={fromStoreId} />
+                      ) : null}
                     </View>
                   );
                 })
@@ -583,6 +594,88 @@ export default function NewTransferScreen() {
         ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * The same product's stock at every shop, with the chain-wide total, shown
+ * under a basket line so an administrator can see where it actually sits
+ * before deciding how much to move. Admin-only — the endpoint 403s otherwise.
+ */
+function StockAcrossShops({
+  productId,
+  sourceStoreId,
+}: {
+  productId: string;
+  sourceStoreId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const query = useQuery({
+    queryKey: ['stock-by-product', productId],
+    queryFn: () => inventoryApi.byProduct(productId),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const rows = query.data?.stores ?? [];
+
+  return (
+    <View style={styles.spread}>
+      <Pressable
+        style={styles.spreadHead}
+        onPress={() => setOpen((v) => !v)}
+        hitSlop={6}
+      >
+        <Icon name="bar-chart-2" size={14} color={colors.primary} />
+        <Text style={styles.spreadHeadText}>
+          {query.data
+            ? `${query.data.total_quantity} in stock across all shops`
+            : 'Stock across all shops'}
+        </Text>
+        <Icon name={open ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textFaint} />
+      </Pressable>
+
+      {open ? (
+        query.isLoading ? (
+          <Text style={styles.spreadMuted}>Loading…</Text>
+        ) : query.isError ? (
+          <Pressable onPress={() => void query.refetch()}>
+            <Text style={styles.spreadMuted}>Couldn't load. Tap to retry.</Text>
+          </Pressable>
+        ) : (
+          <View style={{ gap: 2 }}>
+            {rows.map((r) => {
+              const isSource = r.store_id === sourceStoreId;
+              return (
+                <View key={r.store_id} style={styles.spreadRow}>
+                  <Icon
+                    name={r.is_warehouse ? 'package' : 'home'}
+                    size={12}
+                    color={colors.textFaint}
+                  />
+                  <Text
+                    style={[styles.spreadStore, isSource && styles.spreadStoreSource]}
+                    numberOfLines={1}
+                  >
+                    {r.store_name}
+                    {isSource ? ' · sending from' : ''}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.spreadQty,
+                      r.quantity <= 0 && { color: colors.danger },
+                      isSource && styles.spreadStoreSource,
+                    ]}
+                  >
+                    {r.quantity}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )
+      ) : null}
+    </View>
   );
 }
 
@@ -773,4 +866,19 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   atomicText: { flex: 1, fontFamily: font.medium, fontSize: 12, color: colors.primaryDeep, lineHeight: 17 },
+
+  spread: {
+    marginTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.sm,
+    gap: spacing.xs,
+  },
+  spreadHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  spreadHeadText: { flex: 1, fontFamily: font.semibold, fontSize: 12, color: colors.primary },
+  spreadMuted: { fontFamily: font.regular, fontSize: 12, color: colors.textMuted, paddingVertical: 2 },
+  spreadRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingVertical: 2 },
+  spreadStore: { flex: 1, fontFamily: font.regular, fontSize: 12, color: colors.textMuted },
+  spreadStoreSource: { fontFamily: font.bold, color: colors.text },
+  spreadQty: { fontFamily: font.bold, fontSize: 13, color: colors.text, minWidth: 32, textAlign: 'right' },
 });

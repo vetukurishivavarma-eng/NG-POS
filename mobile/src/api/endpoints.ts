@@ -20,6 +20,7 @@ import type {
   OrganizationUpdate,
   Product,
   ProductDraft,
+  ProductStockByStore,
   ProductWithStock,
   ProfitPerBranchRow,
   ProfitPerProductRow,
@@ -250,6 +251,13 @@ export const inventory = {
    */
   adjust: (body: StockMovementDraft) =>
     api.post<StockLevel>('/inventory/movements', body).then((r) => r.data),
+  /**
+   * One product's stock at every active shop, with the chain-wide total.
+   * Admin only on the server (403 otherwise) — used by the Stock Transfer
+   * screen so an administrator can see where the stock actually sits.
+   */
+  byProduct: (productId: string) =>
+    api.get<ProductStockByStore>(`/inventory/by-product/${productId}`).then((r) => r.data),
   movements: (storeId: string, params?: { product_id?: string; limit?: number }) =>
     api
       .get<StockMovement[]>('/inventory/movements', { params: { store_id: storeId, ...params } })

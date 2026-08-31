@@ -96,6 +96,66 @@ describe('regressions', () => {
     });
   });
 
+  describe('GET /api/inventory/by-product/:id — chain-wide stock, admin only', () => {
+    it('returns every active store with the total, admin', async () => {
+      const product = world.products[0]!;
+      const other = await prisma.store.create({
+        data: { organizationId: world.organizationId, name: 'Second Store', code: 'SECOND', city: 'Ndola' },
+      });
+      await prisma.inventory.create({
+        data: { storeId: other.id, productId: product.id, quantity: 40, reorderLevel: 5 },
+      });
+
+      const res = await request(app)
+        .get(`/api/inventory/by-product/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.total_quantity).toBe(140);
+      expect(res.body.stores).toHaveLength(2);
+      const second = res.body.stores.find((s: { store_id: string }) => s.store_id === other.id);
+      expect(second.quantity).toBe(40);
+    });
+
+    it('lists a store the product is not stocked in as zero', async () => {
+      const product = world.products[0]!;
+      await prisma.store.create({
+        data: { organizationId: world.organizationId, name: 'Empty Store', code: 'EMPTY', city: 'Kabwe' },
+      });
+
+      const res = await request(app)
+        .get(`/api/inventory/by-product/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+
+      expect(res.status).toBe(200);
+      const empty = res.body.stores.find((s: { store_name: string }) => s.store_name === 'Empty Store');
+      expect(empty.quantity).toBe(0);
+    });
+
+    it('is refused to a store manager', async () => {
+      const product = world.products[0]!;
+      const res = await request(app)
+        .get(`/api/inventory/by-product/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.manager}`);
+      expect(res.status).toBe(403);
+    });
+
+    it('is refused to a cashier', async () => {
+      const product = world.products[0]!;
+      const res = await request(app)
+        .get(`/api/inventory/by-product/${product.id}`)
+        .set('Authorization', `Bearer ${world.tokens.cashier}`);
+      expect(res.status).toBe(403);
+    });
+
+    it('404s an unknown product', async () => {
+      const res = await request(app)
+        .get('/api/inventory/by-product/00000000-0000-0000-0000-000000000000')
+        .set('Authorization', `Bearer ${world.tokens.admin}`);
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe('reversals only come from the refund route', () => {
     it('rejects transaction_type: refund on the sale endpoint', async () => {
       const product = world.products[0]!;

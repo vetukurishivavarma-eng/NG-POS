@@ -223,6 +223,23 @@ export interface InventoryRow {
   value?: number;
 }
 
+export interface StoreStockRow {
+  store_id: string;
+  store_name: string;
+  is_warehouse: boolean;
+  quantity: number;
+  reorder_level: number;
+}
+
+/** One product's stock at every active shop, plus the chain-wide total. */
+export interface ProductStockByStore {
+  product_id: string;
+  product_name: string;
+  sku: string;
+  total_quantity: number;
+  stores: StoreStockRow[];
+}
+
 export interface User {
   id: string;
   organization_id: string;
