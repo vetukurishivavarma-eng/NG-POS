@@ -30,11 +30,18 @@ import type {
   SalesPerBranchRow,
   SalesSummary,
   SalesTrendPoint,
-  TopProduct,
 } from '../src/api/types';
 
 /** Sentinel for the store picker: the whole organisation rather than one shop. */
 const ALL_SHOPS = 'all';
+
+/** How the Top 20 list is ranked. All three read off the profit-per-product feed. */
+type TopMetric = 'revenue' | 'profit' | 'quantity';
+const TOP_METRIC_OPTIONS: { value: TopMetric; label: string }[] = [
+  { value: 'revenue', label: 'By revenue' },
+  { value: 'profit', label: 'By profit' },
+  { value: 'quantity', label: 'By quantity' },
+];
 
 const PERIOD_OPTIONS = (Object.keys(PERIOD_LABELS) as AnalyticsPeriod[]).map((value) => ({
   value,
@@ -82,6 +89,7 @@ export default function AnalyticsScreen() {
   // holding the device is nearly always after.
   const [scope, setScope] = useState<string>(store?.id ?? ALL_SHOPS);
   const [focusProductId, setFocusProductId] = useState<string | null>(null);
+  const [topMetric, setTopMetric] = useState<TopMetric>('revenue');
   const seesCosts = useCan('costs.view');
 
   const storeList = useQuery({ queryKey: ['stores'], queryFn: () => storesApi.list() });
@@ -134,11 +142,6 @@ export default function AnalyticsScreen() {
     queryFn: () => analytics.salesTrend(storeId, TREND_DAYS[period]),
   });
 
-  const top = useQuery({
-    queryKey: ['analytics', 'top-products', storeId, period],
-    queryFn: () => analytics.topProducts(storeId, 10, period),
-  });
-
   const profit = useQuery({
     queryKey: ['analytics', 'profit-per-product', storeId, period],
     queryFn: () => analytics.profitPerProduct(storeId, period),
@@ -165,7 +168,6 @@ export default function AnalyticsScreen() {
     margin.isRefetching ||
     summary.isRefetching ||
     trend.isRefetching ||
-    top.isRefetching ||
     profit.isRefetching ||
     branchSales.isRefetching ||
     branchProfit.isRefetching;
@@ -175,7 +177,6 @@ export default function AnalyticsScreen() {
     void margin.refetch();
     void summary.refetch();
     void trend.refetch();
-    void top.refetch();
     void profit.refetch();
     void branchSales.refetch();
     void branchProfit.refetch();
@@ -312,16 +313,19 @@ export default function AnalyticsScreen() {
 
         {/* ------------------------------------------------------- top products */}
         <View>
-          <SectionLabel>Top products by revenue</SectionLabel>
+          <SectionLabel>Top 20 products · {scopeLabel}</SectionLabel>
+          <Card style={{ marginBottom: spacing.sm }}>
+            <Select label="Rank by" value={topMetric} options={TOP_METRIC_OPTIONS} onChange={setTopMetric} />
+          </Card>
           <Panel
-            query={top}
+            query={profit}
             loadingLabel="Ranking products"
-            isEmpty={(rows: TopProduct[]) => rows.length === 0}
+            isEmpty={(rows: ProfitPerProductRow[]) => rows.length === 0}
             emptyIcon="package"
             emptyTitle="No products sold"
             emptyHint={`Nothing was sold ${PERIOD_LABELS[period].toLowerCase()}.`}
           >
-            {(rows) => <TopProducts rows={rows} />}
+            {(rows) => <TopProducts rows={rows} metric={topMetric} />}
           </Panel>
         </View>
 
@@ -526,9 +530,12 @@ function TrendChart({ points }: { points: SalesTrendPoint[] }) {
 
 /* -------------------------------------------------------------- top products */
 
-function TopProducts({ rows }: { rows: TopProduct[] }) {
-  const sorted = [...rows].sort((a, b) => b.total - a.total);
-  const max = sorted.reduce((m, r) => Math.max(m, r.total), 0);
+function TopProducts({ rows, metric }: { rows: ProfitPerProductRow[]; metric: TopMetric }) {
+  const valueOf = (r: ProfitPerProductRow) =>
+    metric === 'revenue' ? r.sales : metric === 'profit' ? r.profit : r.quantity;
+
+  const sorted = [...rows].sort((a, b) => valueOf(b) - valueOf(a)).slice(0, 20);
+  const max = sorted.reduce((m, r) => Math.max(m, Math.abs(valueOf(r))), 0);
 
   return (
     <Card>
@@ -537,10 +544,15 @@ function TopProducts({ rows }: { rows: TopProduct[] }) {
           key={row.product_id ?? `${row.product_name}-${index}`}
           rank={index + 1}
           name={row.product_name}
-          meta={`${row.quantity} sold`}
-          value={formatKwacha(row.total)}
-          fill={max > 0 ? (row.total / max) * 100 : 0}
+          meta={
+            metric === 'quantity'
+              ? `${formatKwacha(row.sales)} revenue`
+              : `${row.quantity} sold`
+          }
+          value={metric === 'quantity' ? `${row.quantity}` : formatKwacha(valueOf(row))}
+          fill={max > 0 ? (Math.abs(valueOf(row)) / max) * 100 : 0}
           highlight={index === 0}
+          negative={metric === 'profit' && row.profit < 0}
         />
       ))}
     </Card>
