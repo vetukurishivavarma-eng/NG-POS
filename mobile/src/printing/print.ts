@@ -6,6 +6,7 @@ import { buildDayReport, buildReceipt, type DayReportInput } from './receipt';
 import { printBlockedReason, sendToPrinter, usePrinter } from './printer';
 import { shareHtmlAsPdf } from './pdf';
 import { dayReportHtml, type DayReportPdfData } from './dayReport';
+import { orderReportHtml, type OrderReportData } from './orderReport';
 import {
   buildTransferNote,
   transferNoteHtml,
@@ -174,6 +175,26 @@ export async function shareDayReportPdf(data: DayReportPdfData): Promise<void> {
     Alert.alert(
       "Couldn't make the PDF",
       err instanceof Error ? err.message : 'The day report could not be rendered.'
+    );
+  }
+}
+
+/** A4 PDF of the reorder list, out through the share sheet. */
+export async function shareOrderReportPdf(data: OrderReportData): Promise<void> {
+  try {
+    const html = orderReportHtml(data, {
+      organizationName: await organizationName(data.storeName),
+    });
+    const { uri, shared } = await shareHtmlAsPdf(
+      html,
+      `Order-List-${data.storeName}-${data.months}m`,
+      `Order list — last ${data.months} month${data.months === 1 ? '' : 's'}`
+    );
+    if (!shared) Alert.alert('PDF saved', `The order list was saved to ${uri}`);
+  } catch (err) {
+    Alert.alert(
+      "Couldn't make the PDF",
+      err instanceof Error ? err.message : 'The order list could not be rendered.'
     );
   }
 }

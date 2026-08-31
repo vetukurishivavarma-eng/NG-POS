@@ -389,6 +389,16 @@ export const analytics = {
         params: { ...(storeId ? { store_id: storeId } : {}), period },
       })
       .then((r) => r.data),
+  /**
+   * Products sold over the last `months` whole months, quantity and value,
+   * biggest first — the basis for a reorder / purchase order.
+   */
+  reorder: (storeId: string | null, months: number) =>
+    api
+      .get<SalesPerProductRow[]>('/analytics/sales-per-product', {
+        params: { ...(storeId ? { store_id: storeId } : {}), months },
+      })
+      .then((r) => r.data),
   profitPerProduct: (storeId: string | null, period: AnalyticsPeriod = 'monthly') =>
     api
       .get<ProfitPerProductRow[]>('/analytics/profit-per-product', {

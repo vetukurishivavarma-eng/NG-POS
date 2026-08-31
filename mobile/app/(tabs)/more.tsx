@@ -210,6 +210,13 @@ export default function MoreScreen() {
                 value="Stock in, invoice filed, payment tracked"
                 onPress={() => router.push('/purchases/new')}
               />
+              <View style={styles.divider} />
+              <LinkRow
+                icon="clipboard"
+                label="Order List"
+                value="What sold over the last 1–3 months, as a PDF to send"
+                onPress={() => router.push('/reorder')}
+              />
               {canViewSuppliers ? (
                 <>
                   <View style={styles.divider} />

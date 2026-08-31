@@ -33,6 +33,14 @@ function startOfToday(): Date {
   return periodStartIn('daily', env.REPORT_TIMEZONE);
 }
 
+/** Midnight, N whole calendar months back. Used by the reorder window. */
+function monthsAgo(n: number): Date {
+  const d = new Date();
+  d.setMonth(d.getMonth() - n);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 const storeQuery = z.object({ store_id: z.string().uuid().optional() });
 
 /** Scopes a query to one store, or to every store the caller may see. */
@@ -203,8 +211,16 @@ analyticsRouter.get(
   '/sales-per-product',
   asyncHandler(async (req, res) => {
     const q = z
-      .object({ store_id: z.string().uuid().optional(), period: periodSchema.default('monthly') })
+      .object({
+        store_id: z.string().uuid().optional(),
+        period: periodSchema.default('monthly'),
+        // A rolling window in whole calendar months, for the reorder list —
+        // the client asks for "last 1/2/3 months". Overrides `period` when set.
+        months: z.coerce.number().int().min(1).max(24).optional(),
+      })
       .parse(req.query);
+
+    const since = q.months ? monthsAgo(q.months) : periodStart(q.period);
 
     const rows = await prisma.transactionItem.groupBy({
       by: ['productId', 'productName', 'brand'],
@@ -212,7 +228,7 @@ analyticsRouter.get(
         transaction: {
           ...(await scope(req, q.store_id)),
           status: { not: 'voided' },
-          createdAt: { gte: periodStart(q.period) },
+          createdAt: { gte: since },
         },
       },
       _sum: { quantity: true, lineTotal: true },

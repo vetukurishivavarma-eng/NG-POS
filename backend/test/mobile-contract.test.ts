@@ -740,6 +740,17 @@ describe('mobile API contract', () => {
       'SalesPerProductRow'
     );
 
+    const reorder = await get('/api/analytics/sales-per-product', world.tokens.manager, {
+      store_id: world.storeId,
+      months: 3,
+    });
+    expect(reorder.status).toBe(200);
+    expectShape(
+      reorder.body[0],
+      ['product_id', 'product_name', 'brand', 'quantity', 'sales'],
+      'SalesPerProductRow (months window)'
+    );
+
     const profitProduct = await get('/api/analytics/profit-per-product', world.tokens.manager, {
       store_id: world.storeId,
       period: 'monthly',
