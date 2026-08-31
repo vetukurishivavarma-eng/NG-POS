@@ -5,6 +5,7 @@ import { formatKwacha } from '../theme';
 import { buildDayReport, buildReceipt, type DayReportInput } from './receipt';
 import { printBlockedReason, sendToPrinter, usePrinter } from './printer';
 import { shareHtmlAsPdf } from './pdf';
+import { dayReportHtml, type DayReportPdfData } from './dayReport';
 import {
   buildTransferNote,
   transferNoteHtml,
@@ -154,5 +155,25 @@ export async function printDayReport(input: Omit<DayReportInput, 'organizationNa
     );
   } catch (err) {
     Alert.alert('Print failed', err instanceof Error ? err.message : 'The printer did not respond.');
+  }
+}
+
+/** A4 PDF of the consolidated day report, out through the share sheet. */
+export async function shareDayReportPdf(data: DayReportPdfData): Promise<void> {
+  try {
+    const html = dayReportHtml(data, {
+      organizationName: await organizationName(data.store.name),
+    });
+    const { uri, shared } = await shareHtmlAsPdf(
+      html,
+      `Day-Report-${data.store.name}-${data.report.date}`,
+      `Day report — ${data.report.date}`
+    );
+    if (!shared) Alert.alert('PDF saved', `The day report was saved to ${uri}`);
+  } catch (err) {
+    Alert.alert(
+      "Couldn't make the PDF",
+      err instanceof Error ? err.message : 'The day report could not be rendered.'
+    );
   }
 }

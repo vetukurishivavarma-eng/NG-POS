@@ -8,7 +8,7 @@ import { transactions as txApi } from '../src/api/endpoints';
 import { useAuth } from '../src/store/auth';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { useSync } from '../src/db/sync';
-import { printDayReport } from '../src/printing/print';
+import { printDayReport, shareDayReportPdf } from '../src/printing/print';
 import { printBlockedReason } from '../src/printing/printer';
 import { useLayout } from '../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing, splitAmount } from '../src/theme';
@@ -24,6 +24,7 @@ export default function DayReportScreen() {
 
   const [offset, setOffset] = useState(0); // 0 = today, 1 = yesterday, …
   const [printing, setPrinting] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   const day = useMemo(() => {
     const d = new Date();
@@ -64,7 +65,10 @@ export default function DayReportScreen() {
     return computeReport(storeId, dateKey, rows.data);
   }, [report.data, rows.data, storeId, dateKey]);
 
-  const topItems = useMemo(() => topSellers(rows.data ?? []), [rows.data]);
+  // Every product sold on the day, by value — the whole list goes to the print
+  // and PDF; the screen shows the first handful.
+  const productLines = useMemo(() => productBreakdown(rows.data ?? []), [rows.data]);
+  const topItems = productLines.slice(0, 6);
 
   if (!store) {
     return (
@@ -87,10 +91,25 @@ export default function DayReportScreen() {
         store,
         report: figures,
         cashierName: user?.full_name ?? 'Unknown',
-        topItems: topItems.map((i) => ({ name: i.name, quantity: i.quantity, total: i.total })),
+        products: productLines.map((i) => ({ name: i.name, quantity: i.quantity, total: i.total })),
       });
     } finally {
       setPrinting(false);
+    }
+  }
+
+  async function sharePdf() {
+    if (!figures || !store) return;
+    setSharing(true);
+    try {
+      await shareDayReportPdf({
+        store,
+        report: figures,
+        cashierName: user?.full_name ?? 'Unknown',
+        products: productLines,
+      });
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -275,6 +294,13 @@ export default function DayReportScreen() {
                 loading={printing}
                 onPress={() => void print()}
               />
+              <Button
+                label="Save as PDF / Share"
+                icon="share-2"
+                variant="secondary"
+                loading={sharing}
+                onPress={() => void sharePdf()}
+              />
               {offset === 0 ? (
                 <Button label="End Session" icon="log-out" variant="danger" onPress={endSession} />
               ) : null}
@@ -353,14 +379,18 @@ function computeReport(storeId: string, date: string, rows: Transaction[]): Dail
   };
 }
 
-function topSellers(rows: Transaction[]): { name: string; quantity: number; total: number }[] {
-  const tally = new Map<string, { name: string; quantity: number; total: number }>();
+/** Every product sold on the day, aggregated across sales, ranked by value. */
+function productBreakdown(
+  rows: Transaction[]
+): { name: string; sku?: string; quantity: number; total: number }[] {
+  const tally = new Map<string, { name: string; sku?: string; quantity: number; total: number }>();
 
   for (const t of rows) {
     if (t.status === 'voided' || t.transaction_type !== 'sale') continue;
     for (const item of t.items) {
       const entry = tally.get(item.product_name) ?? {
         name: item.product_name,
+        sku: item.sku || undefined,
         quantity: 0,
         total: 0,
       };
@@ -370,7 +400,7 @@ function topSellers(rows: Transaction[]): { name: string; quantity: number; tota
     }
   }
 
-  return [...tally.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
+  return [...tally.values()].sort((a, b) => b.total - a.total);
 }
 
 function toDateKey(d: Date): string {

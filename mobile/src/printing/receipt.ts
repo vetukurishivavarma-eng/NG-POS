@@ -156,8 +156,8 @@ export interface DayReportInput {
   report: DailyReport;
   /** Who closed the session — a Z-report is worthless without a name on it. */
   cashierName: string;
-  /** Best sellers of the day, already sorted. Optional: needs the full day's rows. */
-  topItems?: { name: string; quantity: number; total: number }[];
+  /** Every product sold on the day, already sorted. Optional: needs the full day's rows. */
+  products?: { name: string; quantity: number; total: number }[];
 }
 
 /**
@@ -197,10 +197,10 @@ export function buildDayReport(input: DayReportInput): string {
   b.size(1).bold(false);
   b.columns('of which VAT', money(r.tax_total));
 
-  if (input.topItems?.length) {
+  if (input.products?.length) {
     b.rule('=');
-    b.bold(true).line('TOP ITEMS').bold(false);
-    for (const item of input.topItems) {
+    b.bold(true).line('PRODUCTS SOLD').bold(false);
+    for (const item of input.products) {
       if (b.wide) {
         b.cells(item.name, { text: qty(item.quantity), width: 5 }, { text: money(item.total), width: 11 });
       } else {
@@ -208,6 +208,10 @@ export function buildDayReport(input: DayReportInput): string {
         b.columns(`  x${qty(item.quantity)}`, money(item.total));
       }
     }
+    b.rule('-');
+    const units = input.products.reduce((sum, p) => sum + p.quantity, 0);
+    const value = input.products.reduce((sum, p) => sum + p.total, 0);
+    b.bold(true).columns(`${input.products.length} lines / ${qty(units)}`, money(value)).bold(false);
   }
 
   // Sized to the paper rather than typed out, or the rule runs off the edge.
