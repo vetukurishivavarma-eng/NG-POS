@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   inventory as inventoryApi,
+  purchases as purchasesApi,
   stores as storesApi,
   transfers as transfersApi,
 } from '../../src/api/endpoints';
@@ -27,7 +28,7 @@ import { useStoreSelection } from '../../src/store/storeSelection';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../../src/theme';
 import { Badge, Button, EmptyState, Field, Icon, Loading, Select } from '../../src/ui/components';
-import type { Store } from '../../src/api/types';
+import type { Store, SupplierInvoice } from '../../src/api/types';
 
 /** One product being moved. `quantity` stays a string so the field can be empty mid-edit. */
 interface Line {
@@ -57,6 +58,7 @@ export default function NewTransferScreen() {
   const [search, setSearch] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  const [invoicePickerOpen, setInvoicePickerOpen] = useState(false);
 
   const storesQuery = useQuery({ queryKey: ['stores'], queryFn: storesApi.list });
   // Two lists on purpose. `/stores` narrows to the shops this person works at,
@@ -65,6 +67,15 @@ export default function NewTransferScreen() {
   // left anyone assigned to a single shop with nowhere to transfer.
   const directoryQuery = useQuery({ queryKey: ['store-directory'], queryFn: storesApi.directory });
   const catalogue = useCatalogue(fromStoreId || null);
+
+  // Deliveries recorded into the source store — their line quantities can be
+  // pulled straight onto the transfer instead of retyping each one. Loaded only
+  // when the picker is actually opened.
+  const invoicesQuery = useQuery({
+    queryKey: ['transfer-source-invoices', fromStoreId],
+    queryFn: () => purchasesApi.list({ store_id: fromStoreId, limit: 25 }),
+    enabled: invoicePickerOpen && Boolean(fromStoreId),
+  });
 
   const allStores = useMemo(() => storesQuery.data ?? [], [storesQuery.data]);
   const directory = useMemo(() => directoryQuery.data ?? [], [directoryQuery.data]);
@@ -132,6 +143,7 @@ export default function NewTransferScreen() {
       // Availability is per-store, so every line's headroom is now meaningless.
       setLines([]);
       setSearch('');
+      setInvoicePickerOpen(false);
       if (next === toStoreId) setToStoreId('');
     };
 
@@ -167,6 +179,58 @@ export default function NewTransferScreen() {
       },
     ]);
     setSearch('');
+  }
+
+  /**
+   * Pulls the line quantities from a recorded delivery onto the transfer. Only
+   * products the source store actually stocks are taken; the quantity is the
+   * invoiced amount (what arrived), which the person still has to check against
+   * the shelf before sending — a warning says so.
+   */
+  function loadFromInvoice(invoice: SupplierInvoice) {
+    const catalogueById = new Map(items.map((p) => [p.id, p]));
+    const onTransfer = new Set(lines.map((l) => l.product_id));
+    const toAdd: Line[] = [];
+    const notStocked: string[] = [];
+    let alreadyOn = 0;
+
+    for (const item of invoice.items) {
+      if (!item.product_id || item.quantity <= 0) continue;
+      const product = catalogueById.get(item.product_id);
+      if (!product) {
+        notStocked.push(item.product_name);
+        continue;
+      }
+      if (onTransfer.has(item.product_id) || toAdd.some((l) => l.product_id === item.product_id)) {
+        alreadyOn += 1;
+        continue;
+      }
+      toAdd.push({
+        product_id: product.id,
+        name: product.name,
+        sku: product.sku,
+        available: product.quantity,
+        quantity: String(Math.max(1, Math.round(item.quantity))),
+      });
+    }
+
+    if (toAdd.length > 0) setLines((current) => [...current, ...toAdd]);
+    setInvoicePickerOpen(false);
+    setSearch('');
+
+    const parts = [
+      toAdd.length > 0
+        ? `${toAdd.length} line${toAdd.length === 1 ? '' : 's'} loaded from ${invoice.invoice_number}.`
+        : `Nothing new to load from ${invoice.invoice_number}.`,
+    ];
+    if (alreadyOn > 0) parts.push(`${alreadyOn} already on the transfer — left as ${alreadyOn === 1 ? 'it is' : 'they are'}.`);
+    if (notStocked.length > 0) {
+      parts.push(`Not stocked at ${fromStore?.name ?? 'the source store'}: ${notStocked.join(', ')}.`);
+    }
+    if (toAdd.length > 0) {
+      parts.push('Each quantity is what the invoice says arrived — check it against the shelf before sending.');
+    }
+    Alert.alert(toAdd.length > 0 ? 'Loaded from invoice' : 'Nothing added', parts.join('\n\n'));
   }
 
   function setQuantity(productId: string, value: string) {
@@ -410,7 +474,63 @@ export default function NewTransferScreen() {
             ) : null}
 
             <View style={{ gap: spacing.sm }}>
-              <Text style={styles.sectionLabel}>Add products</Text>
+              <View style={styles.addHead}>
+                <Text style={styles.sectionLabel}>Add products</Text>
+                <Pressable
+                  onPress={() => setInvoicePickerOpen((v) => !v)}
+                  hitSlop={6}
+                  style={styles.fromInvoiceBtn}
+                >
+                  <Icon
+                    name={invoicePickerOpen ? 'x' : 'file-text'}
+                    size={13}
+                    color={colors.primary}
+                  />
+                  <Text style={styles.fromInvoiceText}>
+                    {invoicePickerOpen ? 'Close' : 'From an invoice'}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {invoicePickerOpen ? (
+                <View style={styles.invoicePanel}>
+                  {invoicesQuery.isLoading ? (
+                    <Loading label="Loading recent deliveries" />
+                  ) : invoicesQuery.isError ? (
+                    <Pressable onPress={() => void invoicesQuery.refetch()}>
+                      <Text style={styles.noResults}>Couldn’t load invoices. Tap to retry.</Text>
+                    </Pressable>
+                  ) : (invoicesQuery.data ?? []).length === 0 ? (
+                    <Text style={styles.noResults}>
+                      No deliveries have been recorded into {fromStore?.name ?? 'this store'} yet.
+                    </Text>
+                  ) : (
+                    (invoicesQuery.data ?? []).map((invoice, index) => (
+                      <Pressable
+                        key={invoice.id}
+                        onPress={() => loadFromInvoice(invoice)}
+                        style={({ pressed }) => [
+                          styles.invoiceRow,
+                          index > 0 && styles.resultDivider,
+                          pressed && { backgroundColor: colors.surfaceSunken },
+                        ]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.resultName} numberOfLines={1}>
+                            {invoice.invoice_number} · {invoice.supplier_name}
+                          </Text>
+                          <Text style={styles.resultSku} numberOfLines={1}>
+                            {new Date(invoice.invoice_date).toLocaleDateString()} ·{' '}
+                            {invoice.items.length} product{invoice.items.length === 1 ? '' : 's'}
+                          </Text>
+                        </View>
+                        <Icon name="download" size={18} color={colors.primary} />
+                      </Pressable>
+                    ))
+                  )}
+                </View>
+              ) : null}
+
               <View style={styles.searchBox}>
                 <Icon name="search" size={16} color={colors.textFaint} />
                 <TextInput
@@ -777,6 +897,29 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, fontFamily: font.medium, fontSize: 15, color: colors.text, padding: 0 },
   noResults: { fontFamily: font.regular, fontSize: 13, color: colors.textMuted, paddingHorizontal: 2 },
+
+  addHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  fromInvoiceBtn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  fromInvoiceText: { fontFamily: font.semibold, fontSize: 12, color: colors.primary },
+  invoicePanel: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  invoiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
 
   resultCard: {
     backgroundColor: colors.surface,
