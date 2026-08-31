@@ -14,6 +14,12 @@ import { router, useLocalSearchParams } from 'expo-router';
 
 import { useAuth } from '../src/store/auth';
 import {
+  forgetAccount,
+  listRememberedAccounts,
+  rememberAccount,
+  type RememberedAccount,
+} from '../src/store/rememberedAccounts';
+import {
   CONFIGURED_BASE_URL,
   apiBaseUrlHost,
   errorMessage,
@@ -24,7 +30,7 @@ import {
   setApiBaseUrl,
   takeSessionEndedReason,
 } from '../src/api/client';
-import { Button, Icon } from '../src/ui/components';
+import { Button, Icon, Toggle } from '../src/ui/components';
 import { bevel, colors, font, radius, shadow, spacing } from '../src/theme';
 
 export default function LoginScreen() {
@@ -38,6 +44,19 @@ export default function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [focused, setFocused] = useState<'email' | 'password' | 'server' | null>(null);
+
+  // Logins saved on this device. When there are any, the screen opens on a
+  // pick-a-name list instead of the empty form.
+  const [remembered, setRemembered] = useState<RememberedAccount[]>([]);
+  const [mode, setMode] = useState<'pick' | 'form'>('form');
+  const [rememberMe, setRememberMe] = useState(false);
+
+  useEffect(() => {
+    void listRememberedAccounts().then((accounts) => {
+      setRemembered(accounts);
+      if (accounts.length > 0 && !params.email) setMode('pick');
+    });
+  }, [params.email]);
 
   // The server address is editable here and nowhere else that matters: if it is
   // wrong, nobody can sign in, so a screen behind authentication would be the
@@ -58,8 +77,10 @@ export default function LoginScreen() {
     if (reason) setError(reason);
   }, []);
 
-  async function submit() {
-    if (!email.trim() || !password) {
+  async function submit(saved?: RememberedAccount) {
+    const useEmail = (saved?.email ?? email).trim();
+    const usePassword = saved?.password ?? password;
+    if (!useEmail || !usePassword) {
       setError('Enter your email and password.');
       return;
     }
@@ -68,19 +89,51 @@ export default function LoginScreen() {
     setUnreachable(false);
     setDeviceBlocked(false);
     try {
-      await signIn(email.trim(), password);
+      await signIn(useEmail, usePassword);
+      if (saved || rememberMe) {
+        const user = useAuth.getState().user;
+        if (user) {
+          await rememberAccount({
+            email: useEmail,
+            password: usePassword,
+            full_name: user.full_name,
+            role: user.role,
+          });
+        }
+      }
     } catch (err) {
       setError(errorMessage(err));
       // A dead link and a wrong password look identical to a tired cashier, so
       // say which one it is and point at the thing that fixes it.
-      setUnreachable(isNetworkError(err));
+      const offline = isNetworkError(err);
+      const conflict = isDeviceConflict(err);
+      setUnreachable(offline);
       // Being refused because another handset holds the account is not a wrong
       // password, and treating it like one sends people round in circles
       // retyping something that was already correct.
-      setDeviceBlocked(isDeviceConflict(err));
+      setDeviceBlocked(conflict);
+
+      // A saved login the server actually rejected (password changed, account
+      // deactivated) is dead weight and a trap — drop it so nobody keeps
+      // tapping it. A network drop or a device clash is not the login's fault.
+      if (saved && !offline && !conflict) {
+        await forgetAccount(saved.email);
+        const left = await listRememberedAccounts();
+        setRemembered(left);
+        setEmail(saved.email);
+        setMode('form');
+        setError('That saved login no longer works — sign in again to update it.');
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  async function forgetOne(account: RememberedAccount) {
+    await forgetAccount(account.email);
+    const left = await listRememberedAccounts();
+    setRemembered(left);
+    if (left.length === 0) setMode('form');
   }
 
   async function saveServer() {
@@ -153,6 +206,66 @@ export default function LoginScreen() {
               <Text style={styles.tagline}>Inventory &amp; Sales</Text>
             </View>
 
+            {mode === 'pick' ? (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Choose your login</Text>
+                <Text style={styles.cardHint}>Tap your name to sign in on this device</Text>
+
+                {error ? (
+                  <View style={styles.errorBox}>
+                    <Icon name="alert-circle" size={15} color={colors.danger} />
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                ) : null}
+
+                <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+                  {remembered.map((account) => (
+                    <View key={account.email} style={styles.acctRow}>
+                      <Pressable
+                        style={styles.acctMain}
+                        onPress={() => void submit(account)}
+                        disabled={busy}
+                      >
+                        <View style={styles.acctAvatar}>
+                          <Text style={styles.acctInitials}>{initials(account.full_name)}</Text>
+                        </View>
+                        <View style={styles.flex}>
+                          <Text style={styles.acctName} numberOfLines={1}>
+                            {account.full_name || account.email}
+                          </Text>
+                          <Text style={styles.acctMeta} numberOfLines={1}>
+                            {prettyRole(account.role)} · {account.email}
+                          </Text>
+                        </View>
+                        {busy ? null : <Icon name="chevron-right" size={18} color={colors.textFaint} />}
+                      </Pressable>
+                      <Pressable
+                        onPress={() => void forgetOne(account)}
+                        hitSlop={10}
+                        disabled={busy}
+                        style={styles.acctForget}
+                      >
+                        <Icon name="x" size={16} color={colors.textFaint} />
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+
+                <Pressable
+                  onPress={() => {
+                    setError(null);
+                    setEmail('');
+                    setPassword('');
+                    setMode('form');
+                  }}
+                  hitSlop={10}
+                  disabled={busy}
+                  style={styles.forgotLink}
+                >
+                  <Text style={styles.forgotText}>Sign in with a different account</Text>
+                </Pressable>
+              </View>
+            ) : (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Welcome back</Text>
               <Text style={styles.cardHint}>Sign in to open your till</Text>
@@ -189,7 +302,7 @@ export default function LoginScreen() {
                   autoCapitalize="none"
                   style={styles.input}
                   editable={!busy}
-                  onSubmitEditing={submit}
+                  onSubmitEditing={() => submit()}
                   returnKeyType="go"
                 />
                 <Pressable onPress={() => setShowPassword((v) => !v)} hitSlop={10}>
@@ -222,10 +335,20 @@ export default function LoginScreen() {
                 </View>
               ) : null}
 
+              <View style={styles.rememberRow}>
+                <Toggle
+                  label="Remember this login on this device"
+                  hint="Next time, tap your name to sign in without typing."
+                  value={rememberMe}
+                  onChange={setRememberMe}
+                  disabled={busy}
+                />
+              </View>
+
               <Button
                 label="Sign In"
                 size="lg"
-                onPress={submit}
+                onPress={() => submit()}
                 loading={busy}
                 style={{ marginTop: spacing.lg }}
               />
@@ -238,7 +361,22 @@ export default function LoginScreen() {
               >
                 <Text style={styles.forgotText}>Forgot password?</Text>
               </Pressable>
+
+              {remembered.length > 0 ? (
+                <Pressable
+                  onPress={() => {
+                    setError(null);
+                    setMode('pick');
+                  }}
+                  hitSlop={10}
+                  disabled={busy}
+                  style={styles.forgotLink}
+                >
+                  <Text style={styles.forgotText}>Back to saved logins</Text>
+                </Pressable>
+              ) : null}
             </View>
+            )}
 
             {serverOpen ? (
               <View style={styles.serverCard}>
@@ -314,6 +452,21 @@ export default function LoginScreen() {
       </SafeAreaView>
     </View>
   );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
+}
+
+function prettyRole(role: string): string {
+  const r = role.toLowerCase();
+  if (r.includes('admin')) return 'Administrator';
+  if (r.includes('manager')) return 'Manager';
+  if (r.includes('cashier')) return 'Cashier';
+  return role || 'Staff';
 }
 
 const styles = StyleSheet.create({
@@ -457,6 +610,37 @@ const styles = StyleSheet.create({
 
   forgotLink: { alignSelf: 'center', marginTop: spacing.md, paddingVertical: spacing.xs },
   forgotText: { fontFamily: font.medium, fontSize: 13, color: colors.primary },
+
+  rememberRow: { marginTop: spacing.md },
+
+  acctRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  acctMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingLeft: spacing.md,
+  },
+  acctAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  acctInitials: { fontFamily: font.bold, fontSize: 13, color: colors.primary },
+  acctName: { fontFamily: font.semibold, fontSize: 15, color: colors.text },
+  acctMeta: { fontFamily: font.regular, fontSize: 11, color: colors.textMuted, marginTop: 1 },
+  acctForget: { padding: spacing.md },
 
   footnote: {
     fontFamily: font.medium,
