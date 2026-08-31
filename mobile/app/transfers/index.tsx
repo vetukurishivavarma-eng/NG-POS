@@ -85,6 +85,7 @@ export default function TransfersScreen() {
 
 function TransferCard({ transfer }: { transfer: Transfer }) {
   const [open, setOpen] = useState(false);
+  const canCreate = useCan('transfers.create');
 
   const units = transfer.items.reduce((sum, i) => sum + i.quantity, 0);
   const tone = statusTone(transfer.status);
@@ -160,6 +161,13 @@ function TransferCard({ transfer }: { transfer: Transfer }) {
           label="Print"
           onPress={() => void printTransferNote(transfer)}
         />
+        {canCreate ? (
+          <PrintChip
+            icon="repeat"
+            label="Send again"
+            onPress={() => router.push(`/transfers/new?repeat=${transfer.id}`)}
+          />
+        ) : null}
       </View>
     </Pressable>
   );

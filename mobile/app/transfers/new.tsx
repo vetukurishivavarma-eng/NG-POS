@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
@@ -59,6 +59,31 @@ export default function NewTransferScreen() {
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [invoicePickerOpen, setInvoicePickerOpen] = useState(false);
+  const [seedNote, setSeedNote] = useState<string | null>(null);
+
+  // Opened against a source document — a recorded delivery (`?invoice=`) or an
+  // earlier transfer to repeat (`?repeat=`). The screen then pins the source
+  // store and pre-loads the lines, the same way the Refund screen opens against
+  // a receipt.
+  const params = useLocalSearchParams<{ invoice?: string; repeat?: string }>();
+  const invoiceId = typeof params.invoice === 'string' ? params.invoice : undefined;
+  const repeatId = typeof params.repeat === 'string' ? params.repeat : undefined;
+  const seededRef = useRef(false);
+
+  const originInvoiceQuery = useQuery({
+    queryKey: ['purchase', invoiceId],
+    queryFn: () => purchasesApi.get(invoiceId as string),
+    enabled: Boolean(invoiceId),
+  });
+  const originTransfersQuery = useQuery({
+    queryKey: ['transfers'],
+    queryFn: () => transfersApi.list(),
+    enabled: Boolean(repeatId),
+  });
+  const originInvoice = originInvoiceQuery.data ?? null;
+  const originTransfer = repeatId
+    ? (originTransfersQuery.data ?? []).find((t) => t.id === repeatId) ?? null
+    : null;
 
   const storesQuery = useQuery({ queryKey: ['stores'], queryFn: storesApi.list });
   // Two lists on purpose. `/stores` narrows to the shops this person works at,
@@ -126,6 +151,57 @@ export default function NewTransferScreen() {
     return filterCatalogue(items, needle, null).slice(0, MAX_RESULTS);
   }, [items, search]);
 
+  const originStoreId = originInvoice?.store_id ?? originTransfer?.from_store_id ?? null;
+  const originLabel = originInvoice
+    ? `Delivery ${originInvoice.invoice_number} · ${originInvoice.supplier_name}`
+    : originTransfer
+      ? `Transfer ${originTransfer.reference}`
+      : null;
+
+  /**
+   * Opened against a document: pin the source store to where the goods are, then
+   * seed the lines from it once its catalogue is loaded. Runs exactly once.
+   */
+  useEffect(() => {
+    if (seededRef.current || !originStoreId) return;
+
+    const allowed =
+      roleLevel(user) === 'admin' || sourceStores.some((s) => s.id === originStoreId);
+    if (!allowed) {
+      seededRef.current = true;
+      setSeedNote('This stock is at a shop you cannot send from, so nothing was loaded.');
+      return;
+    }
+
+    if (fromStoreId !== originStoreId) {
+      setFromStoreId(originStoreId);
+      setToStoreId((current) => (current === originStoreId ? '' : current));
+      return; // wait for that store's catalogue
+    }
+    if (catalogue.isLoading) return;
+    if (catalogue.isError || items.length === 0) return;
+
+    seededRef.current = true;
+    const entries = originInvoice
+      ? originInvoice.items.map((it) => ({
+          product_id: it.product_id,
+          name: it.product_name,
+          quantity: it.quantity,
+        }))
+      : (originTransfer?.items ?? []).map((it) => ({
+          product_id: it.product_id,
+          name: it.product_name,
+          quantity: it.quantity,
+        }));
+
+    const r = addLinesFromSource(entries);
+    const notes: string[] = [];
+    if (r.added === 0) notes.push('None of these products are stocked here.');
+    if (r.notStocked.length > 0) notes.push(`Skipped (not stocked here): ${r.notStocked.join(', ')}.`);
+    if (r.added > 0) notes.push('Quantities are from the document — check them against the shelf before sending.');
+    setSeedNote(notes.join(' ') || null);
+  }, [originStoreId, fromStoreId, catalogue.isLoading, catalogue.isError, items.length, originInvoice, originTransfer, sourceStores, user]);
+
   const totalUnits = lines.reduce((sum, l) => sum + (parseQuantity(l.quantity) ?? 0), 0);
   const problems = lines.map((l) => lineProblem(l, fromStore));
   const ready =
@@ -182,26 +258,28 @@ export default function NewTransferScreen() {
   }
 
   /**
-   * Pulls the line quantities from a recorded delivery onto the transfer. Only
-   * products the source store actually stocks are taken; the quantity is the
-   * invoiced amount (what arrived), which the person still has to check against
-   * the shelf before sending — a warning says so.
+   * Core of "load from a document": turns a list of (product, quantity) rows
+   * into transfer lines, keeping only what the source store stocks and skipping
+   * anything already on the transfer. Returns what happened so the caller can
+   * tell the user.
    */
-  function loadFromInvoice(invoice: SupplierInvoice) {
+  function addLinesFromSource(
+    entries: { product_id: string | null; name: string; quantity: number }[]
+  ): { added: number; alreadyOn: number; notStocked: string[] } {
     const catalogueById = new Map(items.map((p) => [p.id, p]));
     const onTransfer = new Set(lines.map((l) => l.product_id));
     const toAdd: Line[] = [];
     const notStocked: string[] = [];
     let alreadyOn = 0;
 
-    for (const item of invoice.items) {
-      if (!item.product_id || item.quantity <= 0) continue;
-      const product = catalogueById.get(item.product_id);
+    for (const entry of entries) {
+      if (!entry.product_id || entry.quantity <= 0) continue;
+      const product = catalogueById.get(entry.product_id);
       if (!product) {
-        notStocked.push(item.product_name);
+        notStocked.push(entry.name);
         continue;
       }
-      if (onTransfer.has(item.product_id) || toAdd.some((l) => l.product_id === item.product_id)) {
+      if (onTransfer.has(entry.product_id) || toAdd.some((l) => l.product_id === entry.product_id)) {
         alreadyOn += 1;
         continue;
       }
@@ -210,27 +288,45 @@ export default function NewTransferScreen() {
         name: product.name,
         sku: product.sku,
         available: product.quantity,
-        quantity: String(Math.max(1, Math.round(item.quantity))),
+        quantity: String(Math.max(1, Math.round(entry.quantity))),
       });
     }
 
     if (toAdd.length > 0) setLines((current) => [...current, ...toAdd]);
+    return { added: toAdd.length, alreadyOn, notStocked };
+  }
+
+  /**
+   * Pulls the line quantities from a recorded delivery onto the transfer. The
+   * quantity is the invoiced amount (what arrived), which the person still has
+   * to check against the shelf before sending — a warning says so.
+   */
+  function loadFromInvoice(invoice: SupplierInvoice) {
+    const r = addLinesFromSource(
+      invoice.items.map((it) => ({
+        product_id: it.product_id,
+        name: it.product_name,
+        quantity: it.quantity,
+      }))
+    );
     setInvoicePickerOpen(false);
     setSearch('');
 
     const parts = [
-      toAdd.length > 0
-        ? `${toAdd.length} line${toAdd.length === 1 ? '' : 's'} loaded from ${invoice.invoice_number}.`
+      r.added > 0
+        ? `${r.added} line${r.added === 1 ? '' : 's'} loaded from ${invoice.invoice_number}.`
         : `Nothing new to load from ${invoice.invoice_number}.`,
     ];
-    if (alreadyOn > 0) parts.push(`${alreadyOn} already on the transfer — left as ${alreadyOn === 1 ? 'it is' : 'they are'}.`);
-    if (notStocked.length > 0) {
-      parts.push(`Not stocked at ${fromStore?.name ?? 'the source store'}: ${notStocked.join(', ')}.`);
+    if (r.alreadyOn > 0) {
+      parts.push(`${r.alreadyOn} already on the transfer — left as ${r.alreadyOn === 1 ? 'it is' : 'they are'}.`);
     }
-    if (toAdd.length > 0) {
+    if (r.notStocked.length > 0) {
+      parts.push(`Not stocked at ${fromStore?.name ?? 'the source store'}: ${r.notStocked.join(', ')}.`);
+    }
+    if (r.added > 0) {
       parts.push('Each quantity is what the invoice says arrived — check it against the shelf before sending.');
     }
-    Alert.alert(toAdd.length > 0 ? 'Loaded from invoice' : 'Nothing added', parts.join('\n\n'));
+    Alert.alert(r.added > 0 ? 'Loaded from invoice' : 'Nothing added', parts.join('\n\n'));
   }
 
   function setQuantity(productId: string, value: string) {
@@ -375,6 +471,19 @@ export default function NewTransferScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        {originLabel ? (
+          <View style={styles.originCard}>
+            <Icon name="corner-up-right" size={16} color={colors.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.originLabel}>Transferring from</Text>
+              <Text style={styles.originValue} numberOfLines={2}>
+                {originLabel}
+              </Text>
+              {seedNote ? <Text style={styles.originNote}>{seedNote}</Text> : null}
+            </View>
+          </View>
+        ) : null}
+
         <View style={styles.routeCard}>
           {sourceIsFixed ? (
             <View>
@@ -897,6 +1006,26 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, fontFamily: font.medium, fontSize: 15, color: colors.text, padding: 0 },
   noResults: { fontFamily: font.regular, fontSize: 13, color: colors.textMuted, paddingHorizontal: 2 },
+
+  originCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+  },
+  originLabel: {
+    fontFamily: font.semibold,
+    fontSize: 10,
+    color: colors.primary,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  originValue: { fontFamily: font.bold, fontSize: 14, color: colors.text, marginTop: 2 },
+  originNote: { fontFamily: font.regular, fontSize: 11, color: colors.textMuted, marginTop: 4, lineHeight: 15 },
 
   addHead: {
     flexDirection: 'row',

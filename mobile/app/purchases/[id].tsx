@@ -34,6 +34,7 @@ export default function PurchaseDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const canPay = useCan('purchases.write');
   const canDelete = useCan('purchases.delete');
+  const canTransfer = useCan('transfers.create');
 
   const [paying, setPaying] = useState(false);
   const [amount, setAmount] = useState('');
@@ -279,6 +280,14 @@ export default function PurchaseDetailScreen() {
               </View>
             ))}
           </View>
+          {canTransfer ? (
+            <Button
+              label="Transfer This Stock"
+              icon="corner-up-right"
+              variant="secondary"
+              onPress={() => router.push(`/transfers/new?invoice=${invoice.id}`)}
+            />
+          ) : null}
         </View>
 
         {/* -------------------------------------------------------- totals */}
