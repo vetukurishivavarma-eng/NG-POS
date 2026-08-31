@@ -105,8 +105,6 @@ const AUDITED: Record<string, AuditModel> = {
     label: (r) => String(r.date ?? ''),
     storeId: (r) => (r.storeId as string) ?? null,
   },
-  Warehouse: { entity: 'warehouse', label: (r) => String(r.name ?? '') },
-  WarehouseStock: { entity: 'warehouse_stock', label: () => 'Warehouse stock', minor: true },
   Transfer: {
     entity: 'transfer',
     label: (r) => String(r.reference ?? ''),

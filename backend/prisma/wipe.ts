@@ -56,8 +56,6 @@ const WIPE = [
   'supplier_invoices',
   'suppliers',
   'stock_movements',
-  'warehouse_stock',
-  'warehouses',
   'store_prices',
   'inventory',
   'products',

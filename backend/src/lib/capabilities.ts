@@ -26,7 +26,6 @@ export const CAPABILITIES = [
   // the margin on it, and the owner asked for it that way — the buying price is
   // his business with his suppliers.
   'costs.view',
-  'warehouses.write',
   'transfers.create',
   'stores.write',
   'stores.delete',

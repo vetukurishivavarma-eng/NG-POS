@@ -592,32 +592,6 @@ describe('mobile API contract', () => {
     expect(row.selling_price).toBe(60);
   });
 
-  /* ------------------------------------------------------------ warehouses */
-
-  it('warehouses list, create, stock and deactivate', async () => {
-    const created = await post('/api/warehouses', world.tokens.admin, {
-      name: 'Central Depot',
-      code: 'cd1',
-    });
-    expect(created.status).toBe(201);
-    expectShape(created.body, ['id', 'name', 'code', 'is_active'], 'Warehouse (created)');
-    expect(created.body.code).toBe('CD1');
-
-    const list = await get('/api/warehouses', world.tokens.admin);
-    expect(list.status).toBe(200);
-    expectShape(
-      list.body[0],
-      ['id', 'organization_id', 'name', 'code', 'is_active', 'stock_items', 'created_at'],
-      'Warehouse'
-    );
-
-    const stock = await get(`/api/warehouses/${created.body.id}/stock`, world.tokens.admin);
-    expect(stock.status).toBe(200);
-    expect(Array.isArray(stock.body)).toBe(true);
-
-    expect((await del(`/api/warehouses/${created.body.id}`, world.tokens.admin)).status).toBe(200);
-  });
-
   /* ------------------------------------------------------------- transfers */
 
   it('transfers.create moves stock and transfers.list returns the shape', async () => {

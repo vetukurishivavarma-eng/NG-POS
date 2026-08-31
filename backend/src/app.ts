@@ -25,7 +25,6 @@ import {
   syncRouter,
   transfersRouter,
   usersRouter,
-  warehousesRouter,
 } from './routes/misc.js';
 
 export function createApp() {
@@ -87,7 +86,6 @@ export function createApp() {
   app.use('/api/purchases', supplierInvoicesRouter);
   app.use('/api/transactions', transactionsRouter);
   app.use('/api/store-pricing', storePricingRouter);
-  app.use('/api/warehouses', warehousesRouter);
   app.use('/api/transfers', transfersRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/devices', devicesRouter);

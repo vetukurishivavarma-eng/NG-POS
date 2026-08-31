@@ -471,25 +471,6 @@ export interface StorePriceRow {
   difference: number;
 }
 
-/* ---------------------------------------------------------------- warehouses */
-
-export interface Warehouse {
-  id: string;
-  organization_id: string;
-  name: string;
-  code: string;
-  is_active: boolean;
-  /** Number of distinct products held, not total units. */
-  stock_items: number;
-  created_at: string;
-}
-
-export interface WarehouseStockRow {
-  product_id: string;
-  product: Product;
-  quantity: number;
-}
-
 /* ----------------------------------------------------------------- transfers */
 
 export interface TransferItem {

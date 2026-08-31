@@ -120,7 +120,6 @@ export type Permission =
   | 'stock.adjust'
   | 'pricing.write'
   | 'costs.view'
-  | 'warehouses.write'
   | 'transfers.create'
   | 'stores.write'
   | 'stores.delete'
@@ -150,7 +149,6 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   // elsewhere: if it were wrong, a handset on an old token would show the cost
   // price rather than merely offer a button the server then refuses.
   'costs.view': ['admin'],
-  'warehouses.write': ['admin'],
   'transfers.create': ['admin', 'manager'],
   // Opening a shop is an organisation-level act, so admin only — the same guard
   // the server puts on POST /stores.

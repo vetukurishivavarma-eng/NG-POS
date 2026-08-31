@@ -301,7 +301,6 @@ export default function RootLayout() {
             name="transfers/new"
             options={{ presentation: 'modal', headerShown: true, title: 'New Transfer' }}
           />
-          <Stack.Screen name="warehouses" options={{ headerShown: true, title: 'Warehouses' }} />
           <Stack.Screen name="analytics" options={{ headerShown: true, title: 'Analytics' }} />
           <Stack.Screen name="history" options={{ headerShown: true, title: 'History' }} />
           <Stack.Screen

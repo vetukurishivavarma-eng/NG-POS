@@ -53,8 +53,6 @@ import type {
   User,
   UserDraft,
   VersionCheck,
-  Warehouse,
-  WarehouseStockRow,
 } from './types';
 
 export const auth = {
@@ -340,21 +338,6 @@ export const storePricing = {
   /** Removes the override so the catalogue price applies again. */
   remove: (id: string) =>
     api.delete<{ detail: string }>(`/store-pricing/${id}`).then((r) => r.data),
-};
-
-export const warehouses = {
-  list: () => api.get<Warehouse[]>('/warehouses').then((r) => r.data),
-  /**
-   * Returns only these four fields — not a full `Warehouse`. Refetch the list
-   * for `stock_items` and `created_at` rather than trusting this response.
-   */
-  create: (name: string, code: string) =>
-    api
-      .post<Pick<Warehouse, 'id' | 'name' | 'code' | 'is_active'>>('/warehouses', { name, code })
-      .then((r) => r.data),
-  stock: (id: string) =>
-    api.get<WarehouseStockRow[]>(`/warehouses/${id}/stock`).then((r) => r.data),
-  remove: (id: string) => api.delete<{ detail: string }>(`/warehouses/${id}`).then((r) => r.data),
 };
 
 export const transfers = {

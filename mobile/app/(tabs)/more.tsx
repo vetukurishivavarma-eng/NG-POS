@@ -38,7 +38,6 @@ export default function MoreScreen() {
   const canPrice = useCan('pricing.write');
   const canTransfer = useCan('transfers.create');
   const canViewStaff = useCan('users.view');
-  const canWarehouses = useCan('warehouses.write');
   const canSettings = useCan('settings.write');
   const canImport = useCan('products.import');
   const canShops = useCan('stores.write');
@@ -232,27 +231,16 @@ export default function MoreScreen() {
           </View>
         ) : null}
 
-        {canTransfer || canWarehouses ? (
+        {canTransfer ? (
           <View>
             <SectionLabel>Distribution</SectionLabel>
             <View style={styles.card}>
-              {canTransfer ? (
-                <LinkRow
-                  icon="truck"
-                  label="Transfers"
-                  value="Move stock between stores"
-                  onPress={() => router.push('/transfers')}
-                />
-              ) : null}
-              {canTransfer && canWarehouses ? <View style={styles.divider} /> : null}
-              {canWarehouses ? (
-                <LinkRow
-                  icon="grid"
-                  label="Warehouses"
-                  value="Holding stock outside the shops"
-                  onPress={() => router.push('/warehouses')}
-                />
-              ) : null}
+              <LinkRow
+                icon="truck"
+                label="Transfers"
+                value="Move stock between shops and the warehouse"
+                onPress={() => router.push('/transfers')}
+              />
             </View>
           </View>
         ) : null}
