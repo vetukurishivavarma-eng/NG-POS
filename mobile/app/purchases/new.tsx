@@ -9,6 +9,7 @@ import { errorMessage } from '../../src/api/client';
 import { useStoreSelection } from '../../src/store/storeSelection';
 import { useCan } from '../../src/store/auth';
 import { filterCatalogue, useCatalogue } from '../../src/hooks/useCatalogue';
+import { useLeaveGuard } from '../../src/hooks/useLeaveGuard';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/theme';
 import {
@@ -65,6 +66,9 @@ export default function NewPurchaseScreen() {
   const [method, setMethod] = useState<SupplierPaymentMethod>('cash');
   const [paymentRef, setPaymentRef] = useState('');
   const [busy, setBusy] = useState(false);
+  // Flips once the invoice is filed, so the leave guard stops asking about an
+  // entry that has already been saved.
+  const [submitted, setSubmitted] = useState(false);
 
   const activeSuppliers = (suppliersQuery.data ?? []).filter((s) => s.is_active);
 
@@ -124,8 +128,34 @@ export default function NewPurchaseScreen() {
     setLines((current) => current.filter((l) => l.product.id !== id));
   }
 
-  async function submit() {
-    if (!canSubmit || !storeId || !supplierId) return;
+  useLeaveGuard({
+    hasUnsavedWork: () =>
+      !submitted &&
+      (lines.length > 0 ||
+        Boolean(supplierId) ||
+        invoiceNumber.trim().length > 0 ||
+        notes.trim().length > 0),
+    title: 'Leave without saving?',
+    message: 'This delivery has not been recorded yet.',
+    finishLabel: 'Post invoice',
+    onFinish: async () => {
+      if (!canSubmit) {
+        Alert.alert(
+          'Not ready to post',
+          'Choose a supplier, enter the invoice number and add at least one line before posting.'
+        );
+        return false;
+      }
+      // submit() shows its own "Delivery recorded" prompt on success; leave
+      // the screen through that rather than popping it from here.
+      await submit();
+      return false;
+    },
+    onDiscard: () => {},
+  });
+
+  async function submit(): Promise<boolean> {
+    if (!canSubmit || !storeId || !supplierId) return false;
     setBusy(true);
     try {
       const invoice = await purchasesApi.create({
@@ -159,6 +189,7 @@ export default function NewPurchaseScreen() {
       void queryClient.invalidateQueries({ queryKey: ['catalogue', storeId] });
       void queryClient.invalidateQueries({ queryKey: ['movements', storeId] });
 
+      setSubmitted(true);
       Alert.alert(
         'Delivery recorded',
         invoice.balance > 0
@@ -166,8 +197,10 @@ export default function NewPurchaseScreen() {
           : `${lines.length} product${lines.length === 1 ? '' : 's'} added to ${store?.name}, paid in full.`,
         [{ text: 'View invoice', onPress: () => router.replace(`/purchases/${invoice.id}`) }]
       );
+      return true;
     } catch (err) {
       Alert.alert("Couldn't record the delivery", errorMessage(err));
+      return false;
     } finally {
       setBusy(false);
     }

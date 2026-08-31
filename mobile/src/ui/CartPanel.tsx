@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   computeTotals,
@@ -11,6 +11,7 @@ import {
   type CartLine,
 } from '../store/cart';
 import { useCheckout } from '../hooks/useCheckout';
+import { useLeaveGuard } from '../hooks/useLeaveGuard';
 import { useSync } from '../db/sync';
 import { colors, font, formatKwacha, radius, spacing, splitAmount } from '../theme';
 import { Button, EmptyState, Icon, QtyStepper } from './components';
@@ -19,7 +20,20 @@ import { Button, EmptyState, Icon, QtyStepper } from './components';
  * The cart body. Rendered inside a modal on phones and docked to the right of
  * the product grid on tablets — same component, same behaviour, both places.
  */
-export function CartPanel({ onDone, docked = false }: { onDone?: () => void; docked?: boolean }) {
+export function CartPanel({
+  onDone,
+  docked = false,
+  guardLeave = false,
+}: {
+  onDone?: () => void;
+  docked?: boolean;
+  /**
+   * Ask before leaving with an uncharged cart. Set only where this panel owns
+   * a dismissable screen (the phone cart modal) — on the tablet it is docked
+   * into the Sell tab, which is never removed, so there is nothing to guard.
+   */
+  guardLeave?: boolean;
+}) {
   const lines = useCart((s) => s.lines);
   const setQuantity = useCart((s) => s.setQuantity);
   const setPriceOverride = useCart((s) => s.setPriceOverride);
@@ -30,6 +44,28 @@ export function CartPanel({ onDone, docked = false }: { onDone?: () => void; doc
   const online = useSync((s) => s.online);
 
   const { method, setMethod, busy, complete, canComplete } = useCheckout(onDone);
+
+  useLeaveGuard({
+    hasUnsavedWork: () => guardLeave && useCart.getState().lines.length > 0,
+    title: 'Leave this sale?',
+    message: 'The items in the cart have not been charged yet.',
+    finishLabel: 'Charge now',
+    onFinish: async () => {
+      if (useCart.getState().lines.some(isBelowCost)) {
+        Alert.alert(
+          'Fix the price first',
+          'A line is priced below cost, so the sale would be rejected. Raise it, or discard the sale.'
+        );
+        return false;
+      }
+      // complete() handles its own navigation (receipt prompt, then onDone),
+      // so let that flow run rather than popping the screen from here.
+      await complete();
+      return false;
+    },
+    onDiscard: () => clearCart(),
+  });
+
   const totals = useMemo(() => computeTotals(lines), [lines]);
   const amount = splitAmount(totals.total);
   const hasBelowCostLine = lines.some(isBelowCost);

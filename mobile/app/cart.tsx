@@ -10,7 +10,7 @@ import { colors } from '../src/theme';
 export default function CartScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <CartPanel onDone={() => router.back()} />
+      <CartPanel onDone={() => router.back()} guardLeave />
     </SafeAreaView>
   );
 }
