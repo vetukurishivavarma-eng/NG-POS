@@ -60,6 +60,10 @@ export default function NewPurchaseScreen() {
   const [lines, setLines] = useState<Line[]>([]);
   const [picking, setPicking] = useState(false);
   const [search, setSearch] = useState('');
+  // The picker row currently showing its quantity/cost fields, and their drafts.
+  const [pickerExpandedId, setPickerExpandedId] = useState<string | null>(null);
+  const [pickerQty, setPickerQty] = useState('');
+  const [pickerCost, setPickerCost] = useState('');
 
   const [settlement, setSettlement] = useState<Settlement>('credit');
   const [paidAmount, setPaidAmount] = useState('');
@@ -101,23 +105,35 @@ export default function NewPurchaseScreen() {
     paymentValid &&
     !busy;
 
-  function addLine(product: ProductWithStock) {
-    setPicking(false);
-    setSearch('');
+  /**
+   * Adds the product with its quantity and cost already filled in. The picker
+   * takes both there and then — the client asked for this: with a dozen lines
+   * already down the page, having to scroll back to each new card to type a
+   * number was the slow part.
+   */
+  function addLine(product: ProductWithStock, quantity: string, unitCost: string) {
     setLines((current) => {
       if (current.some((l) => l.product.id === product.id)) return current;
-      return [
-        ...current,
-        {
-          product,
-          quantity: '',
-          // Pre-filled with what the product last cost, because a delivery of the
-          // same thing usually costs the same — but left editable, since the
-          // whole point of the invoice is that this is the number that changed.
-          unitCost: product.cost_price > 0 ? String(product.cost_price) : '',
-        },
-      ];
+      return [...current, { product, quantity, unitCost }];
     });
+  }
+
+  /** Opens the inline quantity/cost fields on a picker row. */
+  function openPickerRow(product: ProductWithStock) {
+    setPickerExpandedId(product.id);
+    setPickerQty('');
+    // Pre-filled with what the product last cost, because a delivery of the
+    // same thing usually costs the same — but left editable, since the whole
+    // point of the invoice is that this is the number that changed.
+    setPickerCost(product.cost_price > 0 ? String(product.cost_price) : '');
+  }
+
+  function confirmPickerRow(product: ProductWithStock) {
+    addLine(product, pickerQty, pickerCost);
+    setPickerExpandedId(null);
+    setPickerQty('');
+    setPickerCost('');
+    setSearch('');
   }
 
   function updateLine(id: string, patch: Partial<Line>) {
@@ -257,31 +273,88 @@ export default function NewPurchaseScreen() {
               }
             />
           ) : (
-            results.slice(0, 60).map((product) => (
-              <Pressable
-                key={product.id}
-                style={({ pressed }) => [styles.pickRow, pressed && { opacity: 0.85 }]}
-                onPress={() => addLine(product)}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pickName} numberOfLines={1}>
-                    {product.name}
-                  </Text>
-                  {/* "Last cost" is the stored buying price, so it is withheld
-                      from an account without `costs.view` — which would read
-                      K0.00, the placeholder the server sends. Typing the unit
-                      cost off the invoice in hand is a different thing and stays
-                      open to them; that is the job this screen exists for. */}
-                  <Text style={styles.pickMeta} numberOfLines={1}>
-                    {product.sku} · {product.quantity} in stock
-                    {showCosts ? ` · last cost ${formatKwacha(product.cost_price)}` : ''}
-                  </Text>
+            results.slice(0, 60).map((product) => {
+              const added = lines.some((l) => l.product.id === product.id);
+              const expanded = pickerExpandedId === product.id;
+              return (
+                <View
+                  key={product.id}
+                  style={[styles.pickRow, expanded && styles.pickRowActive]}
+                >
+                  <Pressable
+                    style={styles.pickRowTop}
+                    disabled={added}
+                    onPress={() => (expanded ? setPickerExpandedId(null) : openPickerRow(product))}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pickName} numberOfLines={1}>
+                        {product.name}
+                      </Text>
+                      {/* "Last cost" is the stored buying price, so it is withheld
+                          from an account without `costs.view` — which would read
+                          K0.00, the placeholder the server sends. Typing the unit
+                          cost off the invoice in hand is a different thing and
+                          stays open to them; that is the job this screen exists for. */}
+                      <Text style={styles.pickMeta} numberOfLines={1}>
+                        {product.sku} · {product.quantity} in stock
+                        {showCosts ? ` · last cost ${formatKwacha(product.cost_price)}` : ''}
+                      </Text>
+                    </View>
+                    <Icon
+                      name={added ? 'check-circle' : expanded ? 'chevron-up' : 'plus-circle'}
+                      size={20}
+                      color={added ? colors.success : colors.primary}
+                    />
+                  </Pressable>
+
+                  {expanded && !added ? (
+                    <View style={styles.pickExpand}>
+                      <View style={styles.pickInputs}>
+                        <View style={{ flex: 1 }}>
+                          <Field
+                            label="Quantity"
+                            value={pickerQty}
+                            onChangeText={(t) => setPickerQty(numericText(t))}
+                            placeholder="0"
+                            keyboardType="numeric"
+                            autoFocus
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Field
+                            label="Cost each"
+                            value={pickerCost}
+                            onChangeText={(t) => setPickerCost(numericText(t))}
+                            placeholder="0.00"
+                            keyboardType="numeric"
+                            prefix="K"
+                          />
+                        </View>
+                      </View>
+                      <Button
+                        label="Add to delivery"
+                        icon="plus"
+                        onPress={() => confirmPickerRow(product)}
+                        disabled={
+                          numberOf(pickerQty) <= 0 ||
+                          pickerCost.trim() === '' ||
+                          numberOf(pickerCost) < 0
+                        }
+                      />
+                    </View>
+                  ) : null}
                 </View>
-                <Icon name="plus-circle" size={20} color={colors.primary} />
-              </Pressable>
-            ))
+              );
+            })
           )}
-          <Button label="Done" variant="secondary" onPress={() => setPicking(false)} />
+          <Button
+            label={lines.length > 0 ? `Done · ${lines.length} added` : 'Done'}
+            variant="secondary"
+            onPress={() => {
+              setPickerExpandedId(null);
+              setPicking(false);
+            }}
+          />
         </ScrollView>
       </SafeAreaView>
     );
@@ -607,9 +680,6 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontFamily: font.medium, fontSize: 15, color: colors.text, padding: 0 },
 
   pickRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -617,6 +687,10 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     ...shadow.card,
   },
+  pickRowActive: { borderColor: colors.primary },
+  pickRowTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  pickExpand: { marginTop: spacing.md, gap: spacing.sm },
+  pickInputs: { flexDirection: 'row', gap: spacing.md },
   pickName: { fontFamily: font.semibold, fontSize: 14, color: colors.text },
   pickMeta: { fontFamily: font.regular, fontSize: 11, color: colors.textFaint, marginTop: 2 },
 
