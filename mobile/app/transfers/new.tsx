@@ -28,16 +28,31 @@ import { useStoreSelection } from '../../src/store/storeSelection';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../../src/theme';
 import { Badge, Button, EmptyState, Field, Icon, Loading, Select } from '../../src/ui/components';
-import type { Store, SupplierInvoice } from '../../src/api/types';
+import type { Store, SupplierInvoice, Transfer } from '../../src/api/types';
 
 /** One product being moved. `quantity` stays a string so the field can be empty mid-edit. */
 interface Line {
   product_id: string;
   name: string;
   sku: string;
-  /** Units at the source store when the catalogue was read. */
+  /** Units at the source store. Meaningless until a source is chosen — updated then. */
   available: number;
   quantity: string;
+}
+
+interface SeedEntry {
+  product_id: string | null;
+  name: string;
+  quantity: number;
+}
+
+/** A "load these into the basket" request from a document (invoice / transfer). */
+interface PendingSeed {
+  from_store_id: string;
+  to_store_id?: string;
+  entries: SeedEntry[];
+  label: string;
+  note?: string;
 }
 
 const MAX_RESULTS = 25;
@@ -52,98 +67,75 @@ export default function NewTransferScreen() {
   // deciding what to move; a shop login only ever sees its own shelf.
   const isAdmin = roleLevel(user) === 'admin';
 
-  const [fromStoreId, setFromStoreId] = useState(selectedStore?.id ?? '');
+  // The route is chosen *after* the basket now, so it starts empty for anyone
+  // who has a choice to make.
+  const [fromStoreId, setFromStoreId] = useState('');
   const [toStoreId, setToStoreId] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
   const [search, setSearch] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
-  const [invoicePickerOpen, setInvoicePickerOpen] = useState(false);
+  const [loader, setLoader] = useState<null | 'invoice' | 'order'>(null);
+  const [originLabel, setOriginLabel] = useState<string | null>(null);
   const [seedNote, setSeedNote] = useState<string | null>(null);
+  const [seedTick, setSeedTick] = useState(0);
 
   // Opened against a source document — a recorded delivery (`?invoice=`) or an
-  // earlier transfer to repeat (`?repeat=`). The screen then pins the source
-  // store and pre-loads the lines, the same way the Refund screen opens against
-  // a receipt.
+  // earlier transfer to repeat (`?repeat=`).
   const params = useLocalSearchParams<{ invoice?: string; repeat?: string }>();
   const invoiceId = typeof params.invoice === 'string' ? params.invoice : undefined;
   const repeatId = typeof params.repeat === 'string' ? params.repeat : undefined;
-  const seededRef = useRef(false);
+  const deepLinkSeededRef = useRef(false);
+  const pendingSeedRef = useRef<PendingSeed | null>(null);
 
   const originInvoiceQuery = useQuery({
     queryKey: ['purchase', invoiceId],
     queryFn: () => purchasesApi.get(invoiceId as string),
     enabled: Boolean(invoiceId),
   });
-  const originTransfersQuery = useQuery({
+  const transfersListQuery = useQuery({
     queryKey: ['transfers'],
     queryFn: () => transfersApi.list(),
-    enabled: Boolean(repeatId),
+    enabled: Boolean(repeatId) || loader === 'order',
   });
-  const originInvoice = originInvoiceQuery.data ?? null;
-  const originTransfer = repeatId
-    ? (originTransfersQuery.data ?? []).find((t) => t.id === repeatId) ?? null
-    : null;
 
   const storesQuery = useQuery({ queryKey: ['stores'], queryFn: storesApi.list });
   // Two lists on purpose. `/stores` narrows to the shops this person works at,
   // which is what may be sent *from*; the directory is every shop in the
-  // organisation, which is what may be sent *to*. Using the narrow one for both
-  // left anyone assigned to a single shop with nowhere to transfer.
+  // organisation, which is what may be sent *to*.
   const directoryQuery = useQuery({ queryKey: ['store-directory'], queryFn: storesApi.directory });
-  const catalogue = useCatalogue(fromStoreId || null);
-
-  // Deliveries recorded into the source store — their line quantities can be
-  // pulled straight onto the transfer instead of retyping each one. Loaded only
-  // when the picker is actually opened.
-  const invoicesQuery = useQuery({
-    queryKey: ['transfer-source-invoices', fromStoreId],
-    queryFn: () => purchasesApi.list({ store_id: fromStoreId, limit: 25 }),
-    enabled: invoicePickerOpen && Boolean(fromStoreId),
-  });
 
   const allStores = useMemo(() => storesQuery.data ?? [], [storesQuery.data]);
   const directory = useMemo(() => directoryQuery.data ?? [], [directoryQuery.data]);
 
-  // The backend runs `assertStoreAccess` on the source, so a manager posting from
-  // a store they aren't assigned to gets a 403 after building the whole basket.
-  // Offer only the stores that can actually be a source.
+  // The backend runs `assertStoreAccess` on the source, so offer only the stores
+  // that can actually be a source.
   const sourceStores = useMemo(() => {
     if (roleLevel(user) === 'admin') return allStores;
     const assigned = user?.assigned_stores;
     if (!assigned || assigned.length === 0) return allStores;
     return allStores.filter((s) => assigned.includes(s.id));
   }, [allStores, user]);
-
-  /**
-   * A shop can only send its own stock, so for anyone who runs one shop the
-   * source is not a question — it is where they are standing. Showing them a
-   * picker with a single entry invites them to wonder what the other answer
-   * was, and leaves the screen unusable until they tap the only option.
-   */
   const sourceIsFixed = sourceStores.length === 1;
 
-  // Pinned rather than merely defaulted, so switching shops elsewhere in the
-  // app cannot leave this screen pointed at one the user can no longer send
-  // from. Set directly rather than through `changeSource`, which asks before
-  // discarding a basket — there is nothing to discard on the way in, and a
-  // confirmation nobody asked for would be the first thing on screen.
-  useEffect(() => {
-    if (!sourceIsFixed) return;
-    const only = sourceStores[0];
-    if (!only || only.id === fromStoreId) return;
-    setFromStoreId(only.id);
-    setLines([]);
-    setSearch('');
-    setToStoreId((current) => (current === only.id ? '' : current));
-  }, [sourceIsFixed, sourceStores, fromStoreId]);
+  // Browse the source store's catalogue once it's chosen; before that, the store
+  // the user is standing in, just so there is a product list to pick from.
+  const browseStoreId = fromStoreId || selectedStore?.id || null;
+  const catalogue = useCatalogue(browseStoreId);
+  const items = useMemo(() => catalogue.data?.items ?? [], [catalogue.data]);
 
-  const fromStore = allStores.find((s) => s.id === fromStoreId) ?? selectedStore ?? null;
-  // From the directory, not `allStores`: the destination is by definition a
-  // shop this person may not be assigned to, so it is not in the narrow list.
+  const fromStore = allStores.find((s) => s.id === fromStoreId) ?? null;
   const toStore = directory.find((s) => s.id === toStoreId) ?? null;
 
-  const items = catalogue.data?.items ?? [];
+  // Recent deliveries, for the "From an invoice" loader. Scoped to the source
+  // store once picked, otherwise the store the user is standing in.
+  const invoiceListStoreId = fromStoreId || selectedStore?.id || undefined;
+  const invoicesQuery = useQuery({
+    queryKey: ['transfer-source-invoices', invoiceListStoreId ?? 'any'],
+    queryFn: () =>
+      purchasesApi.list({ ...(invoiceListStoreId ? { store_id: invoiceListStoreId } : {}), limit: 30 }),
+    enabled: loader === 'invoice',
+  });
 
   const results = useMemo(() => {
     const needle = search.trim();
@@ -151,59 +143,9 @@ export default function NewTransferScreen() {
     return filterCatalogue(items, needle, null).slice(0, MAX_RESULTS);
   }, [items, search]);
 
-  const originStoreId = originInvoice?.store_id ?? originTransfer?.from_store_id ?? null;
-  const originLabel = originInvoice
-    ? `Delivery ${originInvoice.invoice_number} · ${originInvoice.supplier_name}`
-    : originTransfer
-      ? `Transfer ${originTransfer.reference}`
-      : null;
-
-  /**
-   * Opened against a document: pin the source store to where the goods are, then
-   * seed the lines from it once its catalogue is loaded. Runs exactly once.
-   */
-  useEffect(() => {
-    if (seededRef.current || !originStoreId) return;
-
-    const allowed =
-      roleLevel(user) === 'admin' || sourceStores.some((s) => s.id === originStoreId);
-    if (!allowed) {
-      seededRef.current = true;
-      setSeedNote('This stock is at a shop you cannot send from, so nothing was loaded.');
-      return;
-    }
-
-    if (fromStoreId !== originStoreId) {
-      setFromStoreId(originStoreId);
-      setToStoreId((current) => (current === originStoreId ? '' : current));
-      return; // wait for that store's catalogue
-    }
-    if (catalogue.isLoading) return;
-    if (catalogue.isError || items.length === 0) return;
-
-    seededRef.current = true;
-    const entries = originInvoice
-      ? originInvoice.items.map((it) => ({
-          product_id: it.product_id,
-          name: it.product_name,
-          quantity: it.quantity,
-        }))
-      : (originTransfer?.items ?? []).map((it) => ({
-          product_id: it.product_id,
-          name: it.product_name,
-          quantity: it.quantity,
-        }));
-
-    const r = addLinesFromSource(entries);
-    const notes: string[] = [];
-    if (r.added === 0) notes.push('None of these products are stocked here.');
-    if (r.notStocked.length > 0) notes.push(`Skipped (not stocked here): ${r.notStocked.join(', ')}.`);
-    if (r.added > 0) notes.push('Quantities are from the document — check them against the shelf before sending.');
-    setSeedNote(notes.join(' ') || null);
-  }, [originStoreId, fromStoreId, catalogue.isLoading, catalogue.isError, items.length, originInvoice, originTransfer, sourceStores, user]);
-
+  const checkStock = Boolean(fromStoreId);
   const totalUnits = lines.reduce((sum, l) => sum + (parseQuantity(l.quantity) ?? 0), 0);
-  const problems = lines.map((l) => lineProblem(l, fromStore));
+  const problems = lines.map((l) => lineProblem(l, fromStore, checkStock));
   const ready =
     Boolean(fromStoreId) &&
     Boolean(toStoreId) &&
@@ -211,30 +153,128 @@ export default function NewTransferScreen() {
     lines.length > 0 &&
     problems.every((p) => p === null);
 
+  /* --------------------------------------------------------- source pinning */
+
+  // A single-shop user has no source to choose — pin it. No line clearing: the
+  // whole point of this screen's order is that the basket outlives the route.
+  useEffect(() => {
+    if (!sourceIsFixed) return;
+    const only = sourceStores[0];
+    if (!only || only.id === fromStoreId) return;
+    setFromStoreId(only.id);
+    setToStoreId((current) => (current === only.id ? '' : current));
+  }, [sourceIsFixed, sourceStores, fromStoreId]);
+
+  // Re-read every line's headroom from the chosen source store's stock. Lines
+  // added while browsing another store's list, or loaded from a document,
+  // carry the wrong "available" until this runs.
+  useEffect(() => {
+    if (!fromStoreId || browseStoreId !== fromStoreId) return;
+    const data = catalogue.data;
+    if (!data) return;
+    const byId = new Map(data.items.map((p) => [p.id, p.quantity]));
+    setLines((current) => {
+      let changed = false;
+      const next = current.map((l) => {
+        const avail = byId.get(l.product_id) ?? 0;
+        if (avail === l.available) return l;
+        changed = true;
+        return { ...l, available: avail };
+      });
+      return changed ? next : current;
+    });
+  }, [fromStoreId, browseStoreId, catalogue.data]);
+
+  /* ------------------------------------------------------- document seeding */
+
+  // A deep link (?invoice= / ?repeat=) becomes a seed request once its source
+  // document has loaded. Runs once.
+  useEffect(() => {
+    if (deepLinkSeededRef.current) return;
+    if (invoiceId) {
+      const inv = originInvoiceQuery.data;
+      if (!inv) return;
+      deepLinkSeededRef.current = true;
+      requestSeed({
+        from_store_id: inv.store_id,
+        entries: inv.items.map((it) => ({
+          product_id: it.product_id,
+          name: it.product_name,
+          quantity: it.quantity,
+        })),
+        label: `Delivery ${inv.invoice_number} · ${inv.supplier_name}`,
+        note: 'Quantities are what the invoice says arrived — check them against the shelf.',
+      });
+    } else if (repeatId) {
+      const t = (transfersListQuery.data ?? []).find((x) => x.id === repeatId);
+      if (!t) return;
+      deepLinkSeededRef.current = true;
+      requestSeed({
+        from_store_id: t.from_store_id,
+        to_store_id: t.to_store_id,
+        entries: t.items.map((it) => ({
+          product_id: it.product_id,
+          name: it.product_name,
+          quantity: it.quantity,
+        })),
+        label: `Transfer ${t.reference}`,
+        note: 'Quantities are from that transfer — check them against the shelf.',
+      });
+    }
+  }, [invoiceId, repeatId, originInvoiceQuery.data, transfersListQuery.data]);
+
+  // Process a pending seed: point the source store at where the goods are, wait
+  // for its catalogue, then add the lines.
+  useEffect(() => {
+    const seed = pendingSeedRef.current;
+    if (!seed) return;
+
+    if (fromStoreId !== seed.from_store_id) {
+      const allowed =
+        roleLevel(user) === 'admin' || sourceStores.some((s) => s.id === seed.from_store_id);
+      if (!allowed) {
+        pendingSeedRef.current = null;
+        setOriginLabel(seed.label);
+        setSeedNote('That stock is at a shop you cannot send from, so nothing was loaded.');
+        return;
+      }
+      setFromStoreId(seed.from_store_id);
+      if (seed.to_store_id && seed.to_store_id !== seed.from_store_id) {
+        setToStoreId(seed.to_store_id);
+      }
+      return; // wait for that store's catalogue, then this effect re-runs
+    }
+
+    if (browseStoreId !== fromStoreId || !catalogue.data) return;
+
+    pendingSeedRef.current = null;
+    setOriginLabel(seed.label);
+    const r = addLinesFromSource(seed.entries);
+
+    const parts: string[] = [];
+    if (r.added === 0) parts.push('None of those products are stocked at the source.');
+    if (r.notStocked.length > 0) parts.push(`Skipped (not stocked there): ${r.notStocked.join(', ')}.`);
+    if (r.alreadyOn > 0) parts.push(`${r.alreadyOn} were already on the transfer.`);
+    if (r.added > 0 && seed.note) parts.push(seed.note);
+    setSeedNote(parts.join(' ') || null);
+  }, [seedTick, fromStoreId, browseStoreId, catalogue.data, sourceStores, user]);
+
+  function requestSeed(seed: PendingSeed) {
+    pendingSeedRef.current = seed;
+    setSeedTick((t) => t + 1);
+  }
+
+  /* ---------------------------------------------------------------- actions */
+
   function changeSource(next: string) {
     if (next === fromStoreId) return;
-
-    const apply = () => {
-      setFromStoreId(next);
-      // Availability is per-store, so every line's headroom is now meaningless.
-      setLines([]);
-      setSearch('');
-      setInvoicePickerOpen(false);
-      if (next === toStoreId) setToStoreId('');
-    };
-
-    if (lines.length === 0) {
-      apply();
-      return;
-    }
-    Alert.alert(
-      'Change source store?',
-      'Stock levels are different at each shop, so the items already added will be cleared.',
-      [
-        { text: 'Keep building', style: 'cancel' },
-        { text: 'Change', style: 'destructive', onPress: apply },
-      ]
-    );
+    setFromStoreId(next);
+    if (next === toStoreId) setToStoreId('');
+    setLoader(null);
+    // The basket stays, but it was not built from this store's stock or this
+    // document, so drop the "loaded from" story.
+    setOriginLabel(null);
+    setSeedNote(null);
   }
 
   function addProduct(productId: string) {
@@ -260,11 +300,10 @@ export default function NewTransferScreen() {
   /**
    * Core of "load from a document": turns a list of (product, quantity) rows
    * into transfer lines, keeping only what the source store stocks and skipping
-   * anything already on the transfer. Returns what happened so the caller can
-   * tell the user.
+   * anything already on the transfer.
    */
   function addLinesFromSource(
-    entries: { product_id: string | null; name: string; quantity: number }[]
+    entries: SeedEntry[]
   ): { added: number; alreadyOn: number; notStocked: string[] } {
     const catalogueById = new Map(items.map((p) => [p.id, p]));
     const onTransfer = new Set(lines.map((l) => l.product_id));
@@ -296,42 +335,38 @@ export default function NewTransferScreen() {
     return { added: toAdd.length, alreadyOn, notStocked };
   }
 
-  /**
-   * Pulls the line quantities from a recorded delivery onto the transfer. The
-   * quantity is the invoiced amount (what arrived), which the person still has
-   * to check against the shelf before sending — a warning says so.
-   */
-  function loadFromInvoice(invoice: SupplierInvoice) {
-    const r = addLinesFromSource(
-      invoice.items.map((it) => ({
+  function pickInvoice(invoice: SupplierInvoice) {
+    setLoader(null);
+    setSearch('');
+    requestSeed({
+      from_store_id: invoice.store_id,
+      entries: invoice.items.map((it) => ({
         product_id: it.product_id,
         name: it.product_name,
         quantity: it.quantity,
-      }))
-    );
-    setInvoicePickerOpen(false);
-    setSearch('');
+      })),
+      label: `Delivery ${invoice.invoice_number} · ${invoice.supplier_name}`,
+      note: 'Quantities are what the invoice says arrived — check them against the shelf.',
+    });
+  }
 
-    const parts = [
-      r.added > 0
-        ? `${r.added} line${r.added === 1 ? '' : 's'} loaded from ${invoice.invoice_number}.`
-        : `Nothing new to load from ${invoice.invoice_number}.`,
-    ];
-    if (r.alreadyOn > 0) {
-      parts.push(`${r.alreadyOn} already on the transfer — left as ${r.alreadyOn === 1 ? 'it is' : 'they are'}.`);
-    }
-    if (r.notStocked.length > 0) {
-      parts.push(`Not stocked at ${fromStore?.name ?? 'the source store'}: ${r.notStocked.join(', ')}.`);
-    }
-    if (r.added > 0) {
-      parts.push('Each quantity is what the invoice says arrived — check it against the shelf before sending.');
-    }
-    Alert.alert(r.added > 0 ? 'Loaded from invoice' : 'Nothing added', parts.join('\n\n'));
+  function pickOrder(transfer: Transfer) {
+    setLoader(null);
+    setSearch('');
+    requestSeed({
+      from_store_id: transfer.from_store_id,
+      to_store_id: transfer.to_store_id,
+      entries: transfer.items.map((it) => ({
+        product_id: it.product_id,
+        name: it.product_name,
+        quantity: it.quantity,
+      })),
+      label: `Transfer ${transfer.reference}`,
+      note: 'Quantities are from that transfer — check them against the shelf.',
+    });
   }
 
   function setQuantity(productId: string, value: string) {
-    // Digits only: a transfer moves whole units, and the numeric keypad on
-    // Android still offers a decimal separator.
     const clean = value.replace(/[^0-9]/g, '');
     setLines((current) =>
       current.map((l) => (l.product_id === productId ? { ...l, quantity: clean } : l))
@@ -343,7 +378,9 @@ export default function NewTransferScreen() {
       current.map((l) => {
         if (l.product_id !== productId) return l;
         const next = (parseQuantity(l.quantity) ?? 0) + delta;
-        return { ...l, quantity: String(Math.max(1, Math.min(l.available, next))) };
+        // Only clamp to the shelf once we know which shelf.
+        const capped = checkStock ? Math.min(l.available, next) : next;
+        return { ...l, quantity: String(Math.max(1, capped)) };
       })
     );
   }
@@ -367,13 +404,8 @@ export default function NewTransferScreen() {
       });
 
       void queryClient.invalidateQueries({ queryKey: ['transfers'] });
-      // Stock moved at both ends, so neither store's catalogue is current.
       void queryClient.invalidateQueries({ queryKey: ['catalogue'] });
 
-      // The POST answers with the reference only, so the note is assembled from
-      // what this screen already knows. `created_at` is the device clock rather
-      // than the server's — a reprint from the history list carries the exact
-      // server time, and the two are seconds apart.
       const note: TransferNoteData = {
         reference: result.reference,
         from_store: fromStore.name,
@@ -409,6 +441,8 @@ export default function NewTransferScreen() {
     }
   }
 
+  /* ----------------------------------------------------------------- guards */
+
   if (!canCreate) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -429,9 +463,6 @@ export default function NewTransferScreen() {
     );
   }
 
-  // Counted against the organisation, not against this person's own shops.
-  // Someone assigned to one shop has one entry in `allStores` and is still
-  // perfectly able to send stock to the other five.
   if (directory.length < 2) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -444,30 +475,21 @@ export default function NewTransferScreen() {
     );
   }
 
-  const sourceOptions = warehouseFirst(sourceStores as Store[]).map((s) => ({
-    value: s.id,
-    label: placeLabel(s),
-  }));
+  const sourceOptions = warehouseFirst(sourceStores as Store[])
+    .filter((s) => s.id !== toStoreId)
+    .map((s) => ({ value: s.id, label: placeLabel(s) }));
 
-  // Warehouse first, and labelled. Stock going out to the shops and stock coming
-  // back to the warehouse are the two transfers this business actually makes, so
-  // the warehouse is the entry being looked for in both directions — and a list
-  // of six bare shop names gives somebody no way to tell which one it is.
-  const destinationOptions = warehouseFirst(
-    // Same-to-same is rejected by the server; don't let the UI build it.
-    directory.filter((s) => s.id !== fromStoreId)
-  ).map((s) => ({ value: s.id, label: placeLabel(s) }));
+  const destinationOptions = warehouseFirst(directory.filter((s) => s.id !== fromStoreId)).map(
+    (s) => ({ value: s.id, label: placeLabel(s) })
+  );
 
-  const catalogueReady = !catalogue.isLoading && !catalogue.isError && items.length > 0;
+  const catalogueLoading = catalogue.isLoading && items.length === 0;
+  const catalogueError = catalogue.isError && items.length === 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <ScrollView
-        contentContainerStyle={{
-          padding: layout.gutter,
-          paddingBottom: spacing.xxl,
-          gap: spacing.lg,
-        }}
+        contentContainerStyle={{ padding: layout.gutter, paddingBottom: spacing.xxl, gap: spacing.lg }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -475,7 +497,7 @@ export default function NewTransferScreen() {
           <View style={styles.originCard}>
             <Icon name="corner-up-right" size={16} color={colors.primary} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.originLabel}>Transferring from</Text>
+              <Text style={styles.originLabel}>Loaded from</Text>
               <Text style={styles.originValue} numberOfLines={2}>
                 {originLabel}
               </Text>
@@ -484,162 +506,123 @@ export default function NewTransferScreen() {
           </View>
         ) : null}
 
-        <View style={styles.routeCard}>
-          {sourceIsFixed ? (
-            <View>
-              <Text style={styles.fixedLabel}>Send from</Text>
-              <View style={styles.fixedStore}>
+        {/* ========================================= 1 · WHAT TO MOVE ===== */}
+        <View style={{ gap: spacing.sm }}>
+          <View style={styles.addHead}>
+            <Text style={styles.sectionLabel}>1 · What to move</Text>
+            <View style={styles.loaderBtns}>
+              <Pressable
+                onPress={() => setLoader((v) => (v === 'invoice' ? null : 'invoice'))}
+                hitSlop={6}
+                style={styles.loaderBtn}
+              >
                 <Icon
-                  name={isWarehouse(fromStore) ? 'package' : 'home'}
-                  size={16}
+                  name={loader === 'invoice' ? 'x' : 'file-text'}
+                  size={13}
                   color={colors.primary}
                 />
-                <Text style={styles.fixedStoreName} numberOfLines={1}>
-                  {fromStore ? placeLabel(fromStore) : (sourceStores[0]?.name ?? 'Your shop')}
+                <Text style={styles.loaderBtnText}>
+                  {loader === 'invoice' ? 'Close' : 'From an invoice'}
                 </Text>
-                <Icon name="lock" size={13} color={colors.textFaint} />
-              </View>
-              <Text style={styles.fixedHint}>
-                {isWarehouse(fromStore)
-                  ? 'Sending out from the warehouse. Any shop in the organisation can receive it.'
-                  : 'Stock can only leave the shop you work at.'}
-              </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setLoader((v) => (v === 'order' ? null : 'order'))}
+                hitSlop={6}
+                style={styles.loaderBtn}
+              >
+                <Icon name={loader === 'order' ? 'x' : 'repeat'} size={13} color={colors.primary} />
+                <Text style={styles.loaderBtnText}>
+                  {loader === 'order' ? 'Close' : 'From an order'}
+                </Text>
+              </Pressable>
             </View>
-          ) : (
-            <Select
-              label="Send from"
-              value={fromStoreId}
-              options={sourceOptions}
-              onChange={changeSource}
-              hint={
-                sourceStores.length < allStores.length
-                  ? 'Only the stores you are assigned to can send stock.'
-                  : undefined
-              }
-            />
-          )}
-
-          <View style={styles.routeArrowRow}>
-            <View style={styles.routeArrowLine} />
-            <View style={styles.routeArrowBubble}>
-              <Icon name="arrow-down" size={15} color={colors.primary} />
-            </View>
-            <View style={styles.routeArrowLine} />
           </View>
 
-          <Select
-            label="Send to"
-            value={toStoreId}
-            options={destinationOptions}
-            onChange={setToStoreId}
-            hint={
-              toStoreId
-                ? undefined
-                : isWarehouse(fromStore)
-                  ? 'Pick the shop receiving the stock.'
-                  : 'Any shop, or the warehouse — stock moves both ways.'
-            }
-          />
-        </View>
-
-        {!fromStoreId ? (
-          <EmptyState
-            icon="home"
-            title="Choose a source store"
-            hint="Pick the shop the stock is leaving and its available quantities load here."
-          />
-        ) : catalogue.isLoading ? (
-          <Loading label={`Loading stock at ${fromStore?.name ?? 'the source store'}`} />
-        ) : catalogue.isError ? (
-          <EmptyState
-            icon="cloud-off"
-            title="Couldn't load the source stock"
-            hint="Available quantities come from the server — building a transfer needs a connection."
-            action={
-              <Button
-                label="Retry"
-                icon="refresh-cw"
-                variant="secondary"
-                onPress={() => void catalogue.refetch()}
-              />
-            }
-          />
-        ) : items.length === 0 ? (
-          <EmptyState
-            icon="package"
-            title="Nothing to send"
-            hint={`${fromStore?.name ?? 'This store'} has no products stocked, so there is nothing to move.`}
-          />
-        ) : (
-          <>
-            {catalogue.data?.fromCache ? (
-              <View style={styles.staleNote}>
-                <Icon name="wifi-off" size={15} color={colors.warning} />
-                <Text style={styles.staleText}>
-                  Showing the last synced stock levels. The server checks the real quantities when
-                  you send.
-                </Text>
-              </View>
-            ) : null}
-
-            <View style={{ gap: spacing.sm }}>
-              <View style={styles.addHead}>
-                <Text style={styles.sectionLabel}>Add products</Text>
-                <Pressable
-                  onPress={() => setInvoicePickerOpen((v) => !v)}
-                  hitSlop={6}
-                  style={styles.fromInvoiceBtn}
-                >
-                  <Icon
-                    name={invoicePickerOpen ? 'x' : 'file-text'}
-                    size={13}
-                    color={colors.primary}
-                  />
-                  <Text style={styles.fromInvoiceText}>
-                    {invoicePickerOpen ? 'Close' : 'From an invoice'}
-                  </Text>
+          {loader === 'invoice' ? (
+            <View style={styles.docPanel}>
+              {invoicesQuery.isLoading ? (
+                <Loading label="Loading recent deliveries" />
+              ) : invoicesQuery.isError ? (
+                <Pressable onPress={() => void invoicesQuery.refetch()}>
+                  <Text style={styles.noResults}>Couldn’t load invoices. Tap to retry.</Text>
                 </Pressable>
-              </View>
+              ) : (invoicesQuery.data ?? []).length === 0 ? (
+                <Text style={styles.noResults}>No deliveries have been recorded yet.</Text>
+              ) : (
+                (invoicesQuery.data ?? []).map((invoice, index) => (
+                  <Pressable
+                    key={invoice.id}
+                    onPress={() => pickInvoice(invoice)}
+                    style={({ pressed }) => [
+                      styles.docRow,
+                      index > 0 && styles.resultDivider,
+                      pressed && { backgroundColor: colors.surfaceSunken },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.resultName} numberOfLines={1}>
+                        {invoice.invoice_number} · {invoice.supplier_name}
+                      </Text>
+                      <Text style={styles.resultSku} numberOfLines={1}>
+                        {invoice.store_name} ·{' '}
+                        {new Date(invoice.invoice_date).toLocaleDateString()} ·{' '}
+                        {invoice.items.length} product{invoice.items.length === 1 ? '' : 's'}
+                      </Text>
+                    </View>
+                    <Icon name="download" size={18} color={colors.primary} />
+                  </Pressable>
+                ))
+              )}
+            </View>
+          ) : null}
 
-              {invoicePickerOpen ? (
-                <View style={styles.invoicePanel}>
-                  {invoicesQuery.isLoading ? (
-                    <Loading label="Loading recent deliveries" />
-                  ) : invoicesQuery.isError ? (
-                    <Pressable onPress={() => void invoicesQuery.refetch()}>
-                      <Text style={styles.noResults}>Couldn’t load invoices. Tap to retry.</Text>
+          {loader === 'order' ? (
+            <View style={styles.docPanel}>
+              {transfersListQuery.isLoading ? (
+                <Loading label="Loading transfers" />
+              ) : transfersListQuery.isError ? (
+                <Pressable onPress={() => void transfersListQuery.refetch()}>
+                  <Text style={styles.noResults}>Couldn’t load transfers. Tap to retry.</Text>
+                </Pressable>
+              ) : (transfersListQuery.data ?? []).length === 0 ? (
+                <Text style={styles.noResults}>No transfers have been made yet.</Text>
+              ) : (
+                (transfersListQuery.data ?? []).slice(0, 30).map((transfer, index) => {
+                  const units = transfer.items.reduce((sum, i) => sum + i.quantity, 0);
+                  return (
+                    <Pressable
+                      key={transfer.id}
+                      onPress={() => pickOrder(transfer)}
+                      style={({ pressed }) => [
+                        styles.docRow,
+                        index > 0 && styles.resultDivider,
+                        pressed && { backgroundColor: colors.surfaceSunken },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.resultName} numberOfLines={1}>
+                          {transfer.reference}
+                        </Text>
+                        <Text style={styles.resultSku} numberOfLines={1}>
+                          {(transfer.from_store ?? '—')} → {(transfer.to_store ?? '—')} ·{' '}
+                          {transfer.items.length} product{transfer.items.length === 1 ? '' : 's'} ·{' '}
+                          {units} unit{units === 1 ? '' : 's'}
+                        </Text>
+                      </View>
+                      <Icon name="download" size={18} color={colors.primary} />
                     </Pressable>
-                  ) : (invoicesQuery.data ?? []).length === 0 ? (
-                    <Text style={styles.noResults}>
-                      No deliveries have been recorded into {fromStore?.name ?? 'this store'} yet.
-                    </Text>
-                  ) : (
-                    (invoicesQuery.data ?? []).map((invoice, index) => (
-                      <Pressable
-                        key={invoice.id}
-                        onPress={() => loadFromInvoice(invoice)}
-                        style={({ pressed }) => [
-                          styles.invoiceRow,
-                          index > 0 && styles.resultDivider,
-                          pressed && { backgroundColor: colors.surfaceSunken },
-                        ]}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.resultName} numberOfLines={1}>
-                            {invoice.invoice_number} · {invoice.supplier_name}
-                          </Text>
-                          <Text style={styles.resultSku} numberOfLines={1}>
-                            {new Date(invoice.invoice_date).toLocaleDateString()} ·{' '}
-                            {invoice.items.length} product{invoice.items.length === 1 ? '' : 's'}
-                          </Text>
-                        </View>
-                        <Icon name="download" size={18} color={colors.primary} />
-                      </Pressable>
-                    ))
-                  )}
-                </View>
-              ) : null}
+                  );
+                })
+              )}
+            </View>
+          ) : null}
 
+          {!browseStoreId ? (
+            <Text style={styles.noResults}>
+              Pick your shop from the Sell tab first, so there is a product list here.
+            </Text>
+          ) : (
+            <>
               <View style={styles.searchBox}>
                 <Icon name="search" size={16} color={colors.textFaint} />
                 <TextInput
@@ -657,26 +640,33 @@ export default function NewTransferScreen() {
                 ) : null}
               </View>
 
-              {search.trim().length > 0 ? (
+              {catalogueLoading ? (
+                <Text style={styles.noResults}>Loading products…</Text>
+              ) : catalogueError ? (
+                <Pressable onPress={() => void catalogue.refetch()}>
+                  <Text style={styles.noResults}>Couldn’t load products. Tap to retry.</Text>
+                </Pressable>
+              ) : items.length === 0 ? (
+                <Text style={styles.noResults}>
+                  {(fromStore ?? selectedStore)?.name ?? 'This store'} has no products stocked.
+                </Text>
+              ) : search.trim().length > 0 ? (
                 results.length === 0 ? (
-                  <Text style={styles.noResults}>
-                    Nothing at {fromStore?.name ?? 'this store'} matches “{search.trim()}”.
-                  </Text>
+                  <Text style={styles.noResults}>Nothing matches “{search.trim()}”.</Text>
                 ) : (
                   <View style={styles.resultCard}>
                     {results.map((product, index) => {
                       const added = lines.some((l) => l.product_id === product.id);
-                      const out = product.quantity <= 0;
                       return (
                         <Pressable
                           key={product.id}
                           onPress={() => addProduct(product.id)}
-                          disabled={out || added}
+                          disabled={added}
                           style={({ pressed }) => [
                             styles.result,
                             index > 0 && styles.resultDivider,
-                            pressed && !out && !added && { backgroundColor: colors.surfaceSunken },
-                            (out || added) && { opacity: 0.45 },
+                            pressed && !added && { backgroundColor: colors.surfaceSunken },
+                            added && { opacity: 0.45 },
                           ]}
                         >
                           <View style={{ flex: 1 }}>
@@ -688,10 +678,10 @@ export default function NewTransferScreen() {
                             </Text>
                           </View>
                           <View style={{ alignItems: 'flex-end', gap: 3 }}>
-                            <Text style={[styles.resultQty, out && { color: colors.danger }]}>
-                              {product.quantity}
+                            <Text style={styles.resultQty}>{product.quantity}</Text>
+                            <Text style={styles.resultQtyLabel}>
+                              {fromStoreId ? 'available' : 'in this list'}
                             </Text>
-                            <Text style={styles.resultQtyLabel}>available</Text>
                           </View>
                           <Icon
                             name={added ? 'check' : 'plus-circle'}
@@ -704,103 +694,179 @@ export default function NewTransferScreen() {
                   </View>
                 )
               ) : null}
-            </View>
 
-            <View style={{ gap: spacing.sm }}>
-              <View style={styles.basketHead}>
-                <Text style={styles.sectionLabel}>Items to move</Text>
-                {lines.length > 0 ? (
-                  <Badge
-                    label={`${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalUnits} unit${
-                      totalUnits === 1 ? '' : 's'
-                    }`}
-                    tone="accent"
-                  />
-                ) : null}
-              </View>
-
-              {lines.length === 0 ? (
-                <View style={styles.basketEmpty}>
-                  <Icon name="package" size={18} color={colors.textFaint} />
-                  <Text style={styles.basketEmptyText}>
-                    Search above and tap a product to put it on this transfer.
+              {catalogue.data?.fromCache ? (
+                <View style={styles.staleNote}>
+                  <Icon name="wifi-off" size={15} color={colors.warning} />
+                  <Text style={styles.staleText}>
+                    Showing the last synced stock levels. The server checks the real quantities when
+                    you send.
                   </Text>
                 </View>
-              ) : (
-                lines.map((line, index) => {
-                  const problem = problems[index];
-                  return (
-                    <View key={line.product_id} style={[styles.line, problem && styles.lineBad]}>
-                      <View style={styles.lineTop}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.lineName} numberOfLines={2}>
-                            {line.name}
-                          </Text>
-                          <Text style={styles.lineSku} numberOfLines={1}>
-                            {line.sku} · {line.available} available
-                          </Text>
-                        </View>
-                        <Pressable onPress={() => removeLine(line.product_id)} hitSlop={10}>
-                          <Icon name="x" size={18} color={colors.textFaint} />
-                        </Pressable>
-                      </View>
+              ) : null}
+            </>
+          )}
+        </View>
 
-                      <View style={styles.lineBottom}>
-                        <View style={styles.stepper}>
-                          <Pressable
-                            style={styles.stepBtn}
-                            onPress={() => step(line.product_id, -1)}
-                            hitSlop={6}
-                          >
-                            <Icon name="minus" size={15} color={colors.text} />
-                          </Pressable>
-                          <TextInput
-                            value={line.quantity}
-                            onChangeText={(v) => setQuantity(line.product_id, v)}
-                            keyboardType="number-pad"
-                            selectTextOnFocus
-                            style={styles.qtyInput}
-                          />
-                          <Pressable
-                            style={styles.stepBtn}
-                            onPress={() => step(line.product_id, 1)}
-                            hitSlop={6}
-                          >
-                            <Icon name="plus" size={15} color={colors.text} />
-                          </Pressable>
-                        </View>
+        {/* ---- basket ---- */}
+        <View style={{ gap: spacing.sm }}>
+          <View style={styles.basketHead}>
+            <Text style={styles.sectionLabel}>Items to move</Text>
+            {lines.length > 0 ? (
+              <Badge
+                label={`${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalUnits} unit${
+                  totalUnits === 1 ? '' : 's'
+                }`}
+                tone="accent"
+              />
+            ) : null}
+          </View>
 
-                        <Pressable
-                          onPress={() => setQuantity(line.product_id, String(line.available))}
-                          hitSlop={6}
-                        >
-                          <Text style={styles.sendAll}>Send all {line.available}</Text>
-                        </Pressable>
-                      </View>
-
-                      {problem ? <Text style={styles.lineError}>{problem}</Text> : null}
-
-                      {isAdmin ? (
-                        <StockAcrossShops productId={line.product_id} sourceStoreId={fromStoreId} />
-                      ) : null}
+          {lines.length === 0 ? (
+            <View style={styles.basketEmpty}>
+              <Icon name="package" size={18} color={colors.textFaint} />
+              <Text style={styles.basketEmptyText}>
+                Search above and tap a product, or load a whole list from an invoice or an order.
+              </Text>
+            </View>
+          ) : (
+            lines.map((line, index) => {
+              const problem = problems[index];
+              return (
+                <View key={line.product_id} style={[styles.line, problem && styles.lineBad]}>
+                  <View style={styles.lineTop}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.lineName} numberOfLines={2}>
+                        {line.name}
+                      </Text>
+                      <Text style={styles.lineSku} numberOfLines={1}>
+                        {line.sku}
+                        {checkStock ? ` · ${line.available} available` : ''}
+                      </Text>
                     </View>
-                  );
-                })
-              )}
+                    <Pressable onPress={() => removeLine(line.product_id)} hitSlop={10}>
+                      <Icon name="x" size={18} color={colors.textFaint} />
+                    </Pressable>
+                  </View>
+
+                  <View style={styles.lineBottom}>
+                    <View style={styles.stepper}>
+                      <Pressable
+                        style={styles.stepBtn}
+                        onPress={() => step(line.product_id, -1)}
+                        hitSlop={6}
+                      >
+                        <Icon name="minus" size={15} color={colors.text} />
+                      </Pressable>
+                      <TextInput
+                        value={line.quantity}
+                        onChangeText={(v) => setQuantity(line.product_id, v)}
+                        keyboardType="number-pad"
+                        selectTextOnFocus
+                        style={styles.qtyInput}
+                      />
+                      <Pressable
+                        style={styles.stepBtn}
+                        onPress={() => step(line.product_id, 1)}
+                        hitSlop={6}
+                      >
+                        <Icon name="plus" size={15} color={colors.text} />
+                      </Pressable>
+                    </View>
+
+                    {checkStock ? (
+                      <Pressable
+                        onPress={() => setQuantity(line.product_id, String(line.available))}
+                        hitSlop={6}
+                      >
+                        <Text style={styles.sendAll}>Send all {line.available}</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  {problem ? <Text style={styles.lineError}>{problem}</Text> : null}
+
+                  {isAdmin ? (
+                    <StockAcrossShops productId={line.product_id} sourceStoreId={fromStoreId} />
+                  ) : null}
+                </View>
+              );
+            })
+          )}
+        </View>
+
+        {/* ========================================= 2 · FROM AND TO ===== */}
+        <View style={{ gap: spacing.sm }}>
+          <Text style={styles.sectionLabel}>2 · From and to</Text>
+          <View style={styles.routeCard}>
+            {sourceIsFixed ? (
+              <View>
+                <Text style={styles.fixedLabel}>Send from</Text>
+                <View style={styles.fixedStore}>
+                  <Icon
+                    name={isWarehouse(fromStore) ? 'package' : 'home'}
+                    size={16}
+                    color={colors.primary}
+                  />
+                  <Text style={styles.fixedStoreName} numberOfLines={1}>
+                    {fromStore ? placeLabel(fromStore) : (sourceStores[0]?.name ?? 'Your shop')}
+                  </Text>
+                  <Icon name="lock" size={13} color={colors.textFaint} />
+                </View>
+                <Text style={styles.fixedHint}>
+                  {isWarehouse(fromStore)
+                    ? 'Sending out from the warehouse. Any shop in the organisation can receive it.'
+                    : 'Stock can only leave the shop you work at.'}
+                </Text>
+              </View>
+            ) : (
+              <Select
+                label="Send from"
+                value={fromStoreId}
+                options={sourceOptions}
+                onChange={changeSource}
+                hint={
+                  fromStoreId
+                    ? undefined
+                    : 'Where the stock is leaving from — each line is checked against its stock.'
+                }
+              />
+            )}
+
+            <View style={styles.routeArrowRow}>
+              <View style={styles.routeArrowLine} />
+              <View style={styles.routeArrowBubble}>
+                <Icon name="arrow-down" size={15} color={colors.primary} />
+              </View>
+              <View style={styles.routeArrowLine} />
             </View>
 
-            <Field
-              label="Notes (optional)"
-              value={notes}
-              onChangeText={setNotes}
-              placeholder="Restocking the branch after the weekend…"
-              multiline
+            <Select
+              label="Send to"
+              value={toStoreId}
+              options={destinationOptions}
+              onChange={setToStoreId}
+              hint={
+                toStoreId
+                  ? undefined
+                  : isWarehouse(fromStore)
+                    ? 'Pick the shop receiving the stock.'
+                    : 'Any shop, or the warehouse — stock moves both ways.'
+              }
             />
-          </>
-        )}
+          </View>
+        </View>
 
-        {catalogueReady ? (
-          <View style={{ gap: spacing.sm }}>
+        <Field
+          label="Notes (optional)"
+          value={notes}
+          onChangeText={setNotes}
+          placeholder="Restocking the branch after the weekend…"
+          multiline
+        />
+
+        <View style={{ gap: spacing.sm }}>
+          {lines.length > 0 ? (
             <View style={styles.atomicNote}>
               <Icon name="shield" size={15} color={colors.primary} />
               <Text style={styles.atomicText}>
@@ -809,18 +875,18 @@ export default function NewTransferScreen() {
                   : 'Both sides of every line move in one server transaction — either the whole transfer goes through, or nothing does.'}
               </Text>
             </View>
+          ) : null}
 
-            <Button
-              label={busy ? 'Sending' : 'Send Transfer'}
-              icon="send"
-              size="lg"
-              loading={busy}
-              disabled={!ready}
-              onPress={() => void submit()}
-            />
-            <Button label="Cancel" variant="ghost" onPress={() => router.back()} />
-          </View>
-        ) : null}
+          <Button
+            label={busy ? 'Sending' : 'Send Transfer'}
+            icon="send"
+            size="lg"
+            loading={busy}
+            disabled={!ready}
+            onPress={() => void submit()}
+          />
+          <Button label="Cancel" variant="ghost" onPress={() => router.back()} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -850,11 +916,7 @@ function StockAcrossShops({
 
   return (
     <View style={styles.spread}>
-      <Pressable
-        style={styles.spreadHead}
-        onPress={() => setOpen((v) => !v)}
-        hitSlop={6}
-      >
+      <Pressable style={styles.spreadHead} onPress={() => setOpen((v) => !v)} hitSlop={6}>
         <Icon name="bar-chart-2" size={14} color={colors.primary} />
         <Text style={styles.spreadHeadText}>
           {query.data
@@ -915,13 +977,14 @@ function parseQuantity(raw: string): number | null {
 
 /**
  * The server rejects the entire transfer if any single line is short, so every
- * line is checked here and named with the shortfall — discovering it after a
- * twenty-line basket has been built is the failure mode worth designing against.
+ * line is checked here and named with the shortfall. Availability is only
+ * checked once a source store is chosen — before that a quantity is just a
+ * quantity.
  */
-function lineProblem(line: Line, fromStore: Store | null): string | null {
+function lineProblem(line: Line, fromStore: Store | null, checkStock: boolean): string | null {
   const quantity = parseQuantity(line.quantity);
   if (quantity === null || quantity <= 0) return 'Enter how many units to move.';
-  if (quantity > line.available) {
+  if (checkStock && quantity > line.available) {
     return `Only ${line.available} in stock at ${fromStore?.name ?? 'the source store'}.`;
   }
   return null;
@@ -1033,16 +1096,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  fromInvoiceBtn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  fromInvoiceText: { fontFamily: font.semibold, fontSize: 12, color: colors.primary },
-  invoicePanel: {
+  loaderBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  loaderBtn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  loaderBtnText: { fontFamily: font.semibold, fontSize: 12, color: colors.primary },
+
+  docPanel: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: 'hidden',
   },
-  invoiceRow: {
+  docRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
