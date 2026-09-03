@@ -18,12 +18,14 @@ export interface CartLine {
   /** Per-line discount in Kwacha, not a percentage. */
   discount: number;
   /**
-   * Reprices this line at checkout. Server-floored at the product's cost
-   * price for every role (see `createSale` in the backend) — once accepted,
-   * it also becomes the new catalogue selling price and clears any per-shop
-   * override, so the Sell screen and the product catalogue both pick it up.
+   * Reprices this line at checkout. Admin only (the till price is locked for
+   * everyone else — they discount instead), and server-floored at the
+   * product's cost price. By default it applies to this receipt alone; set
+   * `persistPrice` to also make it the shop's standing price.
    */
   priceOverride?: number;
+  /** With `priceOverride`: also write it as this shop's standing price. */
+  persistPrice?: boolean;
 }
 
 interface CartState {
@@ -35,7 +37,7 @@ interface CartState {
   add: (product: ProductWithStock, quantity?: number) => void;
   setQuantity: (productId: string, quantity: number) => void;
   setDiscount: (productId: string, discount: number) => void;
-  setPriceOverride: (productId: string, price: number | undefined) => void;
+  setPriceOverride: (productId: string, price: number | undefined, persist?: boolean) => void;
   remove: (productId: string) => void;
   clear: () => void;
   setCustomer: (name: string, phone?: string) => void;
@@ -82,13 +84,17 @@ export const useCart = create<CartState>((set) => ({
       ),
     })),
 
-  setPriceOverride: (productId, price) =>
+  setPriceOverride: (productId, price, persist = false) =>
     set((s) => ({
-      lines: s.lines.map((l) =>
-        l.product.id === productId
-          ? { ...l, priceOverride: price === undefined || price < 0 ? undefined : price }
-          : l
-      ),
+      lines: s.lines.map((l) => {
+        if (l.product.id !== productId) return l;
+        const cleared = price === undefined || price < 0;
+        return {
+          ...l,
+          priceOverride: cleared ? undefined : price,
+          persistPrice: cleared ? undefined : persist,
+        };
+      }),
     })),
 
   remove: (productId) => set((s) => ({ lines: s.lines.filter((l) => l.product.id !== productId) })),
@@ -183,6 +189,7 @@ export function lineToTransactionItem(line: CartLine): TransactionItem {
     brand: line.product.brand ?? null,
     quantity: line.quantity,
     unit_price: unitPrice,
+    persist_price: line.priceOverride !== undefined && line.persistPrice ? true : undefined,
     discount_amount: round2(line.discount),
     tax_type: line.product.tax_type,
     tax_amount: round2(tax),

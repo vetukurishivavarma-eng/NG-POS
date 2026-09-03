@@ -105,6 +105,11 @@ export interface TransactionItem {
   brand: string | null;
   quantity: number;
   unit_price: number;
+  /**
+   * Sent up only: alongside an admin price override, asks the server to also
+   * make this the shop's standing price. Absent on anything the server returns.
+   */
+  persist_price?: boolean;
   discount_amount: number;
   tax_type: TaxType;
   tax_amount: number;

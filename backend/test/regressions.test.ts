@@ -23,11 +23,39 @@ describe('regressions', () => {
   const sell = (token: string, body: Record<string, unknown>) =>
     request(app).post('/api/transactions').set('Authorization', `Bearer ${token}`).send(body);
 
-  describe('a till may reprice a line, but never below cost', () => {
-    it('rejects a price below cost price, for a cashier same as anyone', async () => {
+  describe('the till price is locked; only an admin reprices, and only on a prompt', () => {
+    it('refuses a cashier who changes the line price', async () => {
       const product = world.products[0]!;
 
       const res = await sell(world.tokens.cashier, {
+        store_id: world.storeId,
+        client_reference: clientRef('cashier-reprice'),
+        items: [{ product_id: product.id, quantity: 1, unit_price: product.price + 20 }],
+        payments: [{ method: 'cash', amount: product.price + 20 }],
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('PRICE_LOCKED');
+    });
+
+    it('lets a cashier sell at the standing price even though the app echoes unit_price', async () => {
+      const product = world.products[0]!;
+
+      const res = await sell(world.tokens.cashier, {
+        store_id: world.storeId,
+        client_reference: clientRef('cashier-echo'),
+        items: [{ product_id: product.id, quantity: 1, unit_price: product.price }],
+        payments: [{ method: 'cash', amount: product.price }],
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.items[0].unit_price).toBe(product.price);
+    });
+
+    it('rejects an admin override below cost price', async () => {
+      const product = world.products[0]!;
+
+      const res = await sell(world.tokens.admin, {
         store_id: world.storeId,
         client_reference: clientRef('cheap'),
         items: [{ product_id: product.id, quantity: 1, unit_price: 0.01 }],
@@ -38,14 +66,13 @@ describe('regressions', () => {
       expect(res.body.code).toBe('PRICE_BELOW_COST');
     });
 
-    it('honours an override at or above cost, and it becomes the new catalogue price', async () => {
-      const { prisma } = await import('../src/prisma.js');
+    it('an admin override without persist_price applies to the receipt only', async () => {
       const product = world.products[1]!;
-      const newPrice = product.price - 10; // still comfortably above cost (price / 2)
+      const newPrice = product.price - 10; // above cost (price / 2)
 
-      const res = await sell(world.tokens.cashier, {
+      const res = await sell(world.tokens.admin, {
         store_id: world.storeId,
-        client_reference: clientRef('reprice'),
+        client_reference: clientRef('sale-only'),
         items: [{ product_id: product.id, quantity: 1, unit_price: newPrice }],
         payments: [{ method: 'cash', amount: newPrice }],
       });
@@ -54,7 +81,32 @@ describe('regressions', () => {
       expect(res.body.items[0].unit_price).toBe(newPrice);
 
       const catalogue = await prisma.product.findUnique({ where: { id: product.id } });
-      expect(catalogue?.sellingPrice.toNumber()).toBe(newPrice);
+      expect(catalogue?.sellingPrice.toNumber()).toBe(product.price);
+      const override = await prisma.storePrice.findFirst({
+        where: { storeId: world.storeId, productId: product.id },
+      });
+      expect(override).toBeNull();
+    });
+
+    it('an admin override with persist_price becomes that shop’s standing price', async () => {
+      const product = world.products[1]!;
+      const newPrice = product.price - 10;
+
+      const res = await sell(world.tokens.admin, {
+        store_id: world.storeId,
+        client_reference: clientRef('persist'),
+        items: [{ product_id: product.id, quantity: 1, unit_price: newPrice, persist_price: true }],
+        payments: [{ method: 'cash', amount: newPrice }],
+      });
+
+      expect(res.status).toBe(201);
+
+      const catalogue = await prisma.product.findUnique({ where: { id: product.id } });
+      expect(catalogue?.sellingPrice.toNumber()).toBe(product.price); // org base untouched
+      const override = await prisma.storePrice.findFirst({
+        where: { storeId: world.storeId, productId: product.id },
+      });
+      expect(override?.price.toNumber()).toBe(newPrice);
 
       const withStock = await request(app)
         .get(`/api/products/with-stock/${world.storeId}`)

@@ -12,6 +12,8 @@ import {
 } from '../store/cart';
 import { useCheckout } from '../hooks/useCheckout';
 import { useLeaveGuard } from '../hooks/useLeaveGuard';
+import { useCan } from '../store/auth';
+import { useStoreSelection } from '../store/storeSelection';
 import { useSync } from '../db/sync';
 import { colors, font, formatKwacha, radius, spacing, splitAmount } from '../theme';
 import { Button, EmptyState, Icon, QtyStepper } from './components';
@@ -37,7 +39,14 @@ export function CartPanel({
   const lines = useCart((s) => s.lines);
   const setQuantity = useCart((s) => s.setQuantity);
   const setPriceOverride = useCart((s) => s.setPriceOverride);
+  const setDiscount = useCart((s) => s.setDiscount);
   const remove = useCart((s) => s.remove);
+
+  // The till price is locked. Only an account trusted with pricing (admin, and
+  // warehouse staff — the same set `costs.view` gates) may change a line price,
+  // and only through a prompt. Everyone else uses the discount field below.
+  const canEditPrice = useCan('costs.view');
+  const storeName = useStoreSelection((s) => s.selected?.name);
   const clearCart = useCart((s) => s.clear);
   const customerName = useCart((s) => s.customerName);
   const setCustomer = useCart((s) => s.setCustomer);
@@ -92,8 +101,11 @@ export function CartPanel({
           <CartLineRow
             key={line.product.id}
             line={line}
+            canEditPrice={canEditPrice}
+            storeName={storeName}
             onQuantity={(next) => setQuantity(line.product.id, next)}
-            onPrice={(next) => setPriceOverride(line.product.id, next)}
+            onPrice={(next, persist) => setPriceOverride(line.product.id, next, persist)}
+            onDiscount={(next) => setDiscount(line.product.id, next)}
             onRemove={() => remove(line.product.id)}
           />
         ))}
@@ -169,36 +181,71 @@ export function CartPanel({
 }
 
 /**
- * One cart line, with its own tap-to-edit selling price. Every logged-in
- * role may reprice a line here — the client asked for this to apply to admin
- * and every shop login alike, with no in-app cap; the backend floors any
- * override at the product's cost price regardless of role, and an accepted
- * override becomes the new catalogue price, so the Sell screen and the
- * product screen pick it up too.
+ * One cart line.
+ *
+ * The selling price is locked. An account with `canEditPrice` (admin, and
+ * warehouse staff) may tap it, but a changed figure is only applied after a
+ * prompt: "This sale only" leaves the catalogue alone, "Update this shop's
+ * price" also writes the standing price. Everyone else sells cheaper through
+ * the discount field — capped for a cashier by the server, printed on the
+ * receipt, and it never touches the stored price.
  */
 function CartLineRow({
   line,
+  canEditPrice,
+  storeName,
   onQuantity,
   onPrice,
+  onDiscount,
   onRemove,
 }: {
   line: CartLine;
+  canEditPrice: boolean;
+  storeName?: string;
   onQuantity: (next: number) => void;
-  onPrice: (next: number | undefined) => void;
+  onPrice: (next: number | undefined, persist: boolean) => void;
+  onDiscount: (next: number) => void;
   onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(unitPriceOf(line)));
+  const [editingDiscount, setEditingDiscount] = useState(false);
+  const [discountDraft, setDiscountDraft] = useState(String(line.discount || ''));
   const belowCost = isBelowCost(line);
+
+  const resetDraft = () => setDraft(String(unitPriceOf(line)));
 
   const commit = () => {
     setEditing(false);
     const parsed = Number(draft.replace(',', '.'));
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      setDraft(String(unitPriceOf(line)));
+      resetDraft();
       return;
     }
-    onPrice(parsed === line.product.selling_price ? undefined : parsed);
+    if (parsed === unitPriceOf(line)) return;
+    if (parsed === line.product.selling_price) {
+      onPrice(undefined, false);
+      return;
+    }
+    // Never change a price without asking — the client's explicit rule.
+    Alert.alert(
+      'Change the price?',
+      `${line.product.name}\n${formatKwacha(line.product.selling_price)} → ${formatKwacha(parsed)} each.`,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: resetDraft },
+        { text: 'This sale only', onPress: () => onPrice(parsed, false) },
+        {
+          text: `Update ${storeName ? `${storeName}'s` : 'the shop'} price`,
+          onPress: () => onPrice(parsed, true),
+        },
+      ]
+    );
+  };
+
+  const commitDiscount = () => {
+    setEditingDiscount(false);
+    const parsed = Number(discountDraft.replace(',', '.'));
+    onDiscount(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
   };
 
   return (
@@ -220,9 +267,11 @@ function CartLineRow({
         />
 
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.lineTotal}>{formatKwacha(unitPriceOf(line) * line.quantity)}</Text>
+          <Text style={styles.lineTotal}>
+            {formatKwacha(Math.max(0, unitPriceOf(line) * line.quantity - line.discount))}
+          </Text>
 
-          {editing ? (
+          {editing && canEditPrice ? (
             <View style={styles.priceEditRow}>
               <Text style={styles.priceEditPrefix}>K</Text>
               <TextInput
@@ -236,10 +285,10 @@ function CartLineRow({
                 style={styles.priceEditInput}
               />
             </View>
-          ) : (
+          ) : canEditPrice ? (
             <Pressable
               onPress={() => {
-                setDraft(String(unitPriceOf(line)));
+                resetDraft();
                 setEditing(true);
               }}
               hitSlop={6}
@@ -247,11 +296,52 @@ function CartLineRow({
               <Text style={[styles.lineUnit, styles.lineUnitEditable]}>
                 {formatKwacha(unitPriceOf(line))} each
                 {line.product.tax_type === 'vat' ? ' · VAT' : ''}
-                {line.priceOverride !== undefined ? ' · edited' : ''}
+                {line.priceOverride !== undefined
+                  ? line.persistPrice
+                    ? ' · shop price'
+                    : ' · this sale'
+                  : ''}
               </Text>
             </Pressable>
+          ) : (
+            <Text style={styles.lineUnit}>
+              {formatKwacha(unitPriceOf(line))} each
+              {line.product.tax_type === 'vat' ? ' · VAT' : ''}
+            </Text>
           )}
         </View>
+      </View>
+
+      <View style={styles.discountRow}>
+        {editingDiscount ? (
+          <View style={styles.priceEditRow}>
+            <Text style={styles.priceEditPrefix}>Discount  −K</Text>
+            <TextInput
+              value={discountDraft}
+              onChangeText={setDiscountDraft}
+              onBlur={commitDiscount}
+              onSubmitEditing={commitDiscount}
+              keyboardType="decimal-pad"
+              autoFocus
+              selectTextOnFocus
+              style={styles.priceEditInput}
+            />
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => {
+              setDiscountDraft(String(line.discount || ''));
+              setEditingDiscount(true);
+            }}
+            hitSlop={6}
+          >
+            <Text style={[styles.lineUnit, styles.lineUnitEditable]}>
+              {line.discount > 0
+                ? `Discount − ${formatKwacha(line.discount)}`
+                : '+ Add discount'}
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {belowCost ? (
@@ -361,6 +451,7 @@ const styles = StyleSheet.create({
   lineUnit: { fontFamily: font.regular, fontSize: 11, color: colors.textMuted, marginTop: 1 },
   lineUnitEditable: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
 
+  discountRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   priceEditRow: {
     flexDirection: 'row',
     alignItems: 'center',

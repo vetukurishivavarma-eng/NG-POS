@@ -12,8 +12,21 @@ const D = Prisma.Decimal;
 export interface SaleItemInput {
   product_id: string;
   quantity: number;
-  /** Optional override; otherwise the store price or catalogue price is used. */
+  /**
+   * Optional override; otherwise the store price or catalogue price is used.
+   * Accepted only from an account allowed to reprice at the till (see
+   * `mayReprice` in `createSale`) and never below cost. A value equal to the
+   * price the server would use anyway is ignored — the current app sends this
+   * field on every line whether or not anyone touched it.
+   */
   unit_price?: number;
+  /**
+   * Only meaningful alongside an accepted `unit_price`. When true, the new
+   * figure also replaces this store's standing price; when false or absent it
+   * applies to this one receipt and the catalogue is left untouched. The till
+   * prompt ("This sale only" / "Update this shop's price") is what sets it.
+   */
+  persist_price?: boolean;
   discount_amount?: number;
 }
 
@@ -156,11 +169,15 @@ export async function createSale(user: AuthUser, input: SaleInput) {
       const isReversal = input.transaction_type === 'refund' || input.transaction_type === 'credit_note';
       const sign = isReversal ? -1 : 1;
 
-      // Only checked/used for a live sale's own override, never for a refund's
-      // derived unit_price (that one is history, already validated when the
-      // original sale was made).
-      const repriceOverride = !isReversal && input.items.some((i) => i.unit_price !== undefined);
-      const showCosts = repriceOverride ? await mayViewCosts(user) : false;
+      // Repricing a line at the till is an administrator's action only —
+      // ORG_ADMIN, and warehouse staff who carry every admin capability.
+      // The client asked for the price to be *locked* for everyone else: a
+      // cashier or shop login who needs to sell cheaper applies a discount,
+      // which is capped and prints on the receipt and never disturbs the
+      // stored price. `mayViewCosts` is exactly that trusted set, and it also
+      // decides whether the below-cost message may name the cost figure.
+      const mayReprice = !isReversal && (await mayViewCosts(user));
+      const showCosts = mayReprice;
 
       let subtotal = new D(0);
       let discountTotal = new D(0);
@@ -175,10 +192,26 @@ export async function createSale(user: AuthUser, input: SaleInput) {
         if (line.quantity <= 0) throw badRequest(`Quantity must be positive for ${product.name}.`);
 
         const quantity = new D(line.quantity);
-        const overriding = !isReversal && line.unit_price !== undefined;
-        const unitPrice = overriding
-          ? new D(line.unit_price!)
-          : (priceById.get(product.id) ?? product.sellingPrice);
+        const basePrice = priceById.get(product.id) ?? product.sellingPrice;
+
+        // The app sends `unit_price` on every line. It is a real override only
+        // when it differs from the price the server would otherwise use —
+        // otherwise an ordinary sale from the current build would trip the
+        // lock and the cost floor on every line.
+        const wantsOverride =
+          !isReversal &&
+          line.unit_price !== undefined &&
+          !new D(line.unit_price).equals(basePrice);
+
+        if (wantsOverride && !mayReprice) {
+          throw badRequest(
+            `${product.name}: only an administrator can change a price at the till. Apply a discount instead.`,
+            'PRICE_LOCKED'
+          );
+        }
+
+        const overriding = wantsOverride && mayReprice;
+        const unitPrice = overriding ? new D(line.unit_price!) : basePrice;
 
         // A price override may never undercut what the item cost to land on
         // the shelf, for any role — the client explicitly asked for this to
@@ -195,13 +228,14 @@ export async function createSale(user: AuthUser, input: SaleInput) {
           );
         }
 
-        // The override becomes this STORE's new standing price from here on —
-        // the client asked that a price changed at the till update the Sell
-        // screen and "catalogue" for that shop, but explicitly NOT change any
-        // other shop's price. So this writes/updates only this store's
-        // StorePrice row, never Product.sellingPrice (the org-wide base) and
-        // never another store's row.
-        if (overriding) {
+        // A repriced line changes this STORE's standing price only when the
+        // administrator explicitly asked for it at the till ("Update this
+        // shop's price"). Without that flag the new figure lives on this one
+        // receipt and the catalogue is left exactly as it was — the client's
+        // "the price won't change unless there is a prompt to change it". Even
+        // then it touches only this store's StorePrice row, never
+        // Product.sellingPrice (the org-wide base) or another store's row.
+        if (overriding && line.persist_price) {
           await tx.storePrice.upsert({
             where: { storeId_productId: { storeId: store.id, productId: product.id } },
             create: { storeId: store.id, productId: product.id, price: unitPrice },

@@ -74,11 +74,16 @@ transactionsRouter.get(
  *
  * Deliberately narrower than `SaleInput`:
  *
- *  - **`unit_price` is allowed, but floored at the product's cost price.**
- *    Every role (cashier included, per the client's explicit ask) may reprice
- *    a line at the point of sale; `createSale` rejects anything below
- *    `product.costPrice` server-side regardless of what the till believes the
- *    cost is, so a stale or tampered client still cannot sell at a loss.
+ *  - **`unit_price` is allowed only from an administrator, and floored at the
+ *    product's cost price.** The client asked for the till price to be locked:
+ *    a cashier or shop login who sends a `unit_price` that differs from the
+ *    shop/catalogue price is refused (`PRICE_LOCKED`) and told to discount
+ *    instead. A `unit_price` equal to the resolved price is ignored, so the
+ *    current app — which sends it on every line — keeps working. `persist_price`
+ *    alongside an accepted override also updates that shop's standing price.
+ *  - **`discount_amount`** is how everyone else sells cheaper: capped for a
+ *    cashier at `MAX_CASHIER_DISCOUNT_PERCENT`, uncapped for a manager/admin,
+ *    and always printed on the receipt without changing the stored price.
  *  - **`sale` only.** A client posting `transaction_type: "refund"` walked
  *    straight past the manager approval on `POST /:id/refund`, minting negative
  *    money and stock out of nothing. Reversals go through that route.
@@ -93,6 +98,7 @@ const saleSchema = z.object({
         product_id: z.string().uuid(),
         quantity: z.number().positive(),
         unit_price: z.number().positive().optional(),
+        persist_price: z.boolean().optional(),
         discount_amount: z.number().min(0).optional(),
       })
     )
