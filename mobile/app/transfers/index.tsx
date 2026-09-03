@@ -205,7 +205,9 @@ function PrintChip({
       style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
     >
       <Icon name={icon} size={15} color={colors.primary} />
-      <Text style={styles.chipLabel}>{label}</Text>
+      <Text style={styles.chipLabel} numberOfLines={1}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -281,9 +283,15 @@ const styles = StyleSheet.create({
   disclosure: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   disclosureText: { fontFamily: font.semibold, fontSize: 12, color: colors.textMuted },
 
-  actions: { flexDirection: 'row', gap: spacing.sm },
+  // Wraps so four chips reflow to two rows on a phone and sit in one row on a
+  // tablet. `flexBasis` keeps each chip readable before it wraps rather than
+  // letting all four shrink to slivers.
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 104,
+    minWidth: 104,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
