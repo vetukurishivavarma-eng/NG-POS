@@ -55,6 +55,35 @@ src/
 modules/bt-printer/     custom native module (Kotlin) — Bluetooth Classic SPP
 ```
 
+### Selling: locked prices and discounts
+
+The selling price at the till is **locked**. A cashier or shop login sees the
+price but cannot change it — if a customer needs a lower price they apply a
+**discount** on the cart line (tap "+ Add discount"). The server caps a
+cashier's discount at `MAX_CASHIER_DISCOUNT_PERCENT` (default 10%; set to 0 to
+require a manager for every discount) and rejects anything larger with
+`DISCOUNT_LIMIT`. A discount prints on the receipt and never changes the stored
+price.
+
+Only an **administrator** (and warehouse staff — the `costs.view` set) can tap a
+line's price to change it, and a changed figure is applied only after a prompt:
+
+- **This sale only** — the new price is used on this receipt; the catalogue is
+  untouched.
+- **Update <shop>'s price** — the new price is also written as that store's
+  standing price (its `StorePrice` row). The org-wide base price is never
+  touched here, and no other shop's price changes.
+
+Either way the server floors the price at the product's cost price
+(`PRICE_BELOW_COST`). A non-admin whose request carries a price different from
+the standing one is refused with `PRICE_LOCKED`; a price equal to the standing
+one is ignored, so an older build that echoes `unit_price` on every line keeps
+working. The wire fields are `unit_price` and `persist_price` on each sale item.
+
+To change a price permanently without making a sale, use **Products → edit** (or
+**Store Pricing** for one shop) — that is the sanctioned path and is itself
+gated by `pricing.write`.
+
 ### Closing the day
 
 **More → Day Report** is the Z-report: net takings, the split by payment method,
