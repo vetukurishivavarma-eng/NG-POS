@@ -53,6 +53,8 @@ interface PendingSeed {
   entries: SeedEntry[];
   label: string;
   note?: string;
+  /** Set for a "pass on" seed — the transfer this stock arrived on. */
+  source_transfer_id?: string;
 }
 
 const MAX_RESULTS = 25;
@@ -75,16 +77,21 @@ export default function NewTransferScreen() {
   const [search, setSearch] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
-  const [loader, setLoader] = useState<null | 'invoice' | 'order'>(null);
+  const [loader, setLoader] = useState<null | 'invoice' | 'order' | 'passon'>(null);
   const [originLabel, setOriginLabel] = useState<string | null>(null);
   const [seedNote, setSeedNote] = useState<string | null>(null);
   const [seedTick, setSeedTick] = useState(0);
+  // The transfer this stock arrived on, when the basket was built by "passing
+  // on" a received transfer. Sent with the new transfer so the note shows the
+  // chain.
+  const [sourceTransferId, setSourceTransferId] = useState<string | null>(null);
 
-  // Opened against a source document — a recorded delivery (`?invoice=`) or an
-  // earlier transfer to repeat (`?repeat=`).
-  const params = useLocalSearchParams<{ invoice?: string; repeat?: string }>();
+  // Opened against a source document — a recorded delivery (`?invoice=`), an
+  // earlier transfer to repeat (`?repeat=`), or one to pass on (`?passon=`).
+  const params = useLocalSearchParams<{ invoice?: string; repeat?: string; passon?: string }>();
   const invoiceId = typeof params.invoice === 'string' ? params.invoice : undefined;
   const repeatId = typeof params.repeat === 'string' ? params.repeat : undefined;
+  const passOnId = typeof params.passon === 'string' ? params.passon : undefined;
   const deepLinkSeededRef = useRef(false);
   const pendingSeedRef = useRef<PendingSeed | null>(null);
 
@@ -96,7 +103,8 @@ export default function NewTransferScreen() {
   const transfersListQuery = useQuery({
     queryKey: ['transfers'],
     queryFn: () => transfersApi.list(),
-    enabled: Boolean(repeatId) || loader === 'order',
+    enabled:
+      Boolean(repeatId) || Boolean(passOnId) || loader === 'order' || loader === 'passon',
   });
 
   const storesQuery = useQuery({ queryKey: ['stores'], queryFn: storesApi.list });
@@ -142,6 +150,15 @@ export default function NewTransferScreen() {
     if (!needle) return [];
     return filterCatalogue(items, needle, null).slice(0, MAX_RESULTS);
   }, [items, search]);
+
+  // "Pass on" offers transfers that *landed here* — their destination is the
+  // shop we would be sending from — so the stock they brought in can be moved
+  // onward.
+  const passOnCandidates = useMemo(() => {
+    const here = fromStoreId || selectedStore?.id;
+    if (!here) return [];
+    return (transfersListQuery.data ?? []).filter((t) => t.to_store_id === here).slice(0, 30);
+  }, [transfersListQuery.data, fromStoreId, selectedStore?.id]);
 
   const checkStock = Boolean(fromStoreId);
   const totalUnits = lines.reduce((sum, l) => sum + (parseQuantity(l.quantity) ?? 0), 0);
@@ -220,8 +237,13 @@ export default function NewTransferScreen() {
         label: `Transfer ${t.reference}`,
         note: 'Quantities are from that transfer — check them against the shelf.',
       });
+    } else if (passOnId) {
+      const t = (transfersListQuery.data ?? []).find((x) => x.id === passOnId);
+      if (!t) return;
+      deepLinkSeededRef.current = true;
+      requestSeed(passOnSeed(t));
     }
-  }, [invoiceId, repeatId, originInvoiceQuery.data, transfersListQuery.data]);
+  }, [invoiceId, repeatId, passOnId, originInvoiceQuery.data, transfersListQuery.data]);
 
   // Process a pending seed: point the source store at where the goods are, wait
   // for its catalogue, then add the lines.
@@ -235,6 +257,7 @@ export default function NewTransferScreen() {
       if (!allowed) {
         pendingSeedRef.current = null;
         setOriginLabel(seed.label);
+        setSourceTransferId(null);
         setSeedNote('That stock is at a shop you cannot send from, so nothing was loaded.');
         return;
       }
@@ -249,6 +272,7 @@ export default function NewTransferScreen() {
 
     pendingSeedRef.current = null;
     setOriginLabel(seed.label);
+    setSourceTransferId(seed.source_transfer_id ?? null);
     const r = addLinesFromSource(seed.entries);
 
     const parts: string[] = [];
@@ -275,6 +299,7 @@ export default function NewTransferScreen() {
     // document, so drop the "loaded from" story.
     setOriginLabel(null);
     setSeedNote(null);
+    setSourceTransferId(null);
   }
 
   function addProduct(productId: string) {
@@ -366,6 +391,12 @@ export default function NewTransferScreen() {
     });
   }
 
+  function pickPassOn(transfer: Transfer) {
+    setLoader(null);
+    setSearch('');
+    requestSeed(passOnSeed(transfer));
+  }
+
   function setQuantity(productId: string, value: string) {
     const clean = value.replace(/[^0-9]/g, '');
     setLines((current) =>
@@ -401,6 +432,7 @@ export default function NewTransferScreen() {
           quantity: parseQuantity(l.quantity) ?? 0,
         })),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(sourceTransferId ? { source_transfer_id: sourceTransferId } : {}),
       });
 
       void queryClient.invalidateQueries({ queryKey: ['transfers'] });
@@ -535,6 +567,20 @@ export default function NewTransferScreen() {
                   {loader === 'order' ? 'Close' : 'From an order'}
                 </Text>
               </Pressable>
+              <Pressable
+                onPress={() => setLoader((v) => (v === 'passon' ? null : 'passon'))}
+                hitSlop={6}
+                style={styles.loaderBtn}
+              >
+                <Icon
+                  name={loader === 'passon' ? 'x' : 'corner-up-right'}
+                  size={13}
+                  color={colors.primary}
+                />
+                <Text style={styles.loaderBtnText}>
+                  {loader === 'passon' ? 'Close' : 'Pass on'}
+                </Text>
+              </Pressable>
             </View>
           </View>
 
@@ -610,6 +656,50 @@ export default function NewTransferScreen() {
                         </Text>
                       </View>
                       <Icon name="download" size={18} color={colors.primary} />
+                    </Pressable>
+                  );
+                })
+              )}
+            </View>
+          ) : null}
+
+          {loader === 'passon' ? (
+            <View style={styles.docPanel}>
+              {transfersListQuery.isLoading ? (
+                <Loading label="Loading transfers" />
+              ) : transfersListQuery.isError ? (
+                <Pressable onPress={() => void transfersListQuery.refetch()}>
+                  <Text style={styles.noResults}>Couldn’t load transfers. Tap to retry.</Text>
+                </Pressable>
+              ) : passOnCandidates.length === 0 ? (
+                <Text style={styles.noResults}>
+                  No transfers have arrived at{' '}
+                  {(fromStore ?? selectedStore)?.name ?? 'this shop'} to pass on.
+                </Text>
+              ) : (
+                passOnCandidates.map((transfer, index) => {
+                  const units = transfer.items.reduce((sum, i) => sum + i.quantity, 0);
+                  return (
+                    <Pressable
+                      key={transfer.id}
+                      onPress={() => pickPassOn(transfer)}
+                      style={({ pressed }) => [
+                        styles.docRow,
+                        index > 0 && styles.resultDivider,
+                        pressed && { backgroundColor: colors.surfaceSunken },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.resultName} numberOfLines={1}>
+                          {transfer.reference}
+                        </Text>
+                        <Text style={styles.resultSku} numberOfLines={1}>
+                          from {transfer.from_store ?? '—'} ·{' '}
+                          {transfer.items.length} product{transfer.items.length === 1 ? '' : 's'} ·{' '}
+                          {units} unit{units === 1 ? '' : 's'}
+                        </Text>
+                      </View>
+                      <Icon name="corner-up-right" size={18} color={colors.primary} />
                     </Pressable>
                   );
                 })
@@ -970,6 +1060,26 @@ function StockAcrossShops({
   );
 }
 
+/**
+ * "Pass on" a received transfer: the stock is now at that transfer's
+ * destination, so *that* becomes the source. The onward shop is left blank for
+ * the user to choose, and the quantities come across as received — the user
+ * lowers each line to what is actually being sent on.
+ */
+function passOnSeed(transfer: Transfer): PendingSeed {
+  return {
+    from_store_id: transfer.to_store_id,
+    entries: transfer.items.map((it) => ({
+      product_id: it.product_id,
+      name: it.product_name,
+      quantity: it.quantity,
+    })),
+    label: `Pass on from ${transfer.reference}`,
+    note: 'Quantities are what arrived on that transfer — lower each line to what you are sending on.',
+    source_transfer_id: transfer.id,
+  };
+}
+
 function parseQuantity(raw: string): number | null {
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) ? n : null;
@@ -1096,7 +1206,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  loaderBtns: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  loaderBtns: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
   loaderBtn: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   loaderBtnText: { fontFamily: font.semibold, fontSize: 12, color: colors.primary },
 

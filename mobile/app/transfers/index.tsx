@@ -100,6 +100,15 @@ function TransferCard({ transfer }: { transfer: Transfer }) {
         <Badge label={transfer.status.replace(/_/g, ' ').toUpperCase()} tone={tone} dot />
       </View>
 
+      {transfer.source_reference ? (
+        <View style={styles.chainRow}>
+          <Icon name="corner-up-right" size={12} color={colors.textMuted} />
+          <Text style={styles.chainText} numberOfLines={1}>
+            Passed on from {transfer.source_reference}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.route}>
         <View style={styles.routeSide}>
           <Text style={styles.routeLabel}>From</Text>
@@ -168,6 +177,13 @@ function TransferCard({ transfer }: { transfer: Transfer }) {
             onPress={() => router.push(`/transfers/new?repeat=${transfer.id}`)}
           />
         ) : null}
+        {canCreate ? (
+          <PrintChip
+            icon="corner-up-right"
+            label="Pass on"
+            onPress={() => router.push(`/transfers/new?passon=${transfer.id}`)}
+          />
+        ) : null}
       </View>
     </Pressable>
   );
@@ -229,6 +245,9 @@ const styles = StyleSheet.create({
 
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
   reference: { fontFamily: font.extrabold, fontSize: 16, color: colors.text, letterSpacing: 0.4 },
+
+  chainRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.xs },
+  chainText: { flex: 1, fontFamily: font.medium, fontSize: 11, color: colors.textMuted },
 
   route: {
     flexDirection: 'row',

@@ -624,6 +624,8 @@ describe('mobile API contract', () => {
         'to_store_id',
         'to_store',
         'status',
+        'source_transfer_id',
+        'source_reference',
         'items',
         'created_at',
       ],
@@ -634,6 +636,45 @@ describe('mobile API contract', () => {
     // Source drops, destination gains — the screen's "all or nothing" promise.
     const source = await get('/api/inventory', world.tokens.manager, { store_id: world.storeId });
     expect(source.body.find((r: { product_id: string }) => r.product_id === product.id).quantity).toBe(85);
+  });
+
+  it('transfers.create links a pass-on transfer back to the one the stock arrived on', async () => {
+    const product = world.products[0]!;
+    const katende = await post('/api/stores', world.tokens.admin, { name: 'Katende', code: 'KTD' });
+    const chinkuli = await post('/api/stores', world.tokens.admin, { name: 'Chinkuli', code: 'CNK' });
+
+    // Warehouse -> Katende.
+    const inbound = await post('/api/transfers', world.tokens.admin, {
+      from_store_id: world.storeId,
+      to_store_id: katende.body.id,
+      items: [{ product_id: product.id, quantity: 10 }],
+    });
+    expect(inbound.status).toBe(201);
+
+    // Katende passes some of it on to Chinkuli, citing the inbound transfer.
+    const onward = await post('/api/transfers', world.tokens.admin, {
+      from_store_id: katende.body.id,
+      to_store_id: chinkuli.body.id,
+      items: [{ product_id: product.id, quantity: 4 }],
+      source_transfer_id: inbound.body.id,
+    });
+    expect(onward.status).toBe(201);
+
+    const list = await get('/api/transfers', world.tokens.admin);
+    const row = list.body.find((t: { id: string }) => t.id === onward.body.id);
+    expect(row.source_transfer_id).toBe(inbound.body.id);
+    expect(row.source_reference).toBe(inbound.body.reference);
+  });
+
+  it('transfers.create rejects a pass-on link to an unknown transfer', async () => {
+    const destination = await post('/api/stores', world.tokens.admin, { name: 'Ndola', code: 'NDL' });
+    const res = await post('/api/transfers', world.tokens.manager, {
+      from_store_id: world.storeId,
+      to_store_id: destination.body.id,
+      items: [{ product_id: world.products[0]!.id, quantity: 1 }],
+      source_transfer_id: '00000000-0000-0000-0000-000000000000',
+    });
+    expect(res.status).toBe(400);
   });
 
   it('transfers.create refuses more stock than the source holds', async () => {

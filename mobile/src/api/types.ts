@@ -494,6 +494,9 @@ export interface Transfer {
   to_store_id: string;
   to_store: string | null;
   status: string;
+  /** Set when this transfer passed on stock that arrived on an earlier one. */
+  source_transfer_id?: string | null;
+  source_reference?: string | null;
   /** Free text typed when the transfer was made; printed on the transfer note. */
   notes?: string;
   items: TransferItem[];
@@ -505,6 +508,8 @@ export interface TransferDraft {
   to_store_id: string;
   items: { product_id: string; quantity: number }[];
   notes?: string;
+  /** The transfer this stock arrived on, when this one is passing it on. */
+  source_transfer_id?: string;
 }
 
 /* ----------------------------------------------------------------- analytics */

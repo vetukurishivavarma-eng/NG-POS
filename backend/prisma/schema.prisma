@@ -497,15 +497,22 @@ model Transfer {
   toStoreId      String?        @map("to_store_id")
   status         TransferStatus @default(pending)
   notes          String         @default("")
+  // Set when this transfer was built by "passing on" stock that arrived on an
+  // earlier transfer — the shop received goods and is now distributing them
+  // onward. Lets the transfer note say where the stock came from.
+  sourceTransferId String?      @map("source_transfer_id")
   createdAt      DateTime       @default(now()) @map("created_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")
 
   organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   fromStore    Store?         @relation("TransferFrom", fields: [fromStoreId], references: [id], onDelete: SetNull)
   toStore      Store?         @relation("TransferTo", fields: [toStoreId], references: [id], onDelete: SetNull)
+  sourceTransfer Transfer?    @relation("TransferChain", fields: [sourceTransferId], references: [id], onDelete: SetNull)
+  passedOn     Transfer[]     @relation("TransferChain")
   items        TransferItem[]
 
   @@index([organizationId])
+  @@index([sourceTransferId])
   @@map("transfers")
 }
 

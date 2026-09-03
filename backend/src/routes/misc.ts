@@ -225,6 +225,7 @@ transfersRouter.get(
         items: { include: { product: { select: { name: true, sku: true } } } },
         fromStore: { select: { name: true } },
         toStore: { select: { name: true } },
+        sourceTransfer: { select: { reference: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
@@ -239,6 +240,8 @@ transfersRouter.get(
         to_store_id: t.toStoreId,
         to_store: t.toStore?.name ?? null,
         status: t.status,
+        source_transfer_id: t.sourceTransferId,
+        source_reference: t.sourceTransfer?.reference ?? null,
         // Printed on the transfer note, so it has to come back out of the API.
         notes: t.notes,
         items: t.items.map((i) => ({
@@ -260,6 +263,8 @@ const transferSchema = z.object({
     .array(z.object({ product_id: z.string().uuid(), quantity: z.number().positive() }))
     .min(1),
   notes: z.string().optional(),
+  /** The transfer this stock arrived on, when this one is "passing it on". */
+  source_transfer_id: z.string().uuid().optional(),
 });
 
 /**
@@ -284,6 +289,15 @@ transfersRouter.post(
     // nowhere to send to. Crossing organisations is still refused.
     await assertStoreInOrganization(user, body.to_store_id);
 
+    // A pass-on link, if given, has to be a real transfer in this organisation.
+    if (body.source_transfer_id) {
+      const parent = await prisma.transfer.findFirst({
+        where: { id: body.source_transfer_id, organizationId: user.organizationId },
+        select: { id: true },
+      });
+      if (!parent) throw badRequest('The transfer this stock came from could not be found.');
+    }
+
     const transfer = await prisma.$transaction(async (tx) => {
       const reference = `TRF-${Date.now().toString(36).toUpperCase()}`;
 
@@ -295,6 +309,7 @@ transfersRouter.post(
           toStoreId: body.to_store_id,
           status: 'completed',
           notes: body.notes ?? '',
+          sourceTransferId: body.source_transfer_id ?? null,
           items: {
             createMany: {
               data: body.items.map((i) => ({
