@@ -142,7 +142,16 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'products.write': ['admin', 'manager'],
   'products.delete': ['admin'],
   'products.import': ['admin', 'manager'],
-  'stock.adjust': ['admin', 'manager'],
+  // Granted to every role, cashier included — see `SHOP_STAFF_GRANT` in the
+  // backend's `lib/capabilities.ts` (added 2026-08-16 at the owner's explicit
+  // instruction: a shop till could load a whole spreadsheet of stock but not
+  // fix a single wrong count by hand). This fallback only fires when a cached
+  // session predates a capability refresh (`user.capabilities` missing), but
+  // it must still agree with the server or a till stuck on the fallback shows
+  // "Read-only for your role" for a feature the server would actually allow —
+  // works for admin (whose fallback is always the full set) and silently fails
+  // for a shop/cashier login until the next successful refresh.
+  'stock.adjust': ['admin', 'manager', 'cashier'],
   'pricing.write': ['admin', 'manager'],
   // Buying prices are the owner's business with his suppliers, so this is the
   // one capability a manager does not get. The fallback matters more here than
