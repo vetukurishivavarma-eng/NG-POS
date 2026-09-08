@@ -481,10 +481,13 @@ function BuildStamp() {
       disabled={checking}
       style={({ pressed }) => [styles.stamp, pressed && styles.stampPressed]}
     >
-      <Text style={styles.stampVersion}>
-        NG POS {installedVersion() || '—'}
-        {build === null ? '' : ` · build ${build}`}
-      </Text>
+      <View style={styles.stampRow}>
+        <Icon name="tag" size={13} color={colors.textMuted} />
+        <Text style={styles.stampVersion}>
+          NG POS {installedVersion() || '—'}
+          {build === null ? '' : ` · build ${build}`}
+        </Text>
+      </View>
       <Text style={styles.stampHint}>
         {checking ? 'Checking…' : 'Tap to check for updates'}
       </Text>
@@ -548,12 +551,21 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
 
-  stamp: { alignItems: 'center', gap: 2, paddingTop: spacing.lg, paddingBottom: spacing.sm },
+  stamp: {
+    alignItems: 'center',
+    gap: 3,
+    marginTop: spacing.md,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
   stampPressed: { opacity: 0.55 },
+  stampRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   stampVersion: {
     fontFamily: font.semibold,
-    fontSize: 12,
-    color: colors.textFaint,
+    fontSize: 13,
+    color: colors.textMuted,
     letterSpacing: 0.3,
   },
   stampHint: { fontFamily: font.regular, fontSize: 11, color: colors.textFaint },
