@@ -66,6 +66,34 @@ describe('one shop’s sheet', () => {
     expect(columns.join(',')).not.toContain('Katende');
   });
 
+  it('narrows an owner’s list to one shop when ?store_id is given', async () => {
+    const theirs = await prisma.product.create({
+      data: {
+        organizationId: world.organizationId,
+        name: 'Katende Only Item',
+        sku: 'KAT-ONLY-2',
+        sellingPrice: 50,
+      },
+      select: { id: true },
+    });
+    await prisma.inventory.create({
+      data: { storeId: other.id, productId: theirs.id, quantity: 4 },
+    });
+
+    const res = await as(world.tokens.admin, 'get', `/api/inventory/export?store_id=${other.id}`);
+    const columns = headerOf(res.text);
+
+    expect(columns).toContain('Katende Closing Stock');
+    expect(columns.join(',')).not.toContain('Test Store');
+    expect(res.text).toContain('Katende Only Item');
+    expect(res.headers['content-disposition']).toContain('ng-pos-stock-list-katende-');
+  });
+
+  it('refuses a shop the caller cannot reach', async () => {
+    const res = await as(world.tokens.manager, 'get', `/api/inventory/export?store_id=${other.id}`);
+    expect(res.status).toBe(403);
+  });
+
   it('gives a shop a template columned the same way its list is', async () => {
     const [template, current] = await Promise.all([
       as(world.tokens.manager, 'get', '/api/inventory/bulk-upload/template'),

@@ -288,8 +288,13 @@ export const inventory = {
    * The point of it is the round trip: download the current list, correct it in
    * Excel where correcting it is easy, and upload the same file again.
    */
-  exportCatalogue: () =>
-    api.get<string>('/inventory/export', { responseType: 'text' }).then((r) => r.data),
+  exportCatalogue: (storeId?: string) =>
+    api
+      .get<string>('/inventory/export', {
+        responseType: 'text',
+        params: storeId ? { store_id: storeId } : undefined,
+      })
+      .then((r) => r.data),
 };
 
 export const transactions = {

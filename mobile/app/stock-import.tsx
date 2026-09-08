@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import { Directory, File, Paths } from 'expo-file-system';
 
-import { inventory as inventoryApi } from '../src/api/endpoints';
+import { inventory as inventoryApi, stores as storesApi } from '../src/api/endpoints';
 import { errorBodyIfStatus, errorMessage } from '../src/api/client';
 import { useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
@@ -87,6 +87,12 @@ export default function StockImportScreen() {
   const [errors, setErrors] = useState<RowError[] | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [exportShop, setExportShop] = useState('');
+
+  // The shops this account can pull a list for. One shop, or none, means there
+  // is no choice to offer — the download is just "your list".
+  const storesQuery = useQuery({ queryKey: ['stores'], queryFn: storesApi.list });
+  const shops = storesQuery.data ?? [];
 
   function reset() {
     setFile(null);
@@ -294,9 +300,11 @@ export default function StockImportScreen() {
 
   async function downloadCurrentList() {
     const day = new Date().toISOString().slice(0, 10);
+    const shopName = shops.find((s) => s.id === exportShop)?.name;
+    const tag = shopName ? `-${shopName.replace(/[^\w-]+/g, '-')}` : '';
     await saveAndShare(
       async () => {
-        const text = await inventoryApi.exportCatalogue();
+        const text = await inventoryApi.exportCatalogue(exportShop || undefined);
         // A header row and nothing under it. Sharing that would look like the
         // download failed quietly, so it is said plainly instead.
         if (text.split(/\r?\n/).filter((line) => line.trim() !== '').length < 2) {
@@ -306,8 +314,8 @@ export default function StockImportScreen() {
         }
         return text;
       },
-      `ng-pos-stock-list-${day}.csv`,
-      'NG POS stock list'
+      `ng-pos-stock-list${tag}-${day}.csv`,
+      shopName ? `${shopName} stock list` : 'NG POS stock list'
     );
   }
 
@@ -400,8 +408,23 @@ export default function StockImportScreen() {
             loading={busy && !file}
             onPress={() => void downloadTemplate()}
           />
+          {shops.length > 1 ? (
+            <Select
+              value={exportShop}
+              onChange={setExportShop}
+              options={[
+                { value: '', label: 'Every shop, one file' },
+                ...shops.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+              hint="Pick one shop to get a list with only that shop's stock and price columns."
+            />
+          ) : null}
           <Button
-            label="Download the Current List"
+            label={
+              exportShop
+                ? `Download ${shops.find((s) => s.id === exportShop)?.name ?? 'Shop'} List`
+                : 'Download the Current List'
+            }
             icon="share"
             variant="secondary"
             loading={busy && !file}

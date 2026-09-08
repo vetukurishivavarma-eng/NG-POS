@@ -1512,10 +1512,27 @@ inventoryRouter.get(
     // importer reads as "says nothing about cost" and leaves the figure alone.
     const showCosts = await mayViewCosts(user);
 
+    // An optional single shop. An owner running the chain still wants one shop's
+    // list to hand that manager — same document, that shop's two columns and
+    // that shop's lines only.
+    const wantStore = z
+      .object({ store_id: z.string().uuid().optional() })
+      .parse(req.query).store_id;
+    if (wantStore) await assertStoreAccess(user, wantStore);
+
     // The same shops the template columns itself by, so the two files stay one
     // document for every account: an owner's covers the chain, a shop's covers
     // that shop.
-    const stores = await shopColumnsFor(user);
+    const allStores = await shopColumnsFor(user);
+    let stores = wantStore ? allStores.filter((s) => s.id === wantStore) : allStores;
+    if (wantStore && stores.length === 0) {
+      // An admin whose column set is the whole chain asked for one shop by id.
+      const one = await prisma.store.findFirst({
+        where: { id: wantStore, organizationId: user.organizationId },
+        select: { id: true, name: true },
+      });
+      if (one) stores = [one];
+    }
     const storeIds = stores.map((s) => s.id);
 
     /*
@@ -1530,7 +1547,8 @@ inventoryRouter.get(
      * because the alternative is an empty file and no way to load a first
      * stock take from the list it just downloaded.
      */
-    const unrestricted = user.role === 'ORG_ADMIN' || user.assignedStores.length === 0;
+    const unrestricted =
+      !wantStore && (user.role === 'ORG_ADMIN' || user.assignedStores.length === 0);
     const carried = unrestricted
       ? null
       : [
