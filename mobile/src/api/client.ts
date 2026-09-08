@@ -119,10 +119,17 @@ export async function clearToken(): Promise<void> {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
 }
 
+/** This build's version name, e.g. "1.22.1". Sent on every request so the
+ *  server can keep the Devices screen current without waiting for a re-login. */
+const APP_VERSION = (Constants.expoConfig?.version ?? '').trim();
+
 export const api = axios.create({
   baseURL: CONFIGURED_BASE_URL,
   timeout: 20000,
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    ...(APP_VERSION ? { 'X-App-Version': APP_VERSION } : {}),
+  },
 });
 
 api.interceptors.request.use(async (config) => {

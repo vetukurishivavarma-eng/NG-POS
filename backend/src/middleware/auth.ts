@@ -124,13 +124,24 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
       );
     }
 
-    if (Date.now() - session.lastSeenAt.getTime() > LAST_SEEN_REFRESH_MS) {
+    // The build this device is running, sent on every request. Without it the
+    // stored version only ever changed at sign-in, so a till that installed an
+    // update but stayed signed in showed its old version on the Devices screen
+    // for up to 30 days.
+    const appVersion = req.get('x-app-version')?.trim().slice(0, 40) || null;
+    const versionChanged = appVersion !== null && appVersion !== session.appVersion;
+
+    if (versionChanged || Date.now() - session.lastSeenAt.getTime() > LAST_SEEN_REFRESH_MS) {
       // Not awaited and not fatal: a failed heartbeat must never turn a working
       // request into a 500. Worst case the admin sees a slightly older time.
       void prisma.deviceSession
         .update({
           where: { id: session.id },
-          data: { lastSeenAt: new Date(), lastIp: req.ip ?? null },
+          data: {
+            lastSeenAt: new Date(),
+            lastIp: req.ip ?? null,
+            ...(versionChanged ? { appVersion } : {}),
+          },
         })
         .catch(() => {});
     }

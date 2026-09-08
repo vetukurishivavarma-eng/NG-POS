@@ -30,6 +30,7 @@ import {
   setApiBaseUrl,
   takeSessionEndedReason,
 } from '../src/api/client';
+import { installedBuild, installedVersion } from '../src/store/appUpdate';
 import { Button, Icon, Toggle } from '../src/ui/components';
 import { bevel, colors, font, radius, shadow, spacing } from '../src/theme';
 
@@ -446,7 +447,12 @@ export default function LoginScreen() {
               </Pressable>
             )}
 
-            <Text style={styles.footnote}>Mama Maxx Agrovet</Text>
+            <Text style={styles.footnote}>
+              Mama Maxx Agrovet
+              {installedVersion()
+                ? `  ·  v${installedVersion()}${installedBuild() === null ? '' : ` (${installedBuild()})`}`
+                : ''}
+            </Text>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>

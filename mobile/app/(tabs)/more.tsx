@@ -261,12 +261,21 @@ export default function MoreScreen() {
                 </>
               ) : null}
               {seesReports ? (
-                <LinkRow
-                  icon="bar-chart-2"
-                  label="Analytics"
-                  value="Sales and profit by branch and product"
-                  onPress={() => router.push('/analytics')}
-                />
+                <>
+                  <LinkRow
+                    icon="bar-chart-2"
+                    label="Analytics"
+                    value="Sales and profit by branch and product"
+                    onPress={() => router.push('/analytics')}
+                  />
+                  <View style={styles.divider} />
+                  <LinkRow
+                    icon="clipboard"
+                    label="Day Report by Shop"
+                    value="Any shop's Z-report — pick a shop and a day"
+                    onPress={() => router.push('/shop-day-report')}
+                  />
+                </>
               ) : null}
               {seesReports && (canViewStaff || canSettings) ? <View style={styles.divider} /> : null}
               {canViewStaff ? (

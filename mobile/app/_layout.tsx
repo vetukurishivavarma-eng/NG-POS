@@ -259,6 +259,10 @@ export default function RootLayout() {
           />
           <Stack.Screen name="day-report" options={{ headerShown: true, title: 'Day Report' }} />
           <Stack.Screen
+            name="shop-day-report"
+            options={{ headerShown: true, title: 'Day Report by Shop' }}
+          />
+          <Stack.Screen
             name="reminder"
             options={{ presentation: 'modal', headerShown: true, title: 'Closing Reminder' }}
           />
