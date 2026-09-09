@@ -80,6 +80,11 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+  /**
+   * Comma-separated emails allowed to change the demo-trial config
+   * (`PUT /api/app/demo-trial`). Everyone else — including org admins — is 403.
+   */
+  DEMO_TRIAL_ADMINS: z.string().default('superadmin@demo.local'),
   /** Close-of-business snapshot of the day that is ending. */
   DAILY_REPORT_CRON: z.string().default('5 21 * * *'),
   /** After midnight: re-run yesterday, catching late syncs, and seal it. */

@@ -2,9 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 
 import { prisma } from '../prisma.js';
+import { env } from '../env.js';
 import { asyncHandler } from '../middleware/error.js';
 import { authenticate, currentUser, requireCapability } from '../middleware/auth.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { ApiError, badRequest, notFound } from '../lib/errors.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 
 /**
@@ -217,6 +218,83 @@ releasesRouter.put(
 );
 
 appRouter.use('/releases', releasesRouter);
+
+/* ------------------------------------------- demo-build trial kill switch */
+
+/**
+ * The brand-free demo app ("POS") is given out on a one-month free trial. It
+ * asks this endpoint on launch and on every foreground; if the trial has ended
+ * or been revoked it shows a wall and nothing else. The date can be moved, and
+ * access revoked or restored, from the super-admin trial-control screen —
+ * `PUT` here, gated by `DEMO_TRIAL_ADMINS` (an email allow-list, not a role).
+ *
+ * Unauthenticated on `GET`, like `/version`: the demo checks this before anyone
+ * signs in. It exposes only a date and a boolean.
+ */
+const DEMO_TRIAL_KEY = 'demo_trial';
+const DEMO_TRIAL_DEFAULT = { endsAt: '2026-10-09T00:00:00.000Z', revoked: false };
+
+async function readDemoTrial(): Promise<{ endsAt: string; revoked: boolean }> {
+  const row = await prisma.appConfig.upsert({
+    where: { key: DEMO_TRIAL_KEY },
+    create: { key: DEMO_TRIAL_KEY, value: DEMO_TRIAL_DEFAULT },
+    update: {},
+  });
+  const v = (row.value ?? {}) as { endsAt?: string; revoked?: boolean };
+  return {
+    endsAt: typeof v.endsAt === 'string' ? v.endsAt : DEMO_TRIAL_DEFAULT.endsAt,
+    revoked: v.revoked === true,
+  };
+}
+
+appRouter.get(
+  '/demo-trial',
+  checkLimit,
+  asyncHandler(async (_req, res) => {
+    const trial = await readDemoTrial();
+    res.json({ ...trial, serverTime: new Date().toISOString() });
+  })
+);
+
+const trialAdmins = env.DEMO_TRIAL_ADMINS.split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+const demoTrialUpdate = z
+  .object({
+    endsAt: z
+      .string()
+      .refine((s) => !Number.isNaN(Date.parse(s)), 'endsAt must be a valid date')
+      .optional(),
+    revoked: z.boolean().optional(),
+  })
+  .refine((b) => b.endsAt !== undefined || b.revoked !== undefined, 'Nothing to change.');
+
+appRouter.put(
+  '/demo-trial',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const email = currentUser(req).email.trim().toLowerCase();
+    if (!trialAdmins.includes(email)) {
+      throw new ApiError(403, 'This account cannot change the demo trial.', 'NOT_TRIAL_ADMIN');
+    }
+
+    const body = demoTrialUpdate.parse(req.body);
+    const current = await readDemoTrial();
+    const next = {
+      endsAt: body.endsAt ? new Date(body.endsAt).toISOString() : current.endsAt,
+      revoked: body.revoked ?? current.revoked,
+    };
+
+    await prisma.appConfig.upsert({
+      where: { key: DEMO_TRIAL_KEY },
+      create: { key: DEMO_TRIAL_KEY, value: next },
+      update: { value: next },
+    });
+
+    res.json({ ...next, serverTime: new Date().toISOString() });
+  })
+);
 
 function serializeRelease(row: {
   id: string;

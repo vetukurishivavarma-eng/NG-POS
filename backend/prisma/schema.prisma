@@ -767,3 +767,14 @@ model SupplierPayment {
   @@index([invoiceId])
   @@map("supplier_payments")
 }
+
+/// Small key/value store for server-controlled app settings. Currently one row:
+/// `demo_trial` = { endsAt, revoked } — the kill switch for the brand-free demo
+/// build, changeable from the super-admin trial-control screen.
+model AppConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_config")
+}

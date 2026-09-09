@@ -41,6 +41,20 @@ async function main() {
     update: {},
   });
 
+  // Controls the demo-build trial kill switch. The gate is the email
+  // (env DEMO_TRIAL_ADMINS), not the role — CASHIER is fine.
+  await prisma.user.upsert({
+    where: { email: 'superadmin@demo.local' },
+    create: {
+      organizationId: org.id,
+      email: 'superadmin@demo.local',
+      passwordHash: await bcrypt.hash('SuperAdmin123!', 10),
+      fullName: 'Trial Admin',
+      role: 'CASHIER',
+    },
+    update: {},
+  });
+
   const storeSeeds = [
     { name: 'Main Store', code: 'MAIN', city: '' },
     { name: 'Second Branch', code: 'BRANCH2', city: '' },
