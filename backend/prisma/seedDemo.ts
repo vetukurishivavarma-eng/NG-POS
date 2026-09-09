@@ -58,17 +58,20 @@ async function main() {
     );
   }
 
+  // No category: the fixed taxonomy in lib/categories.ts is agro-vet specific
+  // ("Herbicides", "Maize Seed", …). A generic catalogue leaves it unset until
+  // the backend is forked and the taxonomy made neutral.
   const productSeeds = [
-    { name: 'Bottled Water 500ml', sku: 'DEMO-WATER-500ML', brand: 'Generic', category: 'Beverages', cost: 0.3, price: 0.6, unit: 'piece' },
-    { name: 'Cola 500ml', sku: 'DEMO-COLA-500ML', brand: 'Generic', category: 'Beverages', cost: 0.5, price: 1.0, unit: 'piece' },
-    { name: 'White Bread', sku: 'DEMO-BREAD', brand: 'Generic', category: 'Bakery', cost: 0.8, price: 1.4, unit: 'piece' },
-    { name: 'Milk 1L', sku: 'DEMO-MILK-1L', brand: 'Generic', category: 'Dairy', cost: 0.9, price: 1.5, unit: 'l' },
-    { name: 'Rice 5kg', sku: 'DEMO-RICE-5KG', brand: 'Generic', category: 'Groceries', cost: 4.5, price: 6.5, unit: 'kg' },
-    { name: 'Cooking Oil 2L', sku: 'DEMO-OIL-2L', brand: 'Generic', category: 'Groceries', cost: 3.2, price: 4.8, unit: 'l' },
-    { name: 'Sugar 1kg', sku: 'DEMO-SUGAR-1KG', brand: 'Generic', category: 'Groceries', cost: 0.9, price: 1.4, unit: 'kg' },
-    { name: 'Soap Bar', sku: 'DEMO-SOAP', brand: 'Generic', category: 'Household', cost: 0.4, price: 0.8, unit: 'piece' },
-    { name: 'AA Batteries 4pk', sku: 'DEMO-BATT-AA4', brand: 'Generic', category: 'Household', cost: 1.5, price: 2.9, unit: 'piece' },
-    { name: 'Instant Noodles', sku: 'DEMO-NOODLES', brand: 'Generic', category: 'Groceries', cost: 0.25, price: 0.5, unit: 'piece' },
+    { name: 'Bottled Water 500ml', sku: 'DEMO-WATER-500ML', brand: 'Generic', cost: 0.3, price: 0.6, unit: 'piece' },
+    { name: 'Cola 500ml', sku: 'DEMO-COLA-500ML', brand: 'Generic', cost: 0.5, price: 1.0, unit: 'piece' },
+    { name: 'White Bread', sku: 'DEMO-BREAD', brand: 'Generic', cost: 0.8, price: 1.4, unit: 'piece' },
+    { name: 'Milk 1L', sku: 'DEMO-MILK-1L', brand: 'Generic', cost: 0.9, price: 1.5, unit: 'l' },
+    { name: 'Rice 5kg', sku: 'DEMO-RICE-5KG', brand: 'Generic', cost: 4.5, price: 6.5, unit: 'kg' },
+    { name: 'Cooking Oil 2L', sku: 'DEMO-OIL-2L', brand: 'Generic', cost: 3.2, price: 4.8, unit: 'l' },
+    { name: 'Sugar 1kg', sku: 'DEMO-SUGAR-1KG', brand: 'Generic', cost: 0.9, price: 1.4, unit: 'kg' },
+    { name: 'Soap Bar', sku: 'DEMO-SOAP', brand: 'Generic', cost: 0.4, price: 0.8, unit: 'piece' },
+    { name: 'AA Batteries 4pk', sku: 'DEMO-BATT-AA4', brand: 'Generic', cost: 1.5, price: 2.9, unit: 'piece' },
+    { name: 'Instant Noodles', sku: 'DEMO-NOODLES', brand: 'Generic', cost: 0.25, price: 0.5, unit: 'piece' },
   ];
 
   for (const p of productSeeds) {
@@ -79,7 +82,6 @@ async function main() {
         name: p.name,
         sku: p.sku,
         brand: p.brand,
-        category: p.category,
         costPrice: new Prisma.Decimal(p.cost),
         sellingPrice: new Prisma.Decimal(p.price),
         unit: p.unit,
