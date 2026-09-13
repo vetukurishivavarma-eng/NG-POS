@@ -233,6 +233,24 @@ export default function DayReportView({
             </View>
           </View>
 
+          {combined && figures.by_store && figures.by_store.length > 0 ? (
+            <View>
+              <Text style={styles.sectionLabel}>By shop</Text>
+              <View style={styles.card}>
+                {figures.by_store.map((s, index) => (
+                  <View key={s.store_id}>
+                    {index > 0 ? <View style={styles.divider} /> : null}
+                    <Row
+                      icon="home"
+                      label={`${s.store_name} (${s.transaction_count})`}
+                      value={formatKwacha(s.gross_total)}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
           {topItems.length > 0 ? (
             <View>
               <Text style={styles.sectionLabel}>Top items</Text>

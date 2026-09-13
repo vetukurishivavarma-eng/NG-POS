@@ -15,6 +15,9 @@ export interface DailyReportFigures {
   refund_total: number;
   by_payment_method: { cash: number; card: number; mobile: number };
   top_items: { name: string; quantity: number; total: number }[];
+  /** Only set on a combined "All Shops" report — each shop's own slice of it,
+   *  so it's still clear which shop a figure in the total came from. */
+  by_store?: { store_id: string; store_name: string; transaction_count: number; gross_total: number }[];
   /** True when read from a sealed snapshot rather than computed live. */
   finalized: boolean;
   generated_at: string;
@@ -111,10 +114,10 @@ export const ALL_STORES_ID = 'all';
  * not an approximation built from combining each store's own top 5.
  */
 export async function computeAllStoresDailyFigures(
-  storeIds: string[],
+  stores: { id: string; name: string }[],
   date: string
 ): Promise<DailyReportFigures> {
-  if (storeIds.length === 0) {
+  if (stores.length === 0) {
     return {
       store_id: ALL_STORES_ID,
       date,
@@ -124,6 +127,7 @@ export async function computeAllStoresDailyFigures(
       refund_total: 0,
       by_payment_method: { cash: 0, card: 0, mobile: 0 },
       top_items: [],
+      by_store: [],
       finalized: false,
       generated_at: new Date().toISOString(),
     };
@@ -133,7 +137,7 @@ export async function computeAllStoresDailyFigures(
 
   const rows = await prisma.transaction.findMany({
     where: {
-      storeId: { in: storeIds },
+      storeId: { in: stores.map((s) => s.id) },
       status: { not: 'voided' },
       createdAt: { gte: start, lt: end },
     },
@@ -142,6 +146,7 @@ export async function computeAllStoresDailyFigures(
 
   const byMethod = { cash: 0, card: 0, mobile: 0 };
   const tally = new Map<string, { name: string; quantity: number; total: number }>();
+  const byStore = new Map<string, { transaction_count: number; gross_total: number }>();
   let gross = 0;
   let tax = 0;
   let refunds = 0;
@@ -150,6 +155,11 @@ export async function computeAllStoresDailyFigures(
     gross += num(t.total);
     tax += num(t.taxAmount);
     if (t.transactionType !== 'sale') refunds += Math.abs(num(t.total));
+
+    const storeEntry = byStore.get(t.storeId) ?? { transaction_count: 0, gross_total: 0 };
+    storeEntry.transaction_count += 1;
+    storeEntry.gross_total += num(t.total);
+    byStore.set(t.storeId, storeEntry);
 
     for (const p of t.payments) {
       if (p.method in byMethod) byMethod[p.method as keyof typeof byMethod] += num(p.amount);
@@ -180,6 +190,20 @@ export async function computeAllStoresDailyFigures(
       .sort((a, b) => b.quantity - a.quantity)
       .slice(0, TOP_ITEM_LIMIT)
       .map((i) => ({ ...i, quantity: round(i.quantity), total: round(i.total) })),
+    // Every shop the caller can see, even one with zero sales today -- silently
+    // dropping a quiet shop from its own owner's combined report is worse than
+    // a zero row.
+    by_store: stores
+      .map((s) => {
+        const entry = byStore.get(s.id) ?? { transaction_count: 0, gross_total: 0 };
+        return {
+          store_id: s.id,
+          store_name: s.name,
+          transaction_count: entry.transaction_count,
+          gross_total: round(entry.gross_total),
+        };
+      })
+      .sort((a, b) => b.gross_total - a.gross_total),
     finalized: false,
     generated_at: new Date().toISOString(),
   };

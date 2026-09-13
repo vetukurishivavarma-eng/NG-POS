@@ -340,9 +340,9 @@ transactionsRouter.get(
             ? { id: { in: user.assignedStores } }
             : {}),
         },
-        select: { id: true },
+        select: { id: true, name: true },
       });
-      res.json(await computeAllStoresDailyFigures(stores.map((s) => s.id), date));
+      res.json(await computeAllStoresDailyFigures(stores, date));
       return;
     }
 

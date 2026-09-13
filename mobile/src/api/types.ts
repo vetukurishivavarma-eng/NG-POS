@@ -183,6 +183,8 @@ export interface DailyReport {
    *  "All Shops" report (a single store's screen derives its own from raw rows,
    *  see DayReportView's productBreakdown). */
   top_items?: { name: string; quantity: number; total: number }[];
+  /** Only set on a combined "All Shops" report -- each shop's own slice of it. */
+  by_store?: { store_id: string; store_name: string; transaction_count: number; gross_total: number }[];
 }
 
 /**
