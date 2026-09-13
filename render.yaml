@@ -25,14 +25,7 @@ services:
     # Migrations run at start, not at build: Render's build step has no
     # guarantee of database reachability, and `migrate deploy` is a no-op when
     # there is nothing new to apply.
-    # TEMP (2026-09-14): the 20260914013500_temp_release_admin migration failed
-    # once in prod (missing updated_at) and Prisma now refuses to apply anything
-    # further until that failed attempt is marked resolved -- see
-    # https://pris.ly/d/migrate-resolve. The resolve step is a no-op once it has
-    # actually run; revert this line to the plain form below right after this
-    # deploy succeeds.
-    startCommand: npx prisma migrate resolve --rolled-back 20260914013500_temp_release_admin; npx prisma migrate deploy && npm start
-    # startCommand: npx prisma migrate deploy && npm start
+    startCommand: npx prisma migrate deploy && npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
