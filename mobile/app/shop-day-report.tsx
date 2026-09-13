@@ -6,12 +6,14 @@ import { useQuery } from '@tanstack/react-query';
 import { stores as storesApi } from '../src/api/endpoints';
 import { useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
-import DayReportView from '../src/reports/DayReportView';
+import DayReportView, { ALL_STORES_ID } from '../src/reports/DayReportView';
 import { colors, spacing } from '../src/theme';
 import { EmptyState, Loading, SectionLabel, Select } from '../src/ui/components';
 
 /**
- * The Z-report for any shop, for an owner who is not standing at that till.
+ * The Z-report for any shop, for an owner who is not standing at that till —
+ * plus "All Shops", every store this owner can see added into one combined
+ * report (server-side: GET /transactions/reports/daily?store_id=all).
  *
  * The till's own "Day Report" screen only ever shows the shop selected on the
  * Sell tab; this is the one place a shop can be picked by name without changing
@@ -24,7 +26,10 @@ export default function ShopDayReportScreen() {
 
   const shopsQuery = useQuery({ queryKey: ['stores'], queryFn: storesApi.list, enabled: canPick });
   const shops = shopsQuery.data ?? [];
-  const store = shops.find((s) => s.id === storeId) ?? null;
+  const store =
+    storeId === ALL_STORES_ID
+      ? { id: ALL_STORES_ID, name: 'All Shops' }
+      : shops.find((s) => s.id === storeId) ?? null;
 
   if (!canPick) {
     return (
@@ -50,6 +55,7 @@ export default function ShopDayReportScreen() {
             onChange={setStoreId}
             options={[
               { value: '', label: 'Choose a shop' },
+              { value: ALL_STORES_ID, label: 'All Shops (combined)' },
               ...shops.map((s) => ({ value: s.id, label: s.name })),
             ]}
           />

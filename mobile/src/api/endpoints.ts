@@ -310,7 +310,9 @@ export const transactions = {
     api.post<Transaction>(`/transactions/${id}/refund`, body).then((r) => r.data),
   void: (id: string, reason: string) =>
     api.post<Transaction>(`/transactions/${id}/void`, { reason }).then((r) => r.data),
-  /** Z-report for one store on one day. `date` is YYYY-MM-DD; omit for today. */
+  /** Z-report for one store on one day, or every store the caller can see combined
+   *  into one report if `storeId` is `'all'` (see DayReportView's ALL_STORES_ID).
+   *  `date` is YYYY-MM-DD; omit for today. */
   dailyReport: (storeId: string, date?: string) =>
     api
       .get<DailyReport>('/transactions/reports/daily', {

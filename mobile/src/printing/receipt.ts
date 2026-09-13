@@ -151,7 +151,9 @@ export function buildReceipt(tx: Transaction, opts: ReceiptOptions): string {
 
 export interface DayReportInput {
   organizationName: string;
-  store: Store;
+  /** Only `.name` is ever printed here -- the combined "All Shops" report passes a
+   *  synthetic store, not a real one, so this doesn't require the full Store shape. */
+  store: Pick<Store, 'name'>;
   width: PaperWidth;
   report: DailyReport;
   /** Who closed the session — a Z-report is worthless without a name on it. */

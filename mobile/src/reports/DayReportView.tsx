@@ -13,21 +13,27 @@ import { Button, EmptyState, Icon, Loading, type IconName } from '../ui/componen
 import type { DailyReport, Transaction } from '../api/types';
 import type { Store } from '../api/types';
 
+/** `store.id` on a combined report — mirrors the backend's ALL_STORES_ID marker. */
+export const ALL_STORES_ID = 'all';
+
 /**
  * The Z-report for one shop on one day, with date navigation and print/PDF.
  *
  * Shared by the till's own "Day Report" (which adds an End Session button via
- * `renderFooter`) and the owner's "Any Shop" report, so the two can never show
- * different arithmetic for the same shop-day.
+ * `renderFooter`) and the owner's "Any Shop" report — including "All Shops"
+ * combined, which is why `store` only needs id/name: a combined report has no
+ * single real store behind it, just this screen's own synthetic placeholder
+ * (see shop-day-report.tsx). Every real store passed in still satisfies this.
  */
 export default function DayReportView({
   store,
   renderFooter,
 }: {
-  store: Store;
+  store: Pick<Store, 'id' | 'name'>;
   /** Extra actions under the print buttons — the till passes End Session here. */
   renderFooter?: (ctx: { print: () => Promise<void>; offset: number }) => React.ReactNode;
 }) {
+  const combined = store.id === ALL_STORES_ID;
   const user = useAuth((s) => s.user);
   const layout = useLayout();
   const pendingCount = useSync((s) => s.pendingCount);
@@ -48,6 +54,10 @@ export default function DayReportView({
 
   const rows = useQuery({
     queryKey: ['day-transactions', storeId, dateKey],
+    // Combined mode has no single store to list transactions for -- the server's
+    // combined report already carries an exact, ranked top_items (see below), so
+    // there's nothing here for a per-store transaction list to add.
+    enabled: !combined,
     queryFn: () =>
       txApi.list(storeId, {
         limit: 200,
@@ -68,7 +78,12 @@ export default function DayReportView({
     return computeReport(storeId, dateKey, rows.data);
   }, [report.data, rows.data, storeId, dateKey]);
 
-  const productLines = useMemo(() => productBreakdown(rows.data ?? []), [rows.data]);
+  // Combined mode has no raw transaction rows to derive this from (see the disabled
+  // query above) -- the server's own top_items is already exact across every store.
+  const productLines = useMemo(
+    () => (combined ? figures?.top_items ?? [] : productBreakdown(rows.data ?? [])),
+    [combined, figures, rows.data]
+  );
   const topItems = productLines.slice(0, 6);
 
   async function print() {

@@ -96,6 +96,95 @@ export async function computeDailyFigures(
   };
 }
 
+/** `store_id` on a combined report — never a real store, just a marker for the client. */
+export const ALL_STORES_ID = 'all';
+
+/**
+ * Every store's figures for one day, added together into a single report.
+ *
+ * Computed live and directly from the transaction table across every given
+ * store in one query, rather than by summing each store's own (possibly
+ * sealed) report — a store-day sealed weeks ago and today's live store-day
+ * must add up the same way, and re-deriving from source rows is the only way
+ * to guarantee that without special-casing which stores are finalized.
+ * `top_items` is therefore also exact (ranked across all stores' real sales),
+ * not an approximation built from combining each store's own top 5.
+ */
+export async function computeAllStoresDailyFigures(
+  storeIds: string[],
+  date: string
+): Promise<DailyReportFigures> {
+  if (storeIds.length === 0) {
+    return {
+      store_id: ALL_STORES_ID,
+      date,
+      transaction_count: 0,
+      gross_total: 0,
+      tax_total: 0,
+      refund_total: 0,
+      by_payment_method: { cash: 0, card: 0, mobile: 0 },
+      top_items: [],
+      finalized: false,
+      generated_at: new Date().toISOString(),
+    };
+  }
+
+  const { start, end } = dayRangeIn(date, env.REPORT_TIMEZONE);
+
+  const rows = await prisma.transaction.findMany({
+    where: {
+      storeId: { in: storeIds },
+      status: { not: 'voided' },
+      createdAt: { gte: start, lt: end },
+    },
+    include: { items: true, payments: true },
+  });
+
+  const byMethod = { cash: 0, card: 0, mobile: 0 };
+  const tally = new Map<string, { name: string; quantity: number; total: number }>();
+  let gross = 0;
+  let tax = 0;
+  let refunds = 0;
+
+  for (const t of rows) {
+    gross += num(t.total);
+    tax += num(t.taxAmount);
+    if (t.transactionType !== 'sale') refunds += Math.abs(num(t.total));
+
+    for (const p of t.payments) {
+      if (p.method in byMethod) byMethod[p.method as keyof typeof byMethod] += num(p.amount);
+    }
+
+    if (t.transactionType !== 'sale') continue;
+    for (const item of t.items) {
+      const entry = tally.get(item.productName) ?? { name: item.productName, quantity: 0, total: 0 };
+      entry.quantity += num(item.quantity);
+      entry.total += num(item.lineTotal);
+      tally.set(item.productName, entry);
+    }
+  }
+
+  return {
+    store_id: ALL_STORES_ID,
+    date,
+    transaction_count: rows.length,
+    gross_total: round(gross),
+    tax_total: round(tax),
+    refund_total: round(refunds),
+    by_payment_method: {
+      cash: round(byMethod.cash),
+      card: round(byMethod.card),
+      mobile: round(byMethod.mobile),
+    },
+    top_items: [...tally.values()]
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, TOP_ITEM_LIMIT)
+      .map((i) => ({ ...i, quantity: round(i.quantity), total: round(i.total) })),
+    finalized: false,
+    generated_at: new Date().toISOString(),
+  };
+}
+
 /**
  * Writes (or refreshes) the snapshot for one store-day.
  *

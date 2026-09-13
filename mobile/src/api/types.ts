@@ -179,6 +179,10 @@ export interface DailyReport {
   tax_total: number;
   refund_total: number;
   by_payment_method: { cash: number; card: number; mobile: number };
+  /** Always present from the server; only used client-side for the combined
+   *  "All Shops" report (a single store's screen derives its own from raw rows,
+   *  see DayReportView's productBreakdown). */
+  top_items?: { name: string; quantity: number; total: number }[];
 }
 
 /**

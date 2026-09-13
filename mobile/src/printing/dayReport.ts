@@ -10,7 +10,8 @@ export interface DayReportProduct {
 }
 
 export interface DayReportPdfData {
-  store: Store;
+  /** Only `.name` is ever used here -- see DayReportInput in printing/receipt.ts. */
+  store: Pick<Store, 'name'>;
   report: DailyReport;
   cashierName: string;
   /** Every product sold on the day, sorted by the caller (usually by value). */

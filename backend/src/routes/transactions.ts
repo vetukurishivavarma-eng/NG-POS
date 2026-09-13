@@ -8,7 +8,13 @@ import { serializeTransaction } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
 import { createSale } from '../services/sales.js';
-import { readDailyReport, snapshotStoreDay, todayKey } from '../services/dailyReport.js';
+import {
+  ALL_STORES_ID,
+  computeAllStoresDailyFigures,
+  readDailyReport,
+  snapshotStoreDay,
+  todayKey,
+} from '../services/dailyReport.js';
 
 export const transactionsRouter = Router();
 transactionsRouter.use(authenticate);
@@ -313,13 +319,35 @@ transactionsRouter.get(
   '/reports/daily',
   asyncHandler(async (req, res) => {
     const q = z
-      .object({ store_id: z.string().uuid(), date: dateKey.optional() })
+      .object({
+        store_id: z.union([z.string().uuid(), z.literal(ALL_STORES_ID)]),
+        date: dateKey.optional(),
+      })
       .parse(req.query);
 
     const user = currentUser(req);
-    await assertStoreAccess(user, q.store_id);
+    const date = q.date ?? todayKey();
 
-    res.json(await readDailyReport(q.store_id, q.date ?? todayKey()));
+    if (q.store_id === ALL_STORES_ID) {
+      // Same store set the "All shops" picker itself is built from (see GET /stores):
+      // every active store the caller is assigned to, or every store in the
+      // organisation if they carry no assignment (including every org admin).
+      const stores = await prisma.store.findMany({
+        where: {
+          organizationId: user.organizationId,
+          isActive: true,
+          ...(user.role !== 'ORG_ADMIN' && user.assignedStores.length > 0
+            ? { id: { in: user.assignedStores } }
+            : {}),
+        },
+        select: { id: true },
+      });
+      res.json(await computeAllStoresDailyFigures(stores.map((s) => s.id), date));
+      return;
+    }
+
+    await assertStoreAccess(user, q.store_id);
+    res.json(await readDailyReport(q.store_id, date));
   })
 );
 
