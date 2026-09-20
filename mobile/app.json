@@ -2,7 +2,7 @@
   "expo": {
     "name": "NG POS",
     "slug": "ng-pos-mobile",
-    "version": "1.23.1",
+    "version": "1.24.0",
     "scheme": "ngpos",
     "orientation": "default",
     "icon": "./assets/icon.png",
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.mamamaxx.ngpos",
-      "versionCode": 27,
+      "versionCode": 28,
       "adaptiveIcon": {
         "backgroundColor": "#F2F8EA",
         "foregroundImage": "./assets/android-icon-foreground.png",
