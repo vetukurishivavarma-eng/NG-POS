@@ -109,10 +109,15 @@ export const useCart = create<CartState>((set) => ({
  * How far a product may be sold past what the shelf shows, once it is
  * already at or below zero. A real item can be physically in the shop while
  * the count is stale or simply wrong, so a sale must not be refused outright
- * — but an unbounded shortfall is more likely a miscount than ten more
+ * — but an unbounded shortfall is more likely a miscount than thirty more
  * customers, so it stops here rather than climbing forever.
+ *
+ * Raised from 10 to 30 because 10 was being hit on genuine trade: a shop
+ * selling fertiliser by the bag clears that in one customer, and the cashier
+ * was left unable to ring up a sale for stock sitting in front of them. The
+ * shortfall still surfaces at the next count, which is where it belongs.
  */
-export const OVERSELL_FLOOR = -10;
+export const OVERSELL_FLOOR = -30;
 
 /**
  * The most a line may hold.
