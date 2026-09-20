@@ -984,8 +984,8 @@ export default function NewTransferScreen() {
 
 /**
  * The same product's stock at every shop, with the chain-wide total, shown
- * under a basket line so an administrator can see where it actually sits
- * before deciding how much to move. Admin-only — the endpoint 403s otherwise.
+ * under a basket line so whoever is building the transfer can see where it
+ * actually sits before deciding how much to move.
  */
 function StockAcrossShops({
   productId,

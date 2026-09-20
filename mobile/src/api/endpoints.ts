@@ -251,8 +251,8 @@ export const inventory = {
     api.post<StockLevel>('/inventory/movements', body).then((r) => r.data),
   /**
    * One product's stock at every active shop, with the chain-wide total.
-   * Admin only on the server (403 otherwise) — used by the Stock Transfer
-   * screen so an administrator can see where the stock actually sits.
+   * Open to every signed-in account, scoped to their own organisation — the
+   * Stock Transfer screen and the lookup on the bulk-upload screen both use it.
    */
   byProduct: (productId: string) =>
     api.get<ProductStockByStore>(`/inventory/by-product/${productId}`).then((r) => r.data),

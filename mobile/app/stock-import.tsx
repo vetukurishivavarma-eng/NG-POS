@@ -9,6 +9,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 
 import { inventory as inventoryApi, stores as storesApi } from '../src/api/endpoints';
 import { errorBodyIfStatus, errorMessage } from '../src/api/client';
+import { ChainStockLookup } from '../src/ui/ChainStockLookup';
 import { useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../src/theme';
@@ -380,6 +381,15 @@ export default function StockImportScreen() {
           <Text style={styles.shopTagText}>Every shop you cover, one file</Text>
         </View>
 
+        <View style={{ gap: spacing.md }}>
+          <SectionLabel>Check a product&rsquo;s stock</SectionLabel>
+          <Text style={styles.lookupLead}>
+            Search a product to see what every shop is holding right now. This is just a look-up —
+            it changes nothing and is not part of the upload.
+          </Text>
+          <ChainStockLookup />
+        </View>
+
         {/* ------------------------------------------------------ 1. the file */}
         <View style={{ gap: spacing.md }}>
           <SectionLabel>Step 1 · The file</SectionLabel>
@@ -665,6 +675,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   shopTagText: { fontFamily: font.semibold, fontSize: 12, color: colors.primary },
+
+  lookupLead: {
+    fontFamily: font.regular,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.textMuted,
+    marginTop: -spacing.xs,
+  },
 
   fileCard: {
     flexDirection: 'row',

@@ -136,61 +136,72 @@ export default function MoreScreen() {
           </View>
         </View>
 
-        {canWriteProducts || canAdjustStock || canPrice ? (
-          <View>
-            <SectionLabel>Catalogue &amp; Stock</SectionLabel>
-            <View style={styles.card}>
-              {canWriteProducts ? (
-                <>
-                  <LinkRow
-                    icon="package"
-                    label="Products"
-                    value="Add, edit and price the catalogue"
-                    onPress={() => router.push('/products')}
-                  />
-                  <View style={styles.divider} />
-                </>
-              ) : null}
-              {canImport ? (
-                <>
-                  <LinkRow
-                    icon="upload"
-                    label="Bulk Stock Upload"
-                    value="Load a whole catalogue from a spreadsheet"
-                    onPress={() => router.push('/stock-import')}
-                  />
-                  <View style={styles.divider} />
-                </>
-              ) : null}
-              {canAdjustStock ? (
-                <>
-                  <LinkRow
-                    icon="plus-square"
-                    label="Adjust Stock"
-                    value="Correct a count, write off damage"
-                    onPress={() => router.push('/stock-adjust')}
-                  />
-                  <View style={styles.divider} />
-                  <LinkRow
-                    icon="activity"
-                    label="Stock Movements"
-                    value="Every change and who made it"
-                    onPress={() => router.push('/movements')}
-                  />
-                  <View style={styles.divider} />
-                </>
-              ) : null}
-              {canPrice ? (
+        <View>
+          <SectionLabel>Catalogue &amp; Stock</SectionLabel>
+          <View style={styles.card}>
+            {canWriteProducts ? (
+              <>
+                <LinkRow
+                  icon="package"
+                  label="Products"
+                  value="Add, edit and price the catalogue"
+                  onPress={() => router.push('/products')}
+                />
+                <View style={styles.divider} />
+              </>
+            ) : null}
+            {canImport ? (
+              <>
+                <LinkRow
+                  icon="upload"
+                  label="Bulk Stock Upload"
+                  value="Load a whole catalogue from a spreadsheet"
+                  onPress={() => router.push('/stock-import')}
+                />
+                <View style={styles.divider} />
+              </>
+            ) : null}
+            {canAdjustStock ? (
+              <>
+                <LinkRow
+                  icon="plus-square"
+                  label="Adjust Stock"
+                  value="Correct a count, write off damage"
+                  onPress={() => router.push('/stock-adjust')}
+                />
+                <View style={styles.divider} />
+                <LinkRow
+                  icon="activity"
+                  label="Stock Movements"
+                  value="Every change and who made it"
+                  onPress={() => router.push('/movements')}
+                />
+                <View style={styles.divider} />
+              </>
+            ) : null}
+            {canPrice ? (
+              <>
                 <LinkRow
                   icon="tag"
                   label="Store Pricing"
                   value="Prices that differ from the catalogue"
                   onPress={() => router.push('/store-pricing')}
                 />
-              ) : null}
-            </View>
+                <View style={styles.divider} />
+              </>
+            ) : null}
+            {/* No capability gate, and deliberately last so the row above it
+                always has something to divide from. Every role gets this one:
+                it answers "does another shop have it?" without a phone call,
+                and shows quantities only. */}
+            <LinkRow
+              icon="bar-chart-2"
+              label="Stock by Shop"
+              value="What every shop is holding, for any product"
+              onPress={() => router.push('/stock-by-shop')}
+            />
           </View>
-        ) : null}
+        </View>
 
         {canBuy ? (
           <View>

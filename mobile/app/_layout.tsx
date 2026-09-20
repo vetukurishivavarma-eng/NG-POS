@@ -281,6 +281,10 @@ export default function RootLayout() {
             name="stock-import"
             options={{ headerShown: true, title: 'Bulk Stock Upload' }}
           />
+          <Stack.Screen
+            name="stock-by-shop"
+            options={{ headerShown: true, title: 'Stock by Shop' }}
+          />
           <Stack.Screen name="shops" options={{ headerShown: true, title: 'Shops' }} />
           <Stack.Screen name="suppliers" options={{ headerShown: true, title: 'Suppliers' }} />
           <Stack.Screen

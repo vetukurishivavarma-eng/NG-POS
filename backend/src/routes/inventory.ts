@@ -16,7 +16,7 @@ import {
 import { capabilityContext, mayViewCosts } from '../lib/capabilities.js';
 import { recordAudit } from '../lib/audit.js';
 import { num } from '../lib/serialize.js';
-import { badRequest, forbidden, notFound } from '../lib/errors.js';
+import { badRequest, notFound } from '../lib/errors.js';
 import { parseCsvObjects, tableToObjects, type TableObjects } from '../lib/csv.js';
 import { readXlsx, XlsxError } from '../lib/xlsx.js';
 import { CATEGORY_LIST_HINT, normaliseCategory } from '../lib/categories.js';
@@ -52,17 +52,18 @@ const byProductParams = z.object({ productId: z.string().uuid() });
  * Built for the "where is this stock?" question on the Stock Transfer screen:
  * an administrator picking what to move needs to see which shop is holding it.
  *
- * Admin only, on purpose. A shop login only ever sees its own shelf anywhere
- * else in the app, and the whole-chain picture is not theirs to browse.
+ * Was admin-only, on the reasoning that a shop login only ever sees its own
+ * shelf and the whole-chain picture was not theirs to browse. Opened up to
+ * every signed-in account at the client's request: a cashier asked whether a
+ * sister shop has an item is going to ring that shop and ask anyway, and the
+ * answer costs a phone call either way. Quantities only — no prices, no costs,
+ * no movements — and still scoped to the caller's own organisation, so this
+ * widens who can see the counts and nothing else.
  */
 inventoryRouter.get(
   '/by-product/:productId',
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
-    if (user.role !== 'ORG_ADMIN') {
-      throw forbidden('Only an administrator can see stock across every shop.');
-    }
-
     const { productId } = byProductParams.parse(req.params);
     const product = await prisma.product.findFirst({
       where: { id: productId, organizationId: user.organizationId },
