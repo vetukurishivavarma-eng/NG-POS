@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { transfers as transfersApi } from '../../src/api/endpoints';
+import { errorMessage } from '../../src/api/client';
 import { printTransferNote, shareTransferPdf } from '../../src/printing/print';
 import { useCan } from '../../src/store/auth';
 import { useLayout } from '../../src/ui/responsive';
@@ -86,6 +87,32 @@ export default function TransfersScreen() {
 function TransferCard({ transfer }: { transfer: Transfer }) {
   const [open, setOpen] = useState(false);
   const canCreate = useCan('transfers.create');
+  const queryClient = useQueryClient();
+
+  // Undoing a transfer moves stock on two shops at once, so everything cached
+  // is potentially stale afterwards — cheaper to refetch the lot than to guess
+  // which screens were showing a number that just changed.
+  const revoke = useMutation({
+    mutationFn: () => transfersApi.revoke(transfer.id),
+    onSuccess: (r) => {
+      void queryClient.invalidateQueries();
+      Alert.alert('Transfer revoked', r.detail);
+    },
+    onError: (error) => Alert.alert("Can't revoke this transfer", errorMessage(error)),
+  });
+
+  const confirmRevoke = () =>
+    Alert.alert(
+      `Revoke ${transfer.reference}?`,
+      `Every line goes back to ${transfer.from_store ?? 'the sending shop'}. ` +
+        'Only possible while the stock is untouched at ' +
+        `${transfer.to_store ?? 'the receiving shop'} — if any of it has been sold, ` +
+        'counted or passed on, this will be refused.',
+      [
+        { text: 'Keep it', style: 'cancel' },
+        { text: 'Revoke', style: 'destructive', onPress: () => revoke.mutate() },
+      ]
+    );
 
   const units = transfer.items.reduce((sum, i) => sum + i.quantity, 0);
   const tone = statusTone(transfer.status);
@@ -184,6 +211,14 @@ function TransferCard({ transfer }: { transfer: Transfer }) {
             onPress={() => router.push(`/transfers/new?passon=${transfer.id}`)}
           />
         ) : null}
+        {canCreate && transfer.status === 'completed' ? (
+          <PrintChip
+            icon="rotate-ccw"
+            label={revoke.isPending ? 'Revoking…' : 'Revoke'}
+            danger
+            onPress={confirmRevoke}
+          />
+        ) : null}
       </View>
     </Pressable>
   );
@@ -193,19 +228,27 @@ function PrintChip({
   icon,
   label,
   onPress,
+  danger,
 }: {
   icon: IconName;
   label: string;
   onPress: () => void;
+  /** Reverses stock rather than printing it — coloured so it is not a misfire. */
+  danger?: boolean;
 }) {
+  const tint = danger ? colors.danger : colors.primary;
   return (
     <Pressable
       onPress={onPress}
       hitSlop={6}
-      style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
+      style={({ pressed }) => [
+        styles.chip,
+        danger && styles.chipDanger,
+        pressed && styles.chipPressed,
+      ]}
     >
-      <Icon name={icon} size={15} color={colors.primary} />
-      <Text style={styles.chipLabel} numberOfLines={1}>
+      <Icon name={icon} size={15} color={tint} />
+      <Text style={[styles.chipLabel, { color: tint }]} numberOfLines={1}>
         {label}
       </Text>
     </Pressable>
@@ -302,6 +345,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.primarySoft,
   },
+  chipDanger: { backgroundColor: colors.dangerSoft, borderColor: colors.danger },
   chipPressed: { opacity: 0.7 },
   chipLabel: { fontFamily: font.semibold, fontSize: 13, color: colors.primary },
 

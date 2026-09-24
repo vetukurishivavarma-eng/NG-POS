@@ -14,7 +14,7 @@ import {
 } from '../middleware/auth.js';
 import { num, serializeProduct, serializeUser } from '../lib/serialize.js';
 import { mayViewCosts } from '../lib/capabilities.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
 import { revokeAllSessions } from './devices.js';
 
@@ -370,6 +370,162 @@ transfersRouter.post(
     });
 
     res.status(201).json({ id: transfer.id, reference: transfer.reference, status: transfer.status });
+  })
+);
+
+
+/** How a stock movement reads in the refusal message above. */
+const MOVEMENT_WORDS: Record<string, string> = {
+  sale: 'a sale',
+  refund: 'a refund',
+  adjustment: 'a stock correction',
+  purchase: 'a delivery',
+  transfer_in: 'another transfer in',
+  transfer_out: 'another transfer out',
+};
+
+/**
+ * Puts a transfer back where it came from.
+ *
+ * Only ever a correction for stock sent to the wrong shop, so it refuses the
+ * moment the stock has moved on: if the destination has sold, adjusted,
+ * re-uploaded or passed on any of these products since the transfer landed,
+ * reversing it would silently rewrite a figure somebody has already worked
+ * from. The refusal names what happened rather than just saying no — in the
+ * Lusaka→Katende case the real cause was a stale bulk upload three days later,
+ * and nobody could see that from the transfer screen.
+ *
+ * The original transfer is kept and marked `cancelled`, and the reversal writes
+ * its own stock movements. Nothing disappears.
+ */
+transfersRouter.post(
+  '/:id/revoke',
+  requireCapability('transfers.create'),
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+
+    const transfer = await prisma.transfer.findFirst({
+      where: { id: req.params.id as string, organizationId: user.organizationId },
+      include: {
+        items: { include: { product: { select: { name: true } } } },
+        fromStore: { select: { name: true } },
+        toStore: { select: { name: true } },
+      },
+    });
+    if (!transfer) throw notFound('Transfer not found.');
+    if (transfer.status === 'cancelled') throw badRequest('This transfer has already been revoked.');
+    if (transfer.status !== 'completed') {
+      throw badRequest('Only a completed transfer can be revoked.');
+    }
+    const fromStoreId = transfer.fromStoreId;
+    const toStoreId = transfer.toStoreId;
+    if (!fromStoreId || !toStoreId) {
+      throw badRequest('A shop on this transfer no longer exists, so it cannot be revoked.');
+    }
+    // Same rule as sending: the stock goes back to the shop it left, so the
+    // person undoing it has to work there.
+    await assertStoreAccess(user, fromStoreId);
+
+    // Anything at all that touched these products at the destination after the
+    // transfer landed. Filtered on `reference` in JS rather than in the query —
+    // a `not` on a nullable column is exactly the kind of thing that silently
+    // drops the rows with no reference, which are the hand adjustments.
+    const since = (
+      await prisma.stockMovement.findMany({
+        where: {
+          storeId: toStoreId,
+          productId: { in: transfer.items.map((i) => i.productId) },
+          createdAt: { gte: transfer.createdAt },
+        },
+        select: { type: true, productId: true, reference: true },
+        take: 200,
+      })
+    ).filter((m) => m.reference !== transfer.reference);
+
+    if (since.length > 0) {
+      const nameOf = (productId: string) =>
+        transfer.items.find((i) => i.productId === productId)?.product.name ?? 'a product';
+      const what = [...new Set(since.map((m) => MOVEMENT_WORDS[m.type] ?? m.type))];
+      const names = [...new Set(since.map((m) => nameOf(m.productId)))];
+      throw conflict(
+        `This stock has already been used at ${transfer.toStore?.name ?? 'the destination shop'} — ` +
+          `${what.join(', ')} on ${names.slice(0, 3).join(', ')}` +
+          `${names.length > 3 ? ` and ${names.length - 3} more` : ''} since it arrived. ` +
+          'Revoking now would undo a figure the shop has already worked from. ' +
+          'Send the stock back with a new transfer instead.',
+        'TRANSFER_ALREADY_USED'
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const reference = `REV-${transfer.reference}`;
+
+      for (const item of transfer.items) {
+        const qty = item.quantity;
+
+        const held = await tx.inventory.findUnique({
+          where: { storeId_productId: { storeId: toStoreId, productId: item.productId } },
+        });
+        if (!held || held.quantity.lt(qty)) {
+          throw badRequest(
+            `${item.product.name} is no longer in stock at ${transfer.toStore?.name ?? 'the destination shop'}, so this transfer cannot be revoked.`
+          );
+        }
+
+        const out = await tx.inventory.update({
+          where: { storeId_productId: { storeId: toStoreId, productId: item.productId } },
+          data: { quantity: { decrement: qty } },
+        });
+        const back = await tx.inventory.upsert({
+          where: { storeId_productId: { storeId: fromStoreId, productId: item.productId } },
+          create: { storeId: fromStoreId, productId: item.productId, quantity: qty },
+          update: { quantity: { increment: qty } },
+        });
+
+        await tx.stockMovement.createMany({
+          data: [
+            {
+              storeId: toStoreId,
+              productId: item.productId,
+              type: 'transfer_out',
+              quantity: qty.neg(),
+              balance: out.quantity,
+              reference,
+              note: `Revoked ${transfer.reference}`,
+              userId: user.id,
+            },
+            {
+              storeId: fromStoreId,
+              productId: item.productId,
+              type: 'transfer_in',
+              quantity: qty,
+              balance: back.quantity,
+              reference,
+              note: `Revoked ${transfer.reference}`,
+              userId: user.id,
+            },
+          ],
+        });
+      }
+
+      nextAuditAction('revoke');
+      await tx.transfer.update({
+        where: { id: transfer.id },
+        data: {
+          status: 'cancelled',
+          notes: [
+            transfer.notes,
+            `Revoked by ${user.fullName} on ${new Date().toISOString().slice(0, 10)} — stock returned.`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        },
+      });
+    });
+
+    res.json({
+      detail: `${transfer.reference} revoked. The stock is back at ${transfer.fromStore?.name ?? 'the sending shop'}.`,
+    });
   })
 );
 

@@ -354,6 +354,13 @@ export const transfers = {
     api
       .post<{ id: string; reference: string; status: string }>('/transfers', body)
       .then((r) => r.data),
+  /**
+   * Sends a transfer's stock back. Refused with 409 `TRANSFER_ALREADY_USED`
+   * when the destination has already sold, adjusted or passed the stock on —
+   * the message names what happened and is meant to be shown as-is.
+   */
+  revoke: (id: string) =>
+    api.post<{ detail: string }>(`/transfers/${id}/revoke`).then((r) => r.data),
 };
 
 export const analytics = {
