@@ -106,6 +106,18 @@ appRouter.get(
 
 const releasesRouter = Router();
 releasesRouter.use(authenticate);
+/**
+ * A release is global — every organisation's tills obey it — but `releases.publish`
+ * comes with ORG_ADMIN in *any* organisation, the demo one included (its
+ * credentials are in seedDemo.ts). Without this, any tenant admin could publish
+ * a mandatory "update" and lock every shop out of its till.
+ */
+releasesRouter.use((req, _res, next) => {
+  if (currentUser(req).organizationId !== env.RELEASE_ORG_ID) {
+    throw new ApiError(403, 'Only the owning organisation can manage app releases.', 'NOT_RELEASE_ORG');
+  }
+  next();
+});
 
 const releaseSchema = z.object({
   platform: z.enum(PLATFORMS).default('android'),
