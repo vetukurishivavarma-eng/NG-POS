@@ -30,9 +30,6 @@ const loginLimiter = rateLimit({
   message: 'Too many sign-in attempts. Wait a few minutes and try again.',
 });
 
-/** Registration creates a whole tenant; one a minute per address is generous. */
-const registerLimiter = rateLimit({ windowMs: 60_000, max: 3 });
-
 /**
  * Optional so a browser or a support script can still sign in; when it is
  * absent the session is recorded as an unnamed device rather than escaping the
@@ -210,64 +207,6 @@ async function claimDevice(
     },
   });
 }
-
-const registerSchema = z.object({
-  organization_name: z.string().min(2),
-  slug: z
-    .string()
-    .min(2)
-    .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and hyphens only.'),
-  full_name: z.string().min(2),
-  email: z.string().email(),
-  password: z.string().min(8, 'Password must be at least 8 characters.'),
-  device: deviceSchema,
-});
-
-/**
- * Creates an organisation and its first administrator. Self-service signup for
- * a new tenant; adding staff to an existing organisation goes through
- * `POST /users` instead.
- */
-authRouter.post(
-  '/register',
-  registerLimiter,
-  asyncHandler(async (req, res) => {
-    const body = registerSchema.parse(req.body);
-    const email = body.email.toLowerCase();
-
-    if (await prisma.user.findUnique({ where: { email } })) {
-      throw badRequest('That email is already registered.');
-    }
-
-    const user = await prisma.$transaction(async (tx) => {
-      const org = await tx.organization.create({
-        data: { name: body.organization_name, slug: body.slug },
-      });
-
-      return tx.user.create({
-        data: {
-          organizationId: org.id,
-          email,
-          passwordHash: await bcrypt.hash(body.password, 10),
-          fullName: body.full_name,
-          role: 'ORG_ADMIN',
-        },
-      });
-    });
-
-    // Registration binds the device it was performed on, like any sign-in —
-    // otherwise the very first account in an organisation would hold a token
-    // attached to no device and outside the rule.
-    const session = await claimDevice(user, body.device, req.ip ?? null);
-
-    res.status(201).json({
-      access_token: signToken(user.id, user.organizationId, session.id),
-      token_type: 'bearer',
-      user: serializeUser(user),
-      device: serializeDevice(session),
-    });
-  })
-);
 
 authRouter.get(
   '/me',
