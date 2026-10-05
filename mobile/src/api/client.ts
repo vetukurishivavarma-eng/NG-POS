@@ -18,6 +18,7 @@ export const CONFIGURED_BASE_URL = configured ?? 'http://localhost:4000/api';
 
 const TOKEN_KEY = 'pos_token';
 const BASE_URL_KEY = 'pos_api_base_url';
+const RETIRED_HOST = 'ngpos-api.onrender.com';
 
 /**
  * The address actually in use, which may be an override typed on the device.
@@ -75,7 +76,11 @@ export function normalizeApiBaseUrl(input: string): string {
 export async function restoreApiBaseUrl(): Promise<string> {
   try {
     const saved = await SecureStore.getItemAsync(BASE_URL_KEY);
-    if (saved) {
+    // The API moved Render accounts (2026-10); an override still naming the
+    // old host would pin this till to the retired server, so drop it.
+    if (saved && apiBaseUrlHost(saved).toLowerCase() === RETIRED_HOST) {
+      await SecureStore.deleteItemAsync(BASE_URL_KEY);
+    } else if (saved) {
       currentBaseUrl = saved;
       api.defaults.baseURL = saved;
     }

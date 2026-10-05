@@ -2,7 +2,7 @@
   "expo": {
     "name": "NG POS",
     "slug": "ng-pos-mobile",
-    "version": "1.25.0",
+    "version": "1.26.0",
     "scheme": "ngpos",
     "orientation": "default",
     "icon": "./assets/icon.png",
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.mamamaxx.ngpos",
-      "versionCode": 29,
+      "versionCode": 30,
       "adaptiveIcon": {
         "backgroundColor": "#F2F8EA",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -70,7 +70,7 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiBaseUrl": "https://ngpos-api.onrender.com/api",
+      "apiBaseUrl": "https://ngpos-api-m94v.onrender.com/api",
       "router": {},
       "eas": {
         "projectId": "248907a6-a41d-4003-9d58-ca85a725f8c7"

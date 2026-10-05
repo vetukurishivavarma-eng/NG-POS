@@ -398,7 +398,7 @@ export default function LoginScreen() {
                     onChangeText={setServerDraft}
                     onFocus={() => setFocused('server')}
                     onBlur={() => setFocused(null)}
-                    placeholder="ngpos-api.onrender.com"
+                    placeholder="ngpos-api-m94v.onrender.com"
                     placeholderTextColor={colors.textFaint}
                     autoCapitalize="none"
                     autoCorrect={false}
