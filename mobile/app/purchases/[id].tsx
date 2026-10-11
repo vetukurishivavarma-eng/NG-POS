@@ -280,7 +280,14 @@ export default function PurchaseDetailScreen() {
               </View>
             ))}
           </View>
-          {canTransfer ? (
+          {invoice.sent_on?.length ? (
+            <Text style={styles.itemMeta}>
+              Already sent on:{' '}
+              {invoice.sent_on
+                .map((t) => `${t.reference}${t.to_store_name ? ` → ${t.to_store_name}` : ''}`)
+                .join(', ')}
+            </Text>
+          ) : canTransfer ? (
             <Button
               label="Transfer This Stock"
               icon="corner-up-right"

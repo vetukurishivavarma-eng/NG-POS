@@ -217,6 +217,9 @@ type InvoiceWithRelations = Prisma.SupplierInvoiceGetPayload<{
     store: { select: { name: true; code: true } };
     items: true;
     payments: true;
+    transfers: {
+      select: { id: true; reference: true; status: true; toStore: { select: { name: true } } };
+    };
   };
 }>;
 
@@ -266,6 +269,13 @@ function serializeInvoice(i: InvoiceWithRelations) {
         paid_at: p.paidAt,
         user_name: p.userName,
       })),
+    /** Live transfers this delivery was sent on by; empty means it can still be sent. */
+    sent_on: i.transfers.map((t) => ({
+      id: t.id,
+      reference: t.reference,
+      status: t.status,
+      to_store_name: t.toStore?.name ?? null,
+    })),
     created_at: i.createdAt,
     updated_at: i.updatedAt,
   };
@@ -276,6 +286,10 @@ const invoiceInclude = {
   store: { select: { name: true, code: true } },
   items: true,
   payments: true,
+  transfers: {
+    where: { status: { not: 'cancelled' } },
+    select: { id: true, reference: true, status: true, toStore: { select: { name: true } } },
+  },
 } as const;
 
 /**

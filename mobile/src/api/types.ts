@@ -742,6 +742,8 @@ export interface SupplierInvoice {
   created_by_name: string;
   items: SupplierInvoiceItem[];
   payments: SupplierPaymentRow[];
+  /** Live transfers this delivery was sent on by; empty means it can still be sent. */
+  sent_on?: { id: string; reference: string; status: string; to_store_name: string | null }[];
   created_at: string;
   updated_at: string;
 }
