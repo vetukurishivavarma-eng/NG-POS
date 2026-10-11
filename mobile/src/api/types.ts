@@ -509,6 +509,33 @@ export interface Transfer {
   created_at: string;
 }
 
+export interface TransferListParams {
+  from_store_id?: string;
+  to_store_id?: string;
+  /** YYYY-MM-DD, inclusive, in shop time. */
+  from?: string;
+  to?: string;
+}
+
+export interface CustomerSummary {
+  name: string;
+  phone: string;
+  transaction_count: number;
+  total: number;
+  last_at: string;
+}
+
+export interface CustomerStatementRow {
+  id: string;
+  receipt_number: string;
+  transaction_type: string;
+  status: string;
+  store_name: string;
+  total: number;
+  created_at: string;
+  payments: { method: string; amount: number }[];
+}
+
 export interface TransferDraft {
   from_store_id: string;
   to_store_id: string;
@@ -516,6 +543,8 @@ export interface TransferDraft {
   notes?: string;
   /** The transfer this stock arrived on, when this one is passing it on. */
   source_transfer_id?: string;
+  /** The supplier delivery the basket was loaded from. */
+  source_invoice_id?: string;
 }
 
 /* ----------------------------------------------------------------- analytics */

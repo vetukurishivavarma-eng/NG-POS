@@ -55,6 +55,8 @@ interface PendingSeed {
   note?: string;
   /** Set for a "pass on" seed — the transfer this stock arrived on. */
   source_transfer_id?: string;
+  /** Set for an invoice seed — the delivery this stock arrived on. */
+  source_invoice_id?: string;
 }
 
 const MAX_RESULTS = 25;
@@ -85,6 +87,9 @@ export default function NewTransferScreen() {
   // on" a received transfer. Sent with the new transfer so the note shows the
   // chain.
   const [sourceTransferId, setSourceTransferId] = useState<string | null>(null);
+  // The delivery the basket was loaded from; once sent, that invoice leaves the
+  // "From an invoice" picker.
+  const [sourceInvoiceId, setSourceInvoiceId] = useState<string | null>(null);
 
   // Opened against a source document — a recorded delivery (`?invoice=`), an
   // earlier transfer to repeat (`?repeat=`), or one to pass on (`?passon=`).
@@ -141,7 +146,11 @@ export default function NewTransferScreen() {
   const invoicesQuery = useQuery({
     queryKey: ['transfer-source-invoices', invoiceListStoreId ?? 'any'],
     queryFn: () =>
-      purchasesApi.list({ ...(invoiceListStoreId ? { store_id: invoiceListStoreId } : {}), limit: 30 }),
+      purchasesApi.list({
+        ...(invoiceListStoreId ? { store_id: invoiceListStoreId } : {}),
+        untransferred: true,
+        limit: 30,
+      }),
     enabled: loader === 'invoice',
   });
 
@@ -221,6 +230,7 @@ export default function NewTransferScreen() {
         })),
         label: `Delivery ${inv.invoice_number} · ${inv.supplier_name}`,
         note: 'Quantities are what the invoice says arrived — check them against the shelf.',
+        source_invoice_id: inv.id,
       });
     } else if (repeatId) {
       const t = (transfersListQuery.data ?? []).find((x) => x.id === repeatId);
@@ -258,6 +268,7 @@ export default function NewTransferScreen() {
         pendingSeedRef.current = null;
         setOriginLabel(seed.label);
         setSourceTransferId(null);
+        setSourceInvoiceId(null);
         setSeedNote('That stock is at a shop you cannot send from, so nothing was loaded.');
         return;
       }
@@ -273,6 +284,7 @@ export default function NewTransferScreen() {
     pendingSeedRef.current = null;
     setOriginLabel(seed.label);
     setSourceTransferId(seed.source_transfer_id ?? null);
+    setSourceInvoiceId(seed.source_invoice_id ?? null);
     const r = addLinesFromSource(seed.entries);
 
     const parts: string[] = [];
@@ -300,6 +312,7 @@ export default function NewTransferScreen() {
     setOriginLabel(null);
     setSeedNote(null);
     setSourceTransferId(null);
+    setSourceInvoiceId(null);
   }
 
   function addProduct(productId: string) {
@@ -372,6 +385,7 @@ export default function NewTransferScreen() {
       })),
       label: `Delivery ${invoice.invoice_number} · ${invoice.supplier_name}`,
       note: 'Quantities are what the invoice says arrived — check them against the shelf.',
+      source_invoice_id: invoice.id,
     });
   }
 
@@ -433,9 +447,11 @@ export default function NewTransferScreen() {
         })),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         ...(sourceTransferId ? { source_transfer_id: sourceTransferId } : {}),
+        ...(sourceInvoiceId ? { source_invoice_id: sourceInvoiceId } : {}),
       });
 
       void queryClient.invalidateQueries({ queryKey: ['transfers'] });
+      void queryClient.invalidateQueries({ queryKey: ['transfer-source-invoices'] });
       void queryClient.invalidateQueries({ queryKey: ['catalogue'] });
 
       const note: TransferNoteData = {
@@ -593,7 +609,7 @@ export default function NewTransferScreen() {
                   <Text style={styles.noResults}>Couldn’t load invoices. Tap to retry.</Text>
                 </Pressable>
               ) : (invoicesQuery.data ?? []).length === 0 ? (
-                <Text style={styles.noResults}>No deliveries have been recorded yet.</Text>
+                <Text style={styles.noResults}>No deliveries left to transfer — every recorded one has already been sent on.</Text>
               ) : (
                 (invoicesQuery.data ?? []).map((invoice, index) => (
                   <Pressable

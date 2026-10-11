@@ -63,6 +63,96 @@ transactionsRouter.get(
   })
 );
 
+/** A shop login only sees its own shops; an admin or unassigned user sees all. */
+function storeScope(user: ReturnType<typeof currentUser>) {
+  return user.role !== 'ORG_ADMIN' && user.assignedStores.length > 0
+    ? { storeId: { in: user.assignedStores } }
+    : {};
+}
+
+/**
+ * There is no customer table — a customer is whatever name the till typed on
+ * the sale. This lists those names (with phone), most recent first, for the
+ * statement picker. Registered before `/:id`.
+ */
+transactionsRouter.get(
+  '/customers',
+  asyncHandler(async (req, res) => {
+    const q = z.object({ search: z.string().trim().optional() }).parse(req.query);
+    const user = currentUser(req);
+
+    const groups = await prisma.transaction.groupBy({
+      by: ['customerName', 'customerPhone'],
+      where: {
+        organizationId: user.organizationId,
+        ...storeScope(user),
+        customerName: q.search ? { contains: q.search, mode: 'insensitive' } : { not: '' },
+      },
+      _count: { _all: true },
+      _sum: { total: true },
+      _max: { createdAt: true },
+      orderBy: { _max: { createdAt: 'desc' } },
+      take: 50,
+    });
+
+    // The statement matches names case-insensitively, so "John Banda" and
+    // "john banda" are one customer here too. Groups arrive newest first, so
+    // the first spelling seen is the most recent one.
+    const merged = new Map<
+      string,
+      { name: string; phone: string; transaction_count: number; total: number; last_at: Date | null }
+    >();
+    for (const g of groups) {
+      const name = g.customerName?.trim();
+      if (!name) continue;
+      const phone = g.customerPhone ?? '';
+      const key = `${name.toLowerCase()}|${phone}`;
+      const entry = merged.get(key) ?? { name, phone, transaction_count: 0, total: 0, last_at: g._max.createdAt };
+      entry.transaction_count += g._count._all;
+      entry.total += Number(g._sum.total ?? 0);
+      merged.set(key, entry);
+    }
+    res.json([...merged.values()]);
+  })
+);
+
+/** Every sale/refund to one customer, with how each was paid — the statement. */
+transactionsRouter.get(
+  '/customers/statement',
+  asyncHandler(async (req, res) => {
+    const q = z
+      .object({ name: z.string().trim().min(1), phone: z.string().trim().optional() })
+      .parse(req.query);
+    const user = currentUser(req);
+
+    const rows = await prisma.transaction.findMany({
+      where: {
+        organizationId: user.organizationId,
+        ...storeScope(user),
+        customerName: { equals: q.name, mode: 'insensitive' },
+        ...(q.phone ? { customerPhone: q.phone } : {}),
+      },
+      include: { payments: true, store: { select: { name: true } } },
+      orderBy: { createdAt: 'asc' },
+      // ponytail: hard cap; page it if one customer ever passes this.
+      take: 2000,
+    });
+
+    res.json(
+      rows.map((t) => ({
+        id: t.id,
+        receipt_number: t.receiptNumber,
+        transaction_type: t.transactionType,
+        status: t.status,
+        store_name: t.store.name,
+        total: Number(t.total),
+        created_at: t.createdAt,
+        payments: t.payments.map((p) => ({ method: p.method, amount: Number(p.amount) })),
+      }))
+    );
+  })
+);
+
 transactionsRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {

@@ -50,6 +50,9 @@ import type {
   Transfer,
   DeviceSession,
   TransferDraft,
+  TransferListParams,
+  CustomerSummary,
+  CustomerStatementRow,
   User,
   UserDraft,
   VersionCheck,
@@ -170,6 +173,8 @@ export const purchases = {
     supplier_id?: string;
     status?: SupplierInvoiceStatus | 'outstanding';
     search?: string;
+    /** Leave out deliveries already sent on by a transfer. */
+    untransferred?: boolean;
     limit?: number;
     offset?: number;
   }) => api.get<SupplierInvoice[]>('/supplier-invoices', { params }).then((r) => r.data),
@@ -313,6 +318,17 @@ export const transactions = {
   /** Z-report for one store on one day, or every store the caller can see combined
    *  into one report if `storeId` is `'all'` (see DayReportView's ALL_STORES_ID).
    *  `date` is YYYY-MM-DD; omit for today. */
+  /** Names typed on sales at the till — there is no customer table. */
+  customers: (search?: string) =>
+    api
+      .get<CustomerSummary[]>('/transactions/customers', { params: search ? { search } : {} })
+      .then((r) => r.data),
+  customerStatement: (name: string, phone?: string) =>
+    api
+      .get<CustomerStatementRow[]>('/transactions/customers/statement', {
+        params: { name, ...(phone ? { phone } : {}) },
+      })
+      .then((r) => r.data),
   dailyReport: (storeId: string, date?: string) =>
     api
       .get<DailyReport>('/transactions/reports/daily', {
@@ -348,7 +364,9 @@ export const storePricing = {
 };
 
 export const transfers = {
-  list: () => api.get<Transfer[]>('/transfers').then((r) => r.data),
+  /** Unfiltered: the latest 100. Any filter returns every match (the download list). */
+  list: (params?: TransferListParams) =>
+    api.get<Transfer[]>('/transfers', { params }).then((r) => r.data),
   /** Both stock movements happen in one server transaction; it is all-or-nothing. */
   create: (body: TransferDraft) =>
     api

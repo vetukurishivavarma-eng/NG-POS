@@ -501,6 +501,9 @@ model Transfer {
   // earlier transfer — the shop received goods and is now distributing them
   // onward. Lets the transfer note say where the stock came from.
   sourceTransferId String?      @map("source_transfer_id")
+  /// Set when the basket was loaded from a supplier delivery. Such an invoice
+  /// drops out of the "From an invoice" picker so it is not transferred twice.
+  sourceInvoiceId String?       @map("source_invoice_id")
   createdAt      DateTime       @default(now()) @map("created_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")
 
@@ -509,10 +512,12 @@ model Transfer {
   toStore      Store?         @relation("TransferTo", fields: [toStoreId], references: [id], onDelete: SetNull)
   sourceTransfer Transfer?    @relation("TransferChain", fields: [sourceTransferId], references: [id], onDelete: SetNull)
   passedOn     Transfer[]     @relation("TransferChain")
+  sourceInvoice SupplierInvoice? @relation(fields: [sourceInvoiceId], references: [id], onDelete: SetNull)
   items        TransferItem[]
 
   @@index([organizationId])
   @@index([sourceTransferId])
+  @@index([sourceInvoiceId])
   @@map("transfers")
 }
 
@@ -594,6 +599,7 @@ model SupplierInvoice {
   store        Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
   items        SupplierInvoiceItem[]
   payments     SupplierPayment[]
+  transfers    Transfer[]
 
   // Entering the same paper invoice twice would double the stock and double the
   // debt. The database refuses it rather than the form remembering to.

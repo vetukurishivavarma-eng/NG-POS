@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { suppliers as suppliersApi } from '../src/api/endpoints';
+import { purchases as purchasesApi, suppliers as suppliersApi } from '../src/api/endpoints';
+import { shareStatementPdf } from '../src/printing/print';
 import { errorMessage } from '../src/api/client';
 import { useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
@@ -164,6 +165,18 @@ function SupplierCard({
   onDeactivate: () => void;
 }) {
   const balance = supplier.outstanding_balance ?? 0;
+  const [busy, setBusy] = useState(false);
+
+  async function downloadStatement() {
+    setBusy(true);
+    try {
+      await shareSupplierStatement(supplier);
+    } catch (err) {
+      Alert.alert("Couldn't load the statement", errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <View style={styles.card}>
@@ -207,6 +220,16 @@ function SupplierCard({
           </Text>
         </Pressable>
 
+        <Pressable
+          onPress={() => void downloadStatement()}
+          disabled={busy}
+          style={styles.action}
+          hitSlop={6}
+        >
+          <Icon name="download" size={14} color={colors.primary} />
+          <Text style={styles.actionText}>{busy ? 'Preparing…' : 'Statement'}</Text>
+        </Pressable>
+
         {canWrite ? (
           <Pressable onPress={onEdit} style={styles.action} hitSlop={6}>
             <Icon name="edit-2" size={14} color={colors.primary} />
@@ -222,6 +245,75 @@ function SupplierCard({
         ) : null}
       </View>
     </View>
+  );
+}
+
+/**
+ * Every invoice (what we were billed) and every payment (what we paid) for one
+ * supplier, oldest first, with the running balance owed — as a PDF.
+ */
+async function shareSupplierStatement(supplier: Supplier) {
+  const invoices = [];
+  for (let offset = 0; ; offset += 200) {
+    const page = await purchasesApi.list({ supplier_id: supplier.id, limit: 200, offset });
+    invoices.push(...page);
+    if (page.length < 200) break;
+  }
+
+  const entries = invoices.flatMap((inv) => [
+    {
+      at: inv.invoice_date,
+      detail: `Invoice ${inv.invoice_number}`,
+      shop: inv.store_name,
+      billed: inv.total,
+      paid: 0,
+    },
+    ...inv.payments.map((p) => ({
+      at: p.paid_at,
+      detail: `Payment · ${p.method.replace(/_/g, ' ')}${p.reference ? ` ${p.reference}` : ''} · inv ${inv.invoice_number}`,
+      shop: inv.store_name,
+      billed: 0,
+      paid: p.amount,
+    })),
+  ]);
+  entries.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+  let running = 0;
+  const rows = entries.map((e) => {
+    running += e.billed - e.paid;
+    return [
+      new Date(e.at).toLocaleDateString(),
+      e.detail,
+      e.shop,
+      e.billed ? formatKwacha(e.billed) : '',
+      e.paid ? formatKwacha(e.paid) : '',
+      formatKwacha(running),
+    ];
+  });
+  const billed = entries.reduce((sum, e) => sum + e.billed, 0);
+  const paid = entries.reduce((sum, e) => sum + e.paid, 0);
+
+  await shareStatementPdf(
+    {
+      title: 'Supplier statement',
+      subject: supplier.name,
+      meta: [
+        [supplier.contact_name, supplier.phone].filter(Boolean).join(' · '),
+        `${invoices.length} invoice${invoices.length === 1 ? '' : 's'}`,
+      ].filter(Boolean),
+      columns: [
+        { label: 'Date' },
+        { label: 'Details' },
+        { label: 'Shop' },
+        { label: 'Invoiced', align: 'right' },
+        { label: 'Paid', align: 'right' },
+        { label: 'Balance', align: 'right' },
+      ],
+      rows,
+      totals: ['', 'Total', '', formatKwacha(billed), formatKwacha(paid), formatKwacha(billed - paid)],
+      empty: 'No invoices have been recorded for this supplier.',
+    },
+    `Statement-${supplier.name}`
   );
 }
 

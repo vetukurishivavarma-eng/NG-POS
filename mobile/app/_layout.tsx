@@ -252,6 +252,10 @@ export default function RootLayout() {
             options={{ presentation: 'modal', headerShown: true, title: 'Screen Lock' }}
           />
           <Stack.Screen name="sales" options={{ headerShown: true, title: 'Sales History' }} />
+          <Stack.Screen
+            name="customer-statements"
+            options={{ headerShown: true, title: 'Customer Statements' }}
+          />
           <Stack.Screen name="transaction/[id]" options={{ headerShown: true, title: 'Receipt' }} />
           <Stack.Screen
             name="refund"

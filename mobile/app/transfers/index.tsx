@@ -4,26 +4,124 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { transfers as transfersApi } from '../../src/api/endpoints';
+import { stores as storesApi, transfers as transfersApi } from '../../src/api/endpoints';
 import { errorMessage } from '../../src/api/client';
-import { printTransferNote, shareTransferPdf } from '../../src/printing/print';
+import { printTransferNote, shareStatementPdf, shareTransferPdf } from '../../src/printing/print';
 import { useCan } from '../../src/store/auth';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../../src/theme';
-import { Badge, Button, EmptyState, Icon, Loading } from '../../src/ui/components';
+import { Badge, Button, EmptyState, Icon, Loading, Select } from '../../src/ui/components';
 import type { IconName } from '../../src/ui/components';
-import type { Transfer } from '../../src/api/types';
+import type { Transfer, TransferListParams } from '../../src/api/types';
+
+type Period = 'all' | '7' | '30' | '90';
+
+/** Local YYYY-MM-DD, `daysAgo` days before today. */
+function dayKey(daysAgo: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export default function TransfersScreen() {
   const layout = useLayout();
   const canCreate = useCan('transfers.create');
 
+  // '' = any shop. Any filter set turns the feed into a full report the
+  // server returns in full (not just the latest 100), ready to download.
+  const [fromId, setFromId] = useState('');
+  const [toId, setToId] = useState('');
+  const [period, setPeriod] = useState<Period>('all');
+  const params: TransferListParams = {
+    ...(fromId ? { from_store_id: fromId } : {}),
+    ...(toId ? { to_store_id: toId } : {}),
+    ...(period !== 'all' ? { from: dayKey(Number(period) - 1), to: dayKey(0) } : {}),
+  };
+  const filtered = Object.keys(params).length > 0;
+
+  const directory = useQuery({ queryKey: ['store-directory'], queryFn: storesApi.directory });
+  const shopOptions = [
+    { value: '', label: 'Any shop' },
+    ...(directory.data ?? []).map((st) => ({ value: st.id, label: st.name })),
+  ];
+
   const query = useQuery({
-    queryKey: ['transfers'],
-    queryFn: () => transfersApi.list(),
+    // Unfiltered keeps the old ['transfers'] key, which other screens invalidate.
+    queryKey: filtered ? ['transfers', params] : ['transfers'],
+    queryFn: () => transfersApi.list(filtered ? params : undefined),
+    // Keep showing the last result while a new filter loads, so the filter bar
+    // (rendered in the list header) does not vanish mid-tap.
+    placeholderData: (previous) => previous,
   });
 
   const rows = query.data ?? [];
+
+  function download() {
+    const nameOf = (id: string) => shopOptions.find((o) => o.value === id)?.label ?? '';
+    const lines = rows.flatMap((t) =>
+      t.items.map((i) => [
+        new Date(t.created_at).toLocaleDateString(),
+        t.reference,
+        t.from_store ?? '',
+        t.to_store ?? '',
+        i.product_name,
+        t.status === 'cancelled' ? 'revoked' : t.status.replace(/_/g, ' '),
+        String(i.quantity),
+      ])
+    );
+    const units = rows
+      .filter((t) => t.status !== 'cancelled')
+      .reduce((sum, t) => sum + t.items.reduce((s, i) => s + i.quantity, 0), 0);
+
+    void shareStatementPdf(
+      {
+        title: 'Transfer list',
+        subject: `${fromId ? nameOf(fromId) : 'Any shop'} → ${toId ? nameOf(toId) : 'Any shop'}`,
+        meta: [
+          period === 'all' ? (filtered ? 'All dates' : 'Latest 100 transfers') : `Last ${period} days`,
+          `${rows.length} transfer${rows.length === 1 ? '' : 's'}`,
+        ],
+        columns: [
+          { label: 'Date' },
+          { label: 'Ref' },
+          { label: 'From' },
+          { label: 'To' },
+          { label: 'Product' },
+          { label: 'Status' },
+          { label: 'Qty', align: 'right' },
+        ],
+        rows: lines,
+        totals: ['', '', '', '', 'Units moved (excl. revoked)', '', String(units)],
+        empty: 'No transfers match these filters.',
+      },
+      'Transfer-List'
+    );
+  }
+
+  const filters = (
+    <View style={styles.filters}>
+      <Select label="From" value={fromId} options={shopOptions} onChange={setFromId} />
+      <Select label="To" value={toId} options={shopOptions} onChange={setToId} />
+      <Select<Period>
+        label="Period"
+        value={period}
+        options={[
+          { value: 'all', label: 'All' },
+          { value: '7', label: '7 days' },
+          { value: '30', label: '30 days' },
+          { value: '90', label: '90 days' },
+        ]}
+        onChange={setPeriod}
+      />
+      <Button
+        label="Download list"
+        icon="download"
+        variant="secondary"
+        disabled={rows.length === 0}
+        onPress={download}
+      />
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -73,10 +171,11 @@ export default function TransfersScreen() {
           ListEmptyComponent={
             <EmptyState
               icon="shuffle"
-              title="No stock has been transferred yet"
+              title={filtered ? 'No transfers match these filters' : 'No stock has been transferred yet'}
               hint="Moving stock between two shops records a transfer here, with every line it moved."
             />
           }
+          ListHeaderComponent={filters}
           renderItem={({ item }) => <TransferCard transfer={item} />}
         />
       )}
@@ -276,6 +375,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.canvas },
 
   toolbar: { paddingTop: spacing.md, paddingBottom: spacing.xs },
+  filters: { gap: spacing.xs, marginBottom: spacing.sm },
 
   card: {
     backgroundColor: colors.surface,

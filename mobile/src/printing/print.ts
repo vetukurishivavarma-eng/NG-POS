@@ -7,6 +7,7 @@ import { printBlockedReason, sendToPrinter, usePrinter } from './printer';
 import { shareHtmlAsPdf } from './pdf';
 import { dayReportHtml, type DayReportPdfData } from './dayReport';
 import { orderReportHtml, type OrderReportData } from './orderReport';
+import { statementHtml, type StatementData } from './statement';
 import {
   buildTransferNote,
   transferNoteHtml,
@@ -195,6 +196,20 @@ export async function shareOrderReportPdf(data: OrderReportData): Promise<void> 
     Alert.alert(
       "Couldn't make the PDF",
       err instanceof Error ? err.message : 'The order list could not be rendered.'
+    );
+  }
+}
+
+/** A4 PDF of any statement (supplier, customer, transfer list), out through the share sheet. */
+export async function shareStatementPdf(data: StatementData, filename: string): Promise<void> {
+  try {
+    const html = statementHtml(data, { organizationName: await organizationName('NG POS') });
+    const { uri, shared } = await shareHtmlAsPdf(html, filename, `${data.title} — ${data.subject}`);
+    if (!shared) Alert.alert('PDF saved', `The statement was saved to ${uri}`);
+  } catch (err) {
+    Alert.alert(
+      "Couldn't make the PDF",
+      err instanceof Error ? err.message : 'The statement could not be rendered.'
     );
   }
 }

@@ -121,6 +121,13 @@ export default function MoreScreen() {
             />
             <View style={styles.divider} />
             <LinkRow
+              icon="users"
+              label="Customer Statements"
+              value="Every sale and payment for one customer, as a PDF"
+              onPress={() => router.push('/customer-statements')}
+            />
+            <View style={styles.divider} />
+            <LinkRow
               icon="clipboard"
               label="Day Report"
               value="Z-report and End Session"

@@ -17,6 +17,8 @@ import { mayViewCosts } from '../lib/capabilities.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
 import { revokeAllSessions } from './devices.js';
+import { dayRangeIn } from '../lib/time.js';
+import { env } from '../env.js';
 
 /* ------------------------------------------------------------------- users */
 
@@ -219,8 +221,31 @@ transfersRouter.use(authenticate);
 transfersRouter.get(
   '/',
   asyncHandler(async (req, res) => {
+    const q = z
+      .object({
+        from_store_id: z.string().uuid().optional(),
+        to_store_id: z.string().uuid().optional(),
+        /** Inclusive day bounds, YYYY-MM-DD. */
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      })
+      .parse(req.query);
+    const filtered = Boolean(q.from_store_id || q.to_store_id || q.from || q.to);
+
     const rows = await prisma.transfer.findMany({
-      where: { organizationId: currentUser(req).organizationId },
+      where: {
+        organizationId: currentUser(req).organizationId,
+        ...(q.from_store_id ? { fromStoreId: q.from_store_id } : {}),
+        ...(q.to_store_id ? { toStoreId: q.to_store_id } : {}),
+        ...(q.from || q.to
+          ? {
+              createdAt: {
+                ...(q.from ? { gte: dayRangeIn(q.from, env.REPORT_TIMEZONE).start } : {}),
+                ...(q.to ? { lt: dayRangeIn(q.to, env.REPORT_TIMEZONE).end } : {}),
+              },
+            }
+          : {}),
+      },
       include: {
         items: { include: { product: { select: { name: true, sku: true } } } },
         fromStore: { select: { name: true } },
@@ -228,7 +253,9 @@ transfersRouter.get(
         sourceTransfer: { select: { reference: true } },
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      // The unfiltered screen is a recent-history feed; a filtered one is a
+      // report somebody downloads, so it gets the lot.
+      take: filtered ? 2000 : 100,
     });
 
     res.json(
@@ -265,6 +292,8 @@ const transferSchema = z.object({
   notes: z.string().optional(),
   /** The transfer this stock arrived on, when this one is "passing it on". */
   source_transfer_id: z.string().uuid().optional(),
+  /** The supplier delivery the basket was loaded from. */
+  source_invoice_id: z.string().uuid().optional(),
 });
 
 /**
@@ -297,6 +326,13 @@ transfersRouter.post(
       });
       if (!parent) throw badRequest('The transfer this stock came from could not be found.');
     }
+    if (body.source_invoice_id) {
+      const invoice = await prisma.supplierInvoice.findFirst({
+        where: { id: body.source_invoice_id, organizationId: user.organizationId },
+        select: { id: true },
+      });
+      if (!invoice) throw badRequest('The invoice this stock came from could not be found.');
+    }
 
     const transfer = await prisma.$transaction(async (tx) => {
       const reference = `TRF-${Date.now().toString(36).toUpperCase()}`;
@@ -310,6 +346,7 @@ transfersRouter.post(
           status: 'completed',
           notes: body.notes ?? '',
           sourceTransferId: body.source_transfer_id ?? null,
+          sourceInvoiceId: body.source_invoice_id ?? null,
           items: {
             createMany: {
               data: body.items.map((i) => ({
