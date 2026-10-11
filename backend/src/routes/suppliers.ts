@@ -59,8 +59,9 @@ suppliersRouter.get(
   asyncHandler(async (req, res) => {
     const organizationId = currentUser(req).organizationId;
 
+    // Removed suppliers are hidden everywhere, with their deliveries.
     const suppliers = await prisma.supplier.findMany({
-      where: { organizationId },
+      where: { organizationId, isActive: true },
       orderBy: { name: 'asc' },
       include: {
         // The list screen leads with what is still owed, so the balance is
@@ -90,22 +91,23 @@ suppliersRouter.post(
 
     const clash = await prisma.supplier.findFirst({
       where: { organizationId, name: { equals: body.name, mode: 'insensitive' } },
-      select: { id: true },
+      select: { id: true, isActive: true },
     });
-    if (clash) throw conflict('A supplier with that name already exists.');
+    if (clash?.isActive) throw conflict('A supplier with that name already exists.');
 
-    const supplier = await prisma.supplier.create({
-      data: {
-        organizationId,
-        name: body.name,
-        contactName: body.contact_name,
-        phone: body.phone,
-        email: body.email,
-        address: body.address,
-        notes: body.notes,
-        isActive: body.is_active,
-      },
-    });
+    // A removed supplier still holds the name (and its old deliveries), so
+    // adding it again brings it back rather than failing on a hidden clash.
+    const details = {
+      name: body.name,
+      contactName: body.contact_name,
+      phone: body.phone,
+      email: body.email,
+      address: body.address,
+      notes: body.notes,
+    };
+    const supplier = clash
+      ? await prisma.supplier.update({ where: { id: clash.id }, data: { ...details, isActive: true } })
+      : await prisma.supplier.create({ data: { organizationId, ...details, isActive: body.is_active } });
 
     res.status(201).json(serializeSupplier(supplier, 0, 0));
   })
@@ -306,6 +308,7 @@ supplierInvoicesRouter.get(
     const invoices = await prisma.supplierInvoice.findMany({
       where: {
         organizationId: user.organizationId,
+        supplier: { isActive: true },
         ...(q.store_id ? { storeId: q.store_id } : {}),
         status: { in: ['unpaid', 'partial'] },
       },
@@ -373,6 +376,7 @@ supplierInvoicesRouter.get(
     const invoices = await prisma.supplierInvoice.findMany({
       where: {
         organizationId: user.organizationId,
+        supplier: { isActive: true },
         ...(q.store_id ? { storeId: q.store_id } : {}),
         ...(q.supplier_id ? { supplierId: q.supplier_id } : {}),
         ...(q.status === 'outstanding'
