@@ -48,16 +48,66 @@ const checkLimit = rateLimit({
   message: 'Too many version checks. Try again shortly.',
 });
 
+/**
+ * The newest GitHub release, so publishing a release is the whole job: tag
+ * `vX.Y.Z`, attach the APK, and put a line `build: N` (the versionCode) in the
+ * release notes. A row added by hand in app_releases still wins when its build
+ * is at least as new, which is how a mandatory floor is set.
+ */
+const GITHUB_LATEST = 'https://api.github.com/repos/vetukurishivavarma-eng/NG-POS/releases/latest';
+let ghCache: { at: number; value: Awaited<ReturnType<typeof fetchGithubLatest>> } | null = null;
+
+async function fetchGithubLatest() {
+  try {
+    const res = await fetch(GITHUB_LATEST, {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return null;
+    const r = (await res.json()) as {
+      tag_name: string;
+      body?: string;
+      published_at?: string;
+      assets: { name: string; browser_download_url: string }[];
+    };
+    const build = Number(/^\s*build:\s*(\d+)/im.exec(r.body ?? '')?.[1]);
+    const apk = r.assets.find((a) => a.name.toLowerCase().endsWith('.apk'));
+    if (!apk || !Number.isInteger(build)) return null;
+    return {
+      version: r.tag_name.replace(/^v/i, ''),
+      buildNumber: build,
+      minimumBuild: 0,
+      graceCount: 2,
+      mandatory: false,
+      downloadUrl: apk.browser_download_url,
+      notes: (r.body ?? '').split(String.fromCharCode(10)).filter((l) => l.trim().startsWith('-')).slice(0, 4).join(String.fromCharCode(10)),
+      publishedAt: new Date(r.published_at ?? Date.now()),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function githubLatest() {
+  // 5 minutes: GitHub allows 60 unauthenticated calls an hour per address.
+  if (!ghCache || Date.now() - ghCache.at > 5 * 60_000) {
+    ghCache = { at: Date.now(), value: await fetchGithubLatest() };
+  }
+  return ghCache.value;
+}
+
 appRouter.get(
   '/version',
   checkLimit,
   asyncHandler(async (req, res) => {
     const q = checkQuery.parse(req.query);
 
-    const latest = await prisma.appRelease.findFirst({
+    const row = await prisma.appRelease.findFirst({
       where: { platform: q.platform, isActive: true },
       orderBy: { buildNumber: 'desc' },
     });
+    const gh = q.platform === 'android' ? await githubLatest() : null;
+    const latest = gh && (!row || gh.buildNumber > row.buildNumber) ? gh : row;
 
     // Nothing published yet. Answering "you are current" rather than 404 is
     // deliberate: a server with no release row must never lock a shop out of
