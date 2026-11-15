@@ -54,22 +54,54 @@ export interface SaleInput {
  * The day is the shop's calendar day, not UTC — the same boundary the Z-report
  * uses, so every receipt number on a day report actually carries that date.
  */
-async function nextReceiptNumber(
+/** First 4 letters of the first word, then the initial of each further word up to `words`. */
+function prefixOf(name: string, words: number): string {
+  const w = name.split(/\s+/).map((x) => x.replace(/[^a-z0-9]/gi, '')).filter(Boolean);
+  const head = (w[0] ?? 'X').slice(0, 4).toUpperCase().padEnd(4, 'X');
+  return head + w.slice(1, words).map((x) => x[0]!.toUpperCase()).join('');
+}
+
+/**
+ * The shop's invoice prefix: first 4 letters ("Lusaka Main" -> LUSA). When
+ * another shop in the organisation would get the same one, words are added
+ * one at a time (LUSAM, LUSAE) until this shop's is unique.
+ * ponytail: shops identical in every word still tie; rename one.
+ */
+async function shopPrefix(tx: TxClient, storeId: string, name: string): Promise<string> {
+  const me = await tx.store.findUniqueOrThrow({ where: { id: storeId }, select: { organizationId: true } });
+  const others = await tx.store.findMany({
+    where: { organizationId: me.organizationId, id: { not: storeId } },
+    select: { name: true },
+  });
+  const wordCount = name.split(/\s+/).filter(Boolean).length;
+  for (let n = 1; n < wordCount; n++) {
+    const mine = prefixOf(name, n);
+    if (!others.some((o) => prefixOf(o.name, n) === mine)) return mine;
+  }
+  return prefixOf(name, wordCount);
+}
+
+export async function nextReceiptNumber(
   tx: TxClient,
   storeId: string,
-  storeCode: string,
-  when: Date
+  storeName: string,
+  when: Date,
+  kind: 'sale' | 'transfer' = 'sale'
 ): Promise<string> {
-  const day = dateKeyIn(when, env.REPORT_TIMEZONE).replace(/-/g, '');
+  const year = dateKeyIn(when, env.REPORT_TIMEZONE).slice(0, 4);
+  // Sales and transfers count separately; the counter row's key says which.
+  const key = kind === 'sale' ? year : `T${year}`;
 
   const counter = await tx.receiptCounter.upsert({
-    where: { storeId_day: { storeId, day } },
-    create: { storeId, day, sequence: 1 },
+    where: { storeId_day: { storeId, day: key } },
+    create: { storeId, day: key, sequence: 1 },
     update: { sequence: { increment: 1 } },
     select: { sequence: true },
   });
 
-  return `${storeCode}-${day}-${String(counter.sequence).padStart(6, '0')}`;
+  const prefix = await shopPrefix(tx, storeId, storeName);
+  const seq = String(counter.sequence).padStart(6, '0');
+  return kind === 'sale' ? `${prefix}-${year}-${seq}` : `TRF-${prefix}-${year}-${seq}`;
 }
 
 /**
@@ -123,7 +155,7 @@ function reconcilePayments(
  * that has been offline for a week would otherwise be able to sell at stale
  * prices, and a tampered client could sell at any price it liked.
  */
-export async function createSale(user: AuthUser, input: SaleInput) {
+export async function createSale(user: AuthUser, input: SaleInput, deviceName: string | null = null) {
   if (input.items.length === 0) throw badRequest('A sale needs at least one item.');
 
   // Idempotency: a replayed offline sale returns the original rather than
@@ -286,7 +318,7 @@ export async function createSale(user: AuthUser, input: SaleInput) {
         });
       }
 
-      const receiptNumber = await nextReceiptNumber(tx, store.id, store.code, new Date());
+      const receiptNumber = await nextReceiptNumber(tx, store.id, store.name, new Date());
       const signedTotal = round2(grandTotal.mul(sign));
       const paymentRows = reconcilePayments(input.payments, grandTotal, signedTotal);
 
@@ -303,6 +335,7 @@ export async function createSale(user: AuthUser, input: SaleInput) {
           total: signedTotal,
           cashierId: user.id,
           cashierName: user.fullName,
+          deviceName,
           customerName: input.customer_name ?? null,
           customerPhone: input.customer_phone ?? null,
           notes: input.notes ?? '',

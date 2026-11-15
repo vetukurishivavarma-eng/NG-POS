@@ -186,6 +186,7 @@ export default function TransfersScreen() {
 function TransferCard({ transfer }: { transfer: Transfer }) {
   const [open, setOpen] = useState(false);
   const canCreate = useCan('transfers.create');
+  const canRevoke = useCan('transfers.revoke');
   const queryClient = useQueryClient();
 
   // Undoing a transfer moves stock on two shops at once, so everything cached
@@ -310,7 +311,7 @@ function TransferCard({ transfer }: { transfer: Transfer }) {
             onPress={() => router.push(`/transfers/new?passon=${transfer.id}`)}
           />
         ) : null}
-        {canCreate && transfer.status === 'completed' ? (
+        {canRevoke && transfer.status === 'completed' ? (
           <PrintChip
             icon="rotate-ccw"
             label={revoke.isPending ? 'Revoking…' : 'Revoke'}

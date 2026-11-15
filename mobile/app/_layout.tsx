@@ -314,6 +314,9 @@ export default function RootLayout() {
             options={{ presentation: 'modal', headerShown: true, title: 'New Transfer' }}
           />
           <Stack.Screen name="analytics" options={{ headerShown: true, title: 'Analytics' }} />
+          <Stack.Screen name="below-cost" options={{ headerShown: true, title: 'Below-cost sales' }} />
+          <Stack.Screen name="product-detail" options={{ headerShown: true, title: 'Product' }} />
+          <Stack.Screen name="product-sales" options={{ headerShown: true, title: 'Product Sales' }} />
           <Stack.Screen name="history" options={{ headerShown: true, title: 'History' }} />
           <Stack.Screen
             name="app-releases"

@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 
 import { analytics, stores as storesApi } from '../src/api/endpoints';
 import { errorMessage } from '../src/api/client';
 import { PERIOD_LABELS } from '../src/api/types';
+import { belowCostHref, productDetailHref } from '../src/nav/productLinks';
 import { useAuth, useCan } from '../src/store/auth';
 import { placeLabel, warehouseFirst } from '../src/store/place';
 import { useStoreSelection } from '../src/store/storeSelection';
@@ -325,7 +327,7 @@ export default function AnalyticsScreen() {
             emptyTitle="No products sold"
             emptyHint={`Nothing was sold ${PERIOD_LABELS[period].toLowerCase()}.`}
           >
-            {(rows) => <TopProducts rows={rows} metric={topMetric} />}
+            {(rows) => <TopProducts rows={rows} metric={topMetric} period={period} storeId={storeId} />}
           </Panel>
         </View>
 
@@ -341,11 +343,7 @@ export default function AnalyticsScreen() {
             emptyHint="Profit is worked out from the cost price captured at the time of sale."
           >
             {(rows) => (
-              <ProfitByProduct
-                rows={rows}
-                focusId={focus?.product_id ?? null}
-                onFocus={(id) => setFocusProductId((current) => (current === id ? null : id))}
-              />
+              <ProfitByProduct rows={rows} period={period} storeId={storeId} />
             )}
           </Panel>
           <Text style={styles.footnote}>
@@ -530,7 +528,18 @@ function TrendChart({ points }: { points: SalesTrendPoint[] }) {
 
 /* -------------------------------------------------------------- top products */
 
-function TopProducts({ rows, metric }: { rows: ProfitPerProductRow[]; metric: TopMetric }) {
+function TopProducts({
+  rows,
+  metric,
+  period,
+  storeId,
+}: {
+  rows: ProfitPerProductRow[];
+  metric: TopMetric;
+  period: AnalyticsPeriod;
+  storeId: string | null;
+}) {
+  const router = useRouter();
   const valueOf = (r: ProfitPerProductRow) =>
     metric === 'revenue' ? r.sales : metric === 'profit' ? r.profit : r.quantity;
 
@@ -553,6 +562,11 @@ function TopProducts({ rows, metric }: { rows: ProfitPerProductRow[]; metric: To
           fill={max > 0 ? (Math.abs(valueOf(row)) / max) * 100 : 0}
           highlight={index === 0}
           negative={metric === 'profit' && row.profit < 0}
+          onPress={() =>
+            router.push(
+              productDetailHref({ product_id: row.product_id, name: row.product_name, store_id: storeId, period })
+            )
+          }
         />
       ))}
     </Card>
@@ -652,13 +666,20 @@ function MarginBlock({
 
 function ProfitByProduct({
   rows,
-  focusId,
-  onFocus,
+  period,
+  storeId,
 }: {
   rows: ProfitPerProductRow[];
-  focusId: string | null;
-  onFocus: (id: string) => void;
+  period: AnalyticsPeriod;
+  storeId: string | null;
 }) {
+  const router = useRouter();
+  const scopeOf = (row: ProfitPerProductRow) => ({
+    product_id: row.product_id,
+    name: row.product_name,
+    store_id: storeId,
+    period,
+  });
   const sorted = [...rows].sort((a, b) => b.profit - a.profit);
   const losses = sorted.filter((r) => r.profit < 0);
   // Best ten by profit, then every loss-making line regardless of where it fell
@@ -673,12 +694,16 @@ function ProfitByProduct({
   return (
     <View style={{ gap: spacing.sm }}>
       {losses.length > 0 ? (
-        <View style={styles.alert}>
+        <Pressable
+          style={styles.alert}
+          onPress={() => router.push(belowCostHref({ store_id: storeId, period }))}
+        >
           <Icon name="alert-triangle" size={16} color={colors.danger} />
           <Text style={styles.alertText}>
-            {losses.length} product{losses.length === 1 ? ' is' : 's are'} selling below cost.
+            {losses.length} product{losses.length === 1 ? ' is' : 's are'} selling below cost. Tap to
+            see which sales.
           </Text>
-        </View>
+        </Pressable>
       ) : null}
 
       <Card>
@@ -691,8 +716,8 @@ function ProfitByProduct({
               rank={index + 1}
               row={row}
               max={max}
-              focused={row.product_id !== null && row.product_id === focusId}
-              onPress={row.product_id ? () => onFocus(row.product_id as string) : undefined}
+              focused={false}
+              onPress={() => router.push(productDetailHref(scopeOf(row)))}
             />
           ))
         )}
@@ -708,8 +733,8 @@ function ProfitByProduct({
                 key={row.product_id ?? `loss-${row.product_name}-${index}`}
                 row={row}
                 max={max}
-                focused={row.product_id !== null && row.product_id === focusId}
-                onPress={row.product_id ? () => onFocus(row.product_id as string) : undefined}
+                focused={false}
+                onPress={() => router.push(belowCostHref(scopeOf(row)))}
               />
             ))}
           </>
@@ -797,7 +822,9 @@ function RankedRow({
   fill,
   highlight,
   negative,
+  onPress,
 }: {
+  onPress?: () => void;
   rank?: number;
   name: string;
   meta: string;
@@ -813,7 +840,7 @@ function RankedRow({
       : colors.primarySoft;
 
   return (
-    <View style={styles.ranked}>
+    <Pressable onPress={onPress} disabled={!onPress} style={styles.ranked}>
       <View style={[styles.rankedFill, { width: pct(fill), backgroundColor: barColor }]} />
       {rank !== undefined ? <Text style={styles.rankedNum}>{rank}</Text> : null}
       <View style={{ flex: 1 }}>
@@ -825,7 +852,7 @@ function RankedRow({
         </Text>
       </View>
       <Text style={[styles.rankedValue, negative && { color: colors.danger }]}>{value}</Text>
-    </View>
+    </Pressable>
   );
 }
 

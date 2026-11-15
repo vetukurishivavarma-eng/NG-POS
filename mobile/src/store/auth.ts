@@ -121,6 +121,7 @@ export type Permission =
   | 'pricing.write'
   | 'costs.view'
   | 'transfers.create'
+  | 'transfers.revoke'
   | 'stores.write'
   | 'stores.delete'
   | 'suppliers.write'
@@ -159,6 +160,7 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   // price rather than merely offer a button the server then refuses.
   'costs.view': ['admin'],
   'transfers.create': ['admin', 'manager'],
+  'transfers.revoke': ['admin'],
   // Opening a shop is an organisation-level act, so admin only — the same guard
   // the server puts on POST /stores.
   'stores.write': ['admin'],

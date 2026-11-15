@@ -27,6 +27,8 @@ export const CAPABILITIES = [
   // his business with his suppliers.
   'costs.view',
   'transfers.create',
+  // Undoing a transfer: admin and warehouse only, never shop staff.
+  'transfers.revoke',
   'stores.write',
   'stores.delete',
   'suppliers.write',

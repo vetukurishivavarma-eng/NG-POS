@@ -586,6 +586,43 @@ export interface SalesPerProductRow {
   sales: number;
 }
 
+export interface BelowCostSale {
+  transaction_id: string;
+  receipt_number: string;
+  created_at: string;
+  store_name: string;
+  cashier_name: string;
+  device_name: string | null;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  net_price: number;
+  cost_price: number;
+  loss: number;
+}
+
+export interface ProductBreakdownStore {
+  store_id: string;
+  store_name: string;
+  quantity: number;
+  sales: number;
+  avg_price: number;
+  prices: { unit_price: number; quantity: number }[];
+}
+
+export interface ProductSalesRow {
+  store_id: string;
+  store_name: string;
+  product_id: string | null;
+  product_name: string;
+  quantity: number;
+  sales: number;
+  /** Present only for accounts that may see buying prices. */
+  cost?: number;
+  profit?: number;
+  sold_below_cost_qty?: number;
+}
+
 export interface ProfitPerProductRow extends SalesPerProductRow {
   /** What the goods cost, captured on the line at sale time. */
   cost: number;

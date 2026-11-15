@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
+import { productDetailHref } from '../nav/productLinks';
 
 import { transactions as txApi } from '../api/endpoints';
 import { useAuth } from '../store/auth';
@@ -49,6 +51,7 @@ export default function DayReportView({
     return d;
   }, [offset]);
 
+  const router = useRouter();
   const dateKey = toDateKey(day);
   const storeId = store.id;
 
@@ -258,7 +261,19 @@ export default function DayReportView({
                 {topItems.map((item, index) => (
                   <View key={item.name}>
                     {index > 0 ? <View style={styles.divider} /> : null}
-                    <View style={styles.topRow}>
+                    <Pressable
+                      style={styles.topRow}
+                      onPress={() =>
+                        router.push(
+                          productDetailHref({
+                            name: item.name,
+                            store_id: combined ? null : storeId,
+                            from: dateKey,
+                            to: dateKey,
+                          })
+                        )
+                      }
+                    >
                       <Text style={styles.topRank}>{index + 1}</Text>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.topName} numberOfLines={1}>
@@ -267,7 +282,7 @@ export default function DayReportView({
                         <Text style={styles.topMeta}>{item.quantity} sold</Text>
                       </View>
                       <Text style={styles.topTotal}>{formatKwacha(item.total)}</Text>
-                    </View>
+                    </Pressable>
                   </View>
                 ))}
               </View>

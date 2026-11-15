@@ -225,7 +225,7 @@ transactionsRouter.post(
     const user = currentUser(req);
     await assertStoreAccess(user, body.store_id);
 
-    const { transaction, duplicate } = await createSale(user, body);
+    const { transaction, duplicate } = await createSale(user, body, req.session?.deviceName ?? null);
 
     // 200 rather than 201 on a replay, so a client can tell the difference.
     res.status(duplicate ? 200 : 201).json(serializeTransaction(transaction));
@@ -351,7 +351,7 @@ transactionsRouter.post(
       notes: body.reason ?? `Refund of ${original.receiptNumber}`,
       client_reference: body.client_reference ?? null,
       reverses_id: original.id,
-    });
+    }, req.session?.deviceName ?? null);
 
     // Only call the sale refunded once nothing is left on it. Flagging it after
     // the first partial refund made the other units unreturnable.

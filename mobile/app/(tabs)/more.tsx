@@ -288,6 +288,13 @@ export default function MoreScreen() {
                   />
                   <View style={styles.divider} />
                   <LinkRow
+                    icon="trending-up"
+                    label="Product Sales"
+                    value="What sells most, per shop and dates; below-cost sales"
+                    onPress={() => router.push('/product-sales')}
+                  />
+                  <View style={styles.divider} />
+                  <LinkRow
                     icon="clipboard"
                     label="Day Report by Shop"
                     value="Any shop's Z-report — pick a shop and a day"

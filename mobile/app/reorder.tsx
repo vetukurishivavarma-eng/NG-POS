@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { productDetailHref } from '../src/nav/productLinks';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analytics, stores as storesApi } from '../src/api/endpoints';
@@ -40,6 +42,7 @@ export default function ReorderScreen() {
   const scopeIsKnown =
     scope === ALL_SHOPS || !storeList.data || visibleStores.some((s) => s.id === scope);
   const effectiveScope = scopeIsKnown ? scope : ALL_SHOPS;
+  const router = useRouter();
   const storeId = effectiveScope === ALL_SHOPS ? null : effectiveScope;
   const scopeLabel =
     storeId === null
@@ -188,7 +191,20 @@ export default function ReorderScreen() {
               {rows.map((row, index) => (
                 <View key={row.product_id ?? `${row.product_name}-${index}`}>
                   {index > 0 ? <View style={styles.divider} /> : null}
-                  <View style={styles.row}>
+                  <Pressable
+                    style={styles.row}
+                    onPress={() =>
+                      router.push(
+                        productDetailHref({
+                          product_id: row.product_id,
+                          name: row.product_name,
+                          store_id: storeId,
+                          from: new Date(Date.now() - months * 30 * 86400000).toISOString().slice(0, 10),
+                          to: new Date().toISOString().slice(0, 10),
+                        })
+                      )
+                    }
+                  >
                     <Text style={styles.rank}>{index + 1}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.name} numberOfLines={1}>
@@ -203,7 +219,7 @@ export default function ReorderScreen() {
                       <Text style={styles.qty}>{formatQty(row.quantity)}</Text>
                       <Text style={styles.qtyLabel}>sold</Text>
                     </View>
-                  </View>
+                  </Pressable>
                 </View>
               ))}
             </View>

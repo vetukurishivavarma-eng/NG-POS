@@ -22,6 +22,9 @@ import type {
   ProductDraft,
   ProductStockByStore,
   ProductWithStock,
+  BelowCostSale,
+  ProductBreakdownStore,
+  ProductSalesRow,
   ProfitPerBranchRow,
   ProfitPerProductRow,
   RefundRequest,
@@ -412,6 +415,16 @@ export const analytics = {
     api
       .get<SalesPerProductRow[]>('/analytics/sales-per-product', {
         params: { ...(storeId ? { store_id: storeId } : {}), months },
+      })
+      .then((r) => r.data),
+  belowCostSales: (params: Record<string, string>) =>
+    api.get<BelowCostSale[]>('/analytics/below-cost-sales', { params }).then((r) => r.data),
+  productBreakdown: (params: Record<string, string>) =>
+    api.get<ProductBreakdownStore[]>('/analytics/product-breakdown', { params }).then((r) => r.data),
+  productSales: (storeId: string | null, from: string, to: string) =>
+    api
+      .get<ProductSalesRow[]>('/analytics/product-sales', {
+        params: { ...(storeId ? { store_id: storeId } : {}), from, to },
       })
       .then((r) => r.data),
   profitPerProduct: (storeId: string | null, period: AnalyticsPeriod = 'monthly') =>

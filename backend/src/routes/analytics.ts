@@ -10,7 +10,9 @@ import {
   currentUser,
   requireCapability,
 } from '../middleware/auth.js';
-import { dateKeyIn, periodStartIn, periodStartKey, REPORT_PERIODS, shiftDateKey } from '../lib/time.js';
+import { badRequest } from '../lib/errors.js';
+import { mayViewCosts } from '../lib/capabilities.js';
+import { dayRangeIn, dateKeyIn, periodStartIn, periodStartKey, REPORT_PERIODS, shiftDateKey } from '../lib/time.js';
 
 export const analyticsRouter = Router();
 analyticsRouter.use(authenticate);
@@ -308,6 +310,198 @@ analyticsRouter.get(
         tax: Number(r.tax),
         profit: Number(r.profit),
       }))
+    );
+  })
+);
+
+/**
+ * Units and takings per product, per shop, for any date range. `product_ids`
+ * (comma list) narrows to a selection; leave it off for every product. Cost,
+ * profit and the below-cost flag are only filled in for accounts that may see
+ * buying prices, so shop staff get the sales figures without the margin.
+ */
+analyticsRouter.get(
+  '/product-sales',
+  asyncHandler(async (req, res) => {
+    const q = z
+      .object({
+        store_id: z.string().uuid().optional(),
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        product_ids: z.string().optional(),
+        below_cost: z.enum(['1']).optional(),
+      })
+      .parse(req.query);
+
+    const user = currentUser(req);
+    const showCost = await mayViewCosts(user);
+    const ids = (q.product_ids ?? '').split(',').filter((id) => z.string().uuid().safeParse(id).success);
+    const from = dayRangeIn(q.from, env.REPORT_TIMEZONE).start;
+    const to = dayRangeIn(q.to, env.REPORT_TIMEZONE).end;
+
+    const rows = await prisma.$queryRaw<
+      {
+        store_id: string;
+        store_name: string;
+        product_id: string | null;
+        product_name: string;
+        qty: number;
+        sales: number;
+        cost: number;
+        below_cost_qty: number;
+      }[]
+    >`
+      SELECT t.store_id, s.name AS store_name, ti.product_id, ti.product_name,
+             SUM(ti.quantity)::float8 AS qty,
+             SUM(ti.line_total)::float8 AS sales,
+             SUM(ti.cost_price * ti.quantity)::float8 AS cost,
+             SUM(CASE WHEN ti.line_total - ti.tax_amount < ti.cost_price * ti.quantity
+                      THEN ti.quantity ELSE 0 END)::float8 AS below_cost_qty
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      JOIN stores s ON s.id = t.store_id
+      WHERE t.organization_id = ${user.organizationId}
+        AND t.status <> 'voided'
+        AND t.created_at >= ${from} AND t.created_at < ${to}
+        ${ids.length ? Prisma.sql`AND ti.product_id IN (${Prisma.join(ids)})` : Prisma.empty}
+        ${await rawScope(req, q.store_id)}
+      GROUP BY t.store_id, s.name, ti.product_id, ti.product_name
+      ORDER BY s.name, qty DESC
+    `;
+
+    res.json(
+      rows
+        .filter((r) => !(q.below_cost && (!showCost || r.below_cost_qty <= 0)))
+        .map((r) => ({
+          store_id: r.store_id,
+          store_name: r.store_name,
+          product_id: r.product_id,
+          product_name: r.product_name,
+          quantity: Number(r.qty),
+          sales: Number(r.sales),
+          ...(showCost && {
+            cost: Number(r.cost),
+            profit: Number(r.sales) - Number(r.cost),
+            sold_below_cost_qty: Number(r.below_cost_qty),
+          }),
+        }))
+    );
+  })
+);
+
+const dateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** Either a named period (what the Analytics screen is showing) or explicit dates. */
+const rangeQuery = z.object({
+  store_id: z.string().uuid().optional(),
+  period: periodSchema.optional(),
+  from: dateKey.optional(),
+  to: dateKey.optional(),
+});
+function rangeOf(q: z.infer<typeof rangeQuery>): { from: Date; to: Date } {
+  if (q.from && q.to) {
+    return { from: dayRangeIn(q.from, env.REPORT_TIMEZONE).start, to: dayRangeIn(q.to, env.REPORT_TIMEZONE).end };
+  }
+  return { from: periodStart(q.period ?? 'monthly'), to: new Date(Date.now() + 86400000) };
+}
+
+/**
+ * Every sale line that went out below cost (net of VAT): which receipt, which
+ * shop, which login, which device, at what price against what cost. Owner-only,
+ * since cost is in it. `product_id` (or `name` for lines with no product id)
+ * narrows it to one product.
+ */
+analyticsRouter.get(
+  '/below-cost-sales',
+  requireCapability('costs.view'),
+  asyncHandler(async (req, res) => {
+    const q = rangeQuery
+      .extend({ product_id: z.string().uuid().optional(), name: z.string().max(200).optional() })
+      .parse(req.query);
+    const user = currentUser(req);
+    const { from, to } = rangeOf(q);
+
+    const rows = await prisma.$queryRaw<
+      {
+        transaction_id: string;
+        receipt_number: string;
+        created_at: Date;
+        store_name: string;
+        cashier_name: string;
+        device_name: string | null;
+        product_name: string;
+        quantity: number;
+        unit_price: number;
+        net_price: number;
+        cost_price: number;
+        loss: number;
+      }[]
+    >`
+      SELECT t.id AS transaction_id, t.receipt_number, t.created_at, s.name AS store_name,
+             t.cashier_name, t.device_name, ti.product_name,
+             ti.quantity::float8 AS quantity,
+             ti.unit_price::float8 AS unit_price,
+             ((ti.line_total - ti.tax_amount) / NULLIF(ti.quantity, 0))::float8 AS net_price,
+             ti.cost_price::float8 AS cost_price,
+             (ti.cost_price * ti.quantity - (ti.line_total - ti.tax_amount))::float8 AS loss
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      JOIN stores s ON s.id = t.store_id
+      WHERE t.organization_id = ${user.organizationId}
+        AND t.status <> 'voided'
+        AND t.transaction_type = 'sale'
+        AND t.created_at >= ${from} AND t.created_at < ${to}
+        AND ti.line_total - ti.tax_amount < ti.cost_price * ti.quantity
+        ${q.product_id ? Prisma.sql`AND ti.product_id = ${q.product_id}` : q.name ? Prisma.sql`AND ti.product_name = ${q.name}` : Prisma.empty}
+        ${await rawScope(req, q.store_id)}
+      ORDER BY t.created_at DESC
+      LIMIT 500
+    `;
+    res.json(rows);
+  })
+);
+
+/**
+ * One product, per shop: units sold, takings, average price, and every distinct
+ * price it actually sold at (price ladder). Matches by product id, or by name
+ * for lines whose product has since been deleted.
+ */
+analyticsRouter.get(
+  '/product-breakdown',
+  asyncHandler(async (req, res) => {
+    const q = rangeQuery
+      .extend({ product_id: z.string().uuid().optional(), name: z.string().max(200).optional() })
+      .parse(req.query);
+    if (!q.product_id && !q.name) throw badRequest('Say which product.');
+    const user = currentUser(req);
+    const { from, to } = rangeOf(q);
+
+    const rows = await prisma.$queryRaw<
+      { store_id: string; store_name: string; unit_price: number; qty: number; sales: number }[]
+    >`
+      SELECT t.store_id, s.name AS store_name, ti.unit_price::float8 AS unit_price,
+             SUM(ti.quantity)::float8 AS qty, SUM(ti.line_total)::float8 AS sales
+      FROM transaction_items ti
+      JOIN transactions t ON t.id = ti.transaction_id
+      JOIN stores s ON s.id = t.store_id
+      WHERE t.organization_id = ${user.organizationId}
+        AND t.status <> 'voided'
+        AND t.created_at >= ${from} AND t.created_at < ${to}
+        AND ${q.product_id ? Prisma.sql`ti.product_id = ${q.product_id}` : Prisma.sql`ti.product_name = ${q.name}`}
+        ${await rawScope(req, q.store_id)}
+      GROUP BY t.store_id, s.name, ti.unit_price
+      ORDER BY s.name, qty DESC
+    `;
+
+    const byStore = new Map<string, { store_id: string; store_name: string; quantity: number; sales: number; prices: { unit_price: number; quantity: number }[] }>();
+    for (const r of rows) {
+      const e = byStore.get(r.store_id) ?? { store_id: r.store_id, store_name: r.store_name, quantity: 0, sales: 0, prices: [] };
+      e.quantity += Number(r.qty);
+      e.sales += Number(r.sales);
+      e.prices.push({ unit_price: Number(r.unit_price), quantity: Number(r.qty) });
+      byStore.set(r.store_id, e);
+    }
+    res.json(
+      [...byStore.values()].map((e) => ({ ...e, avg_price: e.quantity ? e.sales / e.quantity : 0 }))
     );
   })
 );

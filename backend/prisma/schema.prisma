@@ -354,6 +354,8 @@ model Transaction {
   total           Decimal           @default(0) @db.Decimal(12, 2)
   cashierId       String?           @map("cashier_id")
   cashierName     String            @default("") @map("cashier_name")
+  /// The handset the sale was rung up on (from its device session); null on sales older than this column.
+  deviceName      String?           @map("device_name")
   customerName    String?           @map("customer_name")
   customerPhone   String?           @map("customer_phone")
   notes           String            @default("")

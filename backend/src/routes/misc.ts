@@ -19,6 +19,7 @@ import { nextAuditAction } from '../lib/auditContext.js';
 import { revokeAllSessions } from './devices.js';
 import { dayRangeIn } from '../lib/time.js';
 import { env } from '../env.js';
+import { nextReceiptNumber } from '../services/sales.js';
 
 /* ------------------------------------------------------------------- users */
 
@@ -335,7 +336,11 @@ transfersRouter.post(
     }
 
     const transfer = await prisma.$transaction(async (tx) => {
-      const reference = `TRF-${Date.now().toString(36).toUpperCase()}`;
+      const sender = await tx.store.findUniqueOrThrow({
+        where: { id: body.from_store_id },
+        select: { name: true },
+      });
+      const reference = await nextReceiptNumber(tx, body.from_store_id, sender.name, new Date(), 'transfer');
 
       const created = await tx.transfer.create({
         data: {
@@ -437,7 +442,7 @@ const MOVEMENT_WORDS: Record<string, string> = {
  */
 transfersRouter.post(
   '/:id/revoke',
-  requireCapability('transfers.create'),
+  requireCapability('transfers.revoke'),
   asyncHandler(async (req, res) => {
     const user = currentUser(req);
 
