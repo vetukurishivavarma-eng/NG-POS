@@ -24,6 +24,7 @@ import { useStoreSelection } from '../src/store/storeSelection';
 import { startConnectivityWatcher, useSync } from '../src/db/sync';
 import { usePrinter } from '../src/printing/printer';
 import { useReminder } from '../src/notifications/reminder';
+import { useBelowCostAlerts } from '../src/notifications/belowCostAlerts';
 import { LOCK_AFTER_BACKGROUND_MS, useScreenLock } from '../src/store/screenLock';
 import { colors } from '../src/theme';
 import { Loading } from '../src/ui/components';
@@ -68,6 +69,7 @@ export default function RootLayout() {
   const locked = useScreenLock((s) => s.locked);
   const segments = useSegments();
   const updateBlocking = useAppUpdate(updateGateVisible);
+  useBelowCostAlerts();
   const lastResponse = Notifications.useLastNotificationResponse();
   const handledResponse = useRef<string | null>(null);
   // Nothing may render until the saved server address is loaded, or the first

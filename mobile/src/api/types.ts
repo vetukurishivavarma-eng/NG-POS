@@ -138,6 +138,8 @@ export interface Transaction {
   payments: Payment[];
   cashier_id: string;
   cashier_name: string;
+  /** Handset the sale was rung up on; null for sales older than device tracking. */
+  device_name?: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   notes: string;

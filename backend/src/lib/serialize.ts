@@ -158,6 +158,7 @@ export function serializeTransaction(t: {
   total: Prisma.Decimal;
   cashierId: string | null;
   cashierName: string;
+  deviceName?: string | null;
   customerName: string | null;
   customerPhone: string | null;
   notes: string;
@@ -211,6 +212,7 @@ export function serializeTransaction(t: {
     })),
     cashier_id: t.cashierId,
     cashier_name: t.cashierName,
+    device_name: t.deviceName ?? null,
     customer_name: t.customerName,
     customer_phone: t.customerPhone,
     notes: t.notes,

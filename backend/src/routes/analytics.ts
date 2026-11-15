@@ -396,8 +396,11 @@ const rangeQuery = z.object({
   period: periodSchema.optional(),
   from: dateKey.optional(),
   to: dateKey.optional(),
+  /** ISO timestamp: only sales after this moment (used by the app's below-cost alert). */
+  since: z.string().datetime().optional(),
 });
 function rangeOf(q: z.infer<typeof rangeQuery>): { from: Date; to: Date } {
+  if (q.since) return { from: new Date(q.since), to: new Date(Date.now() + 86400000) };
   if (q.from && q.to) {
     return { from: dayRangeIn(q.from, env.REPORT_TIMEZONE).start, to: dayRangeIn(q.to, env.REPORT_TIMEZONE).end };
   }

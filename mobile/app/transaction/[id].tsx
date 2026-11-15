@@ -101,6 +101,7 @@ export default function TransactionScreen() {
         <View style={styles.card}>
           <Meta icon="clock" label="Date" value={new Date(t.created_at).toLocaleString()} />
           <Meta icon="user" label="Cashier" value={t.cashier_name || '—'} />
+          <Meta icon="file-text" label="Device" value={t.device_name ?? 'Not recorded'} />
           <Meta icon="home" label="Store" value={store.data?.name ?? '—'} />
           {t.customer_name ? <Meta icon="users" label="Customer" value={t.customer_name} /> : null}
           {t.notes ? <Meta icon="file-text" label="Note" value={t.notes} /> : null}
