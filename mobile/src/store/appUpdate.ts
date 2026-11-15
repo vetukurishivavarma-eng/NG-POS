@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import NetInfo from '@react-native-community/netinfo';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
+import * as Notifications from 'expo-notifications';
+import { ensureNotificationPermission } from '../notifications/reminder';
 
 import type { File } from 'expo-file-system';
 
@@ -182,6 +184,25 @@ let staged: { build: number; file: File } | null = null;
  */
 let autoStarted = 0;
 
+const NOTIFIED_KEY = 'ngpos.update.notified';
+
+async function notifyOnce(build: number, version: string): Promise<void> {
+  try {
+    if ((await SecureStore.getItemAsync(NOTIFIED_KEY)) === String(build)) return;
+    if (!(await ensureNotificationPermission())) return;
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'New NG POS update available',
+        body: `Version ${version} is ready. Open the app to update.`,
+      },
+      trigger: null,
+    });
+    await SecureStore.setItemAsync(NOTIFIED_KEY, String(build));
+  } catch {
+    // A missed notification must never break the update check.
+  }
+}
+
 export const useAppUpdate = create<AppUpdateState>((set, get) => ({
   status: 'none',
   release: null,
@@ -224,6 +245,10 @@ export const useAppUpdate = create<AppUpdateState>((set, get) => ({
       // that has just become compulsory must reappear whatever was tapped last
       // time. Only "same build, still optional" keeps its dismissal.
       const sameBuild = get().release?.build === result.latest.build;
+
+      // Tell the person once per release, so it isn't missed if the app is in
+      // the background when the check runs.
+      void notifyOnce(result.latest.build, result.latest.version);
 
       set({
         status: blocked ? 'required' : 'optional',
