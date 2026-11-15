@@ -632,6 +632,10 @@ export interface ProfitPerProductRow extends SalesPerProductRow {
   tax: number;
   /** `sales - tax - cost`. Net of tax and the cost price captured at sale time. */
   profit: number;
+  /** Units on sale lines that went out below cost (refunds excluded). */
+  below_cost_qty?: number;
+  /** What those lines lost in total. */
+  below_cost_loss?: number;
 }
 
 export interface SalesPerBranchRow {

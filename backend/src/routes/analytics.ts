@@ -279,6 +279,8 @@ analyticsRouter.get(
         cost: number;
         tax: number;
         profit: number;
+        below_cost_qty: number;
+        below_cost_loss: number;
       }[]
     >`
       SELECT ti.product_id,
@@ -288,7 +290,11 @@ analyticsRouter.get(
              SUM(ti.line_total)::float8 AS sales,
              SUM(ti.cost_price * ti.quantity)::float8 AS cost,
              SUM(ti.tax_amount)::float8 AS tax,
-             SUM(ti.line_total - ti.tax_amount - (ti.cost_price * ti.quantity))::float8 AS profit
+             SUM(ti.line_total - ti.tax_amount - (ti.cost_price * ti.quantity))::float8 AS profit,
+             SUM(CASE WHEN t.transaction_type = 'sale' AND ti.line_total - ti.tax_amount < ti.cost_price * ti.quantity
+                      THEN ti.quantity ELSE 0 END)::float8 AS below_cost_qty,
+             SUM(CASE WHEN t.transaction_type = 'sale' AND ti.line_total - ti.tax_amount < ti.cost_price * ti.quantity
+                      THEN ti.cost_price * ti.quantity - (ti.line_total - ti.tax_amount) ELSE 0 END)::float8 AS below_cost_loss
       FROM transaction_items ti
       JOIN transactions t ON t.id = ti.transaction_id
       WHERE t.organization_id = ${user.organizationId}
@@ -309,6 +315,8 @@ analyticsRouter.get(
         cost: Number(r.cost),
         tax: Number(r.tax),
         profit: Number(r.profit),
+        below_cost_qty: Number(r.below_cost_qty),
+        below_cost_loss: Number(r.below_cost_loss),
       }))
     );
   })
@@ -355,7 +363,7 @@ analyticsRouter.get(
              SUM(ti.quantity)::float8 AS qty,
              SUM(ti.line_total)::float8 AS sales,
              SUM(ti.cost_price * ti.quantity)::float8 AS cost,
-             SUM(CASE WHEN ti.line_total - ti.tax_amount < ti.cost_price * ti.quantity
+             SUM(CASE WHEN t.transaction_type = 'sale' AND ti.line_total - ti.tax_amount < ti.cost_price * ti.quantity
                       THEN ti.quantity ELSE 0 END)::float8 AS below_cost_qty
       FROM transaction_items ti
       JOIN transactions t ON t.id = ti.transaction_id

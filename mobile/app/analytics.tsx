@@ -681,7 +681,9 @@ function ProfitByProduct({
     period,
   });
   const sorted = [...rows].sort((a, b) => b.profit - a.profit);
-  const losses = sorted.filter((r) => r.profit < 0);
+  // Real below-cost sale lines only. A product whose net profit is negative just
+  // because of a refund (negative quantity) is not "sold below cost".
+  const losses = sorted.filter((r) => (r.below_cost_qty ?? 0) > 0);
   // Best ten by profit, then every loss-making line regardless of where it fell
   // in that ranking — a product sold below cost must never be cut off by a
   // top-N slice, because it is the whole reason to look at this section.
@@ -734,6 +736,8 @@ function ProfitByProduct({
                 row={row}
                 max={max}
                 focused={false}
+                metaText={`${row.below_cost_qty} sold below cost`}
+                valueText={`−${formatKwacha(row.below_cost_loss ?? 0)}`}
                 onPress={() => router.push(belowCostHref(scopeOf(row)))}
               />
             ))}
@@ -755,7 +759,11 @@ function ProductBar({
   max,
   focused,
   onPress,
+  metaText,
+  valueText,
 }: {
+  metaText?: string;
+  valueText?: string;
   rank?: number;
   row: ProfitPerProductRow;
   max: number;
@@ -788,11 +796,11 @@ function ProductBar({
             {row.product_name}
           </Text>
           <Text style={styles.rankedMeta} numberOfLines={1}>
-            {row.quantity} sold · {formatKwacha(row.sales)} takings
+            {metaText ?? `${row.quantity} sold · ${formatKwacha(row.sales)} takings`}
           </Text>
         </View>
-        <Text style={[styles.rankedValue, row.profit < 0 && { color: colors.danger }]}>
-          {formatKwacha(row.profit)}
+        <Text style={[styles.rankedValue, (valueText || row.profit < 0) && { color: colors.danger }]}>
+          {valueText ?? formatKwacha(row.profit)}
         </Text>
       </View>
 
