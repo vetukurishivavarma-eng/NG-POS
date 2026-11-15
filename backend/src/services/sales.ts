@@ -235,14 +235,10 @@ export async function createSale(user: AuthUser, input: SaleInput, deviceName: s
           line.unit_price !== undefined &&
           !new D(line.unit_price).equals(basePrice);
 
-        if (wantsOverride && !mayReprice) {
-          throw badRequest(
-            `${product.name}: only an administrator can change a price at the till. Apply a discount instead.`,
-            'PRICE_LOCKED'
-          );
-        }
-
-        const overriding = wantsOverride && mayReprice;
+        // Anyone may change a price for THIS sale (never below cost). Only a
+        // trusted account (`mayReprice`) may also make it the shop's standing
+        // price; for everyone else `persist_price` is ignored.
+        const overriding = wantsOverride;
         const unitPrice = overriding ? new D(line.unit_price!) : basePrice;
 
         // A price override may never undercut what the item cost to land on
@@ -267,7 +263,7 @@ export async function createSale(user: AuthUser, input: SaleInput, deviceName: s
         // "the price won't change unless there is a prompt to change it". Even
         // then it touches only this store's StorePrice row, never
         // Product.sellingPrice (the org-wide base) or another store's row.
-        if (overriding && line.persist_price) {
+        if (overriding && line.persist_price && mayReprice) {
           await tx.storePrice.upsert({
             where: { storeId_productId: { storeId: store.id, productId: product.id } },
             create: { storeId: store.id, productId: product.id, price: unitPrice },

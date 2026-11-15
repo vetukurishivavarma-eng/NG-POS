@@ -23,19 +23,28 @@ describe('regressions', () => {
   const sell = (token: string, body: Record<string, unknown>) =>
     request(app).post('/api/transactions').set('Authorization', `Bearer ${token}`).send(body);
 
-  describe('the till price is locked; only an admin reprices, and only on a prompt', () => {
-    it('refuses a cashier who changes the line price', async () => {
+  describe('any till may reprice one sale; only an admin may change the standing price', () => {
+    it('lets a cashier change the price for one sale only, never the standing price', async () => {
       const product = world.products[0]!;
 
       const res = await sell(world.tokens.cashier, {
         store_id: world.storeId,
         client_reference: clientRef('cashier-reprice'),
-        items: [{ product_id: product.id, quantity: 1, unit_price: product.price + 20 }],
+        items: [{ product_id: product.id, quantity: 1, unit_price: product.price + 20, persist_price: true }],
         payments: [{ method: 'cash', amount: product.price + 20 }],
       });
 
-      expect(res.status).toBe(400);
-      expect(res.body.code).toBe('PRICE_LOCKED');
+      expect(res.status).toBe(201);
+      expect(res.body.items[0].unit_price).toBe(product.price + 20);
+
+      // persist_price is ignored for a cashier: the next sale is back at the standing price.
+      const next = await sell(world.tokens.cashier, {
+        store_id: world.storeId,
+        client_reference: clientRef('cashier-reprice-2'),
+        items: [{ product_id: product.id, quantity: 1 }],
+        payments: [{ method: 'cash', amount: product.price }],
+      });
+      expect(next.body.items[0].unit_price).toBe(product.price);
     });
 
     it('lets a cashier sell at the standing price even though the app echoes unit_price', async () => {

@@ -45,7 +45,10 @@ export function CartPanel({
   // The till price is locked. Only an account trusted with pricing (admin, and
   // warehouse staff — the same set `costs.view` gates) may change a line price,
   // and only through a prompt. Everyone else uses the discount field below.
-  const canEditPrice = useCan('costs.view');
+  // Everyone may change a price for one sale; only `costs.view` accounts may also
+  // make it the shop's standing price.
+  const canEditPrice = true;
+  const canPersistPrice = useCan('costs.view');
   const storeName = useStoreSelection((s) => s.selected?.name);
   const clearCart = useCart((s) => s.clear);
   const customerName = useCart((s) => s.customerName);
@@ -102,6 +105,7 @@ export function CartPanel({
             key={line.product.id}
             line={line}
             canEditPrice={canEditPrice}
+            canPersistPrice={canPersistPrice}
             storeName={storeName}
             onQuantity={(next) => setQuantity(line.product.id, next)}
             onPrice={(next, persist) => setPriceOverride(line.product.id, next, persist)}
@@ -193,6 +197,7 @@ export function CartPanel({
 function CartLineRow({
   line,
   canEditPrice,
+  canPersistPrice,
   storeName,
   onQuantity,
   onPrice,
@@ -201,6 +206,7 @@ function CartLineRow({
 }: {
   line: CartLine;
   canEditPrice: boolean;
+  canPersistPrice: boolean;
   storeName?: string;
   onQuantity: (next: number) => void;
   onPrice: (next: number | undefined, persist: boolean) => void;
@@ -234,10 +240,14 @@ function CartLineRow({
       [
         { text: 'Cancel', style: 'cancel', onPress: resetDraft },
         { text: 'This sale only', onPress: () => onPrice(parsed, false) },
-        {
-          text: `Update ${storeName ? `${storeName}'s` : 'the shop'} price`,
-          onPress: () => onPrice(parsed, true),
-        },
+        ...(canPersistPrice
+          ? [
+              {
+                text: `Update ${storeName ? `${storeName}'s` : 'the shop'} price`,
+                onPress: () => onPrice(parsed, true),
+              },
+            ]
+          : []),
       ]
     );
   };
