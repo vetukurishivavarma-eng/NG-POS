@@ -10,6 +10,7 @@ import { errorMessage } from '../src/api/client';
 import { useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
 import { colors, formatKwacha, radius, spacing } from '../src/theme';
+import { DateField, MultiSelectField } from '../src/ui/pickers';
 import { Badge, Card, EmptyState, Loading, SectionLabel, Select } from '../src/ui/components';
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -101,12 +102,10 @@ export default function ProductSalesScreen() {
         />
         <SectionLabel>Dates</SectionLabel>
         <Select value={preset} onChange={choosePreset} options={PRESETS} />
-        {preset === 'custom' ? (
-          <View style={styles.row}>
-            <TextInput style={styles.input} value={from} onChangeText={setFrom} placeholder="From YYYY-MM-DD" />
-            <TextInput style={styles.input} value={to} onChangeText={setTo} placeholder="To YYYY-MM-DD" />
-          </View>
-        ) : null}
+        <View style={styles.row}>
+          <DateField label="From" value={from} max={to} onChange={(v) => { setFrom(v); setPreset('custom'); }} />
+          <DateField label="To" value={to} max={iso(new Date())} onChange={(v) => { setTo(v); setPreset('custom'); }} />
+        </View>
         {!valid ? <Text style={styles.err}>Enter dates as YYYY-MM-DD, from on or before to.</Text> : null}
 
         <View style={styles.row}>
@@ -115,21 +114,13 @@ export default function ProductSalesScreen() {
         </View>
 
         {names.length ? (
-          <>
-            <SectionLabel>{picked.size ? `${picked.size} product(s) selected` : 'All products'}</SectionLabel>
-            <View style={styles.chips}>
-              {picked.size ? (
-                <Pressable onPress={() => setPicked(new Set())} style={[styles.chip, styles.chipOn]}>
-                  <Text style={styles.chipOnText}>Clear · show all</Text>
-                </Pressable>
-              ) : null}
-              {names.map((n) => (
-                <Pressable key={n} onPress={() => toggle(n)} style={[styles.chip, picked.has(n) && styles.chipOn]}>
-                  <Text style={picked.has(n) ? styles.chipOnText : styles.chipText}>{n}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </>
+          <MultiSelectField
+            label="Products"
+            allLabel="All products"
+            options={names}
+            selected={picked}
+            onChange={setPicked}
+          />
         ) : null}
 
         {rows.isLoading ? <Loading label="Loading sales" /> : null}
