@@ -25,6 +25,7 @@ import { startConnectivityWatcher, useSync } from '../src/db/sync';
 import { usePrinter } from '../src/printing/printer';
 import { useReminder } from '../src/notifications/reminder';
 import { useBelowCostAlerts } from '../src/notifications/belowCostAlerts';
+import { registerUpdateTask } from '../src/notifications/updateTask';
 import { LOCK_AFTER_BACKGROUND_MS, useScreenLock } from '../src/store/screenLock';
 import { colors } from '../src/theme';
 import { Loading } from '../src/ui/components';
@@ -96,6 +97,7 @@ export default function RootLayout() {
     void restorePrinter();
     void restoreReminder();
     void restoreLock();
+    void registerUpdateTask();
   }, [restore, restoreStore, restorePrinter, restoreReminder, restoreLock]);
 
   /**

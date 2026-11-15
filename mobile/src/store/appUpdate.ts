@@ -186,14 +186,14 @@ let autoStarted = 0;
 
 const NOTIFIED_KEY = 'ngpos.update.notified';
 
-async function notifyOnce(build: number, version: string): Promise<void> {
+export async function notifyUpdateOnce(build: number, version: string): Promise<void> {
   try {
     if ((await SecureStore.getItemAsync(NOTIFIED_KEY)) === String(build)) return;
     if (!(await ensureNotificationPermission())) return;
     await Notifications.scheduleNotificationAsync({
       content: {
         title: 'New NG POS update available',
-        body: `Version ${version} is ready. Open the app to update.`,
+        body: `Version ${version} is ready. Tap to update now.`,
       },
       trigger: null,
     });
@@ -248,7 +248,7 @@ export const useAppUpdate = create<AppUpdateState>((set, get) => ({
 
       // Tell the person once per release, so it isn't missed if the app is in
       // the background when the check runs.
-      void notifyOnce(result.latest.build, result.latest.version);
+      void notifyUpdateOnce(result.latest.build, result.latest.version);
 
       set({
         status: blocked ? 'required' : 'optional',
