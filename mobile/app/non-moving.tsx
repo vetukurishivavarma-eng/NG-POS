@@ -77,6 +77,7 @@ export default function NonMovingScreen() {
             { label: 'Brand' },
             { label: 'Qty', align: 'right' },
             { label: 'Last sold' },
+            { label: 'In shop since' },
             ...(showValue ? [{ label: 'Value at cost', align: 'right' as const }] : []),
           ],
           rows: shown.map((r) => [
@@ -85,9 +86,10 @@ export default function NonMovingScreen() {
             r.brand ?? '',
             String(r.quantity),
             lastSold(r.last_sold),
+            r.first_seen ? r.first_seen.slice(0, 10) : '',
             ...(showValue ? [formatKwacha(r.value ?? 0)] : []),
           ]),
-          ...(showValue ? { totals: ['Total', '', '', '', '', formatKwacha(total)] } : {}),
+          ...(showValue ? { totals: ['Total', '', '', '', '', '', formatKwacha(total)] } : {}),
           empty: 'Nothing is sitting unsold.',
         },
         `Non-moving-${shopLabel}-${months}m`
@@ -115,7 +117,7 @@ export default function NonMovingScreen() {
       >
         <Text style={styles.lead}>
           In stock but not sold in the last {months} months — return it, or move it to a shop where it sells.
-          Lines that arrived inside the window are left out.
+          "In shop since" shows when it first arrived there.
         </Text>
         <Select label="Shop" value={storeId} options={shopOptions} onChange={setStoreId} />
         <View style={styles.chips}>
@@ -152,6 +154,7 @@ export default function NonMovingScreen() {
                   <Text style={styles.sub}>
                     {r.brand ? `${r.brand} · ` : ''}
                     Last sold: {lastSold(r.last_sold)}
+                    {r.first_seen ? ` · In shop since ${r.first_seen.slice(0, 10)}` : ''}
                     {r.value !== undefined ? ` · ${formatKwacha(r.value)}` : ''}
                   </Text>
                 </View>

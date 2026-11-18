@@ -636,6 +636,8 @@ export interface NonMovingRow {
   quantity: number;
   /** ISO time of the last sale at this shop; null = never sold here. */
   last_sold: string | null;
+  /** ISO time of its first stock movement at this shop (when it arrived). */
+  first_seen: string | null;
   /** Stock at cost — only for accounts that may see buying prices. */
   value?: number;
 }
