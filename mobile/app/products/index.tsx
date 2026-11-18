@@ -3,10 +3,11 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, Vie
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
 
 import { products as productsApi, stores as storesApi } from '../../src/api/endpoints';
-import { PRODUCT_CATEGORIES } from '../../src/api/categories';
+import { PRODUCT_CATEGORIES, normaliseCategory } from '../../src/api/categories';
+import { MultiSelectField } from '../../src/ui/pickers';
 import { useCan } from '../../src/store/auth';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/theme';
@@ -17,7 +18,9 @@ const SEARCH_DEBOUNCE_MS = 300;
 const PAGE_LIMIT = 300;
 
 /** Stands in for "no category yet" in the filter, which is not a category name. */
-const UNFILED = '__unfiled__';
+const UNFILED = 'Unfiled';
+
+type Row = (Product | ProductWithStock) & { shopId?: string; shopName?: string };
 
 export default function ProductsScreen() {
   const layout = useLayout();
@@ -25,13 +28,14 @@ export default function ProductsScreen() {
 
   const [search, setSearch] = useState('');
   const [term, setTerm] = useState('');
-  const [brand, setBrand] = useState<string | null>(null);
-  /** A category name, the UNFILED sentinel, or null for "all". */
-  const [category, setCategory] = useState<string | null>(null);
+  /** Empty = all. */
+  const [brandSet, setBrandSet] = useState<Set<string>>(new Set());
+  /** Category names and/or the UNFILED entry; empty = all. */
+  const [categorySet, setCategorySet] = useState<Set<string>>(new Set());
   /** Off by default: a deactivated product no longer inflates "N products". */
   const [includeInactive, setIncludeInactive] = useState(false);
-  /** null = All Shops (the org-wide master list, today's only mode). */
-  const [storeId, setStoreId] = useState<string | null>(null);
+  /** Shop names ticked; empty = All Shops (the org-wide master list). */
+  const [shopSet, setShopSet] = useState<Set<string>>(new Set());
 
   // Search runs on the server so it reaches the whole catalogue, but only after
   // typing settles — a request per keystroke is what kills a rural link.
@@ -42,48 +46,68 @@ export default function ProductsScreen() {
 
   const storesQuery = useQuery({ queryKey: ['stores', 'list'], queryFn: () => storesApi.list() });
 
-  // `with-stock` has no search/brand/category/inactive params of its own — it's
-  // one store's whole active catalogue with that store's own price and stock
-  // baked in, which is the point: browsing "in a shop" should show exactly
-  // what that shop would sell at, not the master price. The same filters are
-  // then applied client-side below so the toolbar behaves the same either way.
+  const shopIds = useMemo(
+    () => (storesQuery.data ?? []).filter((st) => shopSet.has(st.name)),
+    [storesQuery.data, shopSet]
+  );
+  const brandParam = [...brandSet].join('|');
+  const headParam = [...categorySet].filter((c) => c !== UNFILED).join('|');
+
+  // The master list filters on the server ('|' = any of several). A shop's
+  // list is `with-stock` — that shop's own price and stock — filtered here.
   const query = useQuery({
-    queryKey: ['products', 'list', term, brand, category, includeInactive, storeId],
+    queryKey: ['products', 'list', term, brandParam, headParam, categorySet.has(UNFILED), includeInactive],
     queryFn: () =>
-      storeId
-        ? productsApi.withStock(storeId)
-        : productsApi.list({
-            limit: PAGE_LIMIT,
-            ...(term ? { search: term } : {}),
-            ...(brand ? { brand } : {}),
-            ...(category === UNFILED
-              ? { uncategorized: true }
-              : category
-                ? { category }
-                : {}),
-            include_inactive: includeInactive,
-          }),
+      productsApi.list({
+        limit: PAGE_LIMIT,
+        ...(term ? { search: term } : {}),
+        ...(brandParam ? { brand: brandParam } : {}),
+        ...(headParam ? { category: headParam } : {}),
+        ...(categorySet.has(UNFILED) ? { uncategorized: true } : {}),
+        include_inactive: includeInactive,
+      }),
+    enabled: shopIds.length === 0,
     // Keeps the previous rows on screen while a new filter loads, so the list
     // doesn't blink back to a spinner on every debounced keystroke.
     placeholderData: keepPreviousData,
   });
+  const shopQueries = useQueries({
+    queries: shopIds.map((st) => ({
+      queryKey: ['products', 'with-stock', st.id],
+      queryFn: () => productsApi.withStock(st.id),
+    })),
+  });
+  const shopStamp = shopQueries.map((q) => q.dataUpdatedAt).join(',');
 
-  const filteredRows = useMemo(() => {
-    const source = query.data ?? [];
-    if (!storeId) return source;
+  const filteredRows = useMemo<Row[]>(() => {
+    if (!shopIds.length) return query.data ?? [];
     const needle = term.trim().toLowerCase();
-    return source.filter((p) => {
-      if (brand && p.brand !== brand) return false;
-      if (category === UNFILED && p.category) return false;
-      if (category && category !== UNFILED && p.category !== category) return false;
-      if (!needle) return true;
-      return (
-        p.name.toLowerCase().includes(needle) ||
-        p.sku.toLowerCase().includes(needle) ||
-        (p.barcode ?? '').toLowerCase().includes(needle)
-      );
-    });
-  }, [query.data, storeId, term, brand, category]);
+    return shopIds.flatMap((st, i) =>
+      (shopQueries[i]?.data ?? [])
+        .filter((p) => {
+          if (brandSet.size && !brandSet.has(p.brand ?? '')) return false;
+          if (categorySet.size) {
+            const head = normaliseCategory(p.category);
+            if (!(head ? categorySet.has(head) : categorySet.has(UNFILED))) return false;
+          }
+          if (!needle) return true;
+          return (
+            p.name.toLowerCase().includes(needle) ||
+            p.sku.toLowerCase().includes(needle) ||
+            (p.barcode ?? '').toLowerCase().includes(needle)
+          );
+        })
+        .map((p) => ({ ...p, shopId: st.id, shopName: st.name }))
+    );
+    // shopQueries is a new array every render; shopStamp is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query.data, shopIds, term, brandSet, categorySet, shopStamp]);
+  const loading = shopIds.length ? shopQueries.some((q) => q.isLoading) : query.isLoading;
+  const failed = shopIds.length ? shopQueries.some((q) => q.isError) : query.isError;
+  const refetchAll = () => {
+    if (shopIds.length) shopQueries.forEach((q) => void q.refetch());
+    else void query.refetch();
+  };
 
   // Nested under ['products'] so a write on the edit screen refreshes the brand
   // chips too — a new brand appears the moment its first product is saved.
@@ -118,6 +142,11 @@ export default function ProductsScreen() {
     [categories.data]
   );
   const unfiled = categories.data?.uncategorized ?? 0;
+  const categoryNames = useMemo(
+    () => [...(unfiled > 0 ? [UNFILED] : []), ...categoryOptions.map((c) => c.name)],
+    [categoryOptions, unfiled]
+  );
+  const filtering = Boolean(term || brandSet.size || categorySet.size);
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -146,24 +175,16 @@ export default function ProductsScreen() {
             Add/Edit shop-wise: opening a product from here carries the shop
             through to its screen. */}
         {(storesQuery.data ?? []).length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.brandRow}
-          >
-            <BrandChip label="All Shops" active={storeId === null} onPress={() => setStoreId(null)} />
-            {(storesQuery.data ?? []).map((s) => (
-              <BrandChip
-                key={s.id}
-                label={s.name}
-                active={storeId === s.id}
-                onPress={() => setStoreId(storeId === s.id ? null : s.id)}
-              />
-            ))}
-          </ScrollView>
+          <MultiSelectField
+            label="Shops"
+            allLabel="All Shops (master list)"
+            options={(storesQuery.data ?? []).map((st) => st.name)}
+            selected={shopSet}
+            onChange={setShopSet}
+          />
         ) : null}
 
-        {!storeId ? (
+        {!shopIds.length ? (
           <BrandChip
             label={includeInactive ? 'Showing inactive' : 'Include inactive'}
             active={includeInactive}
@@ -172,58 +193,27 @@ export default function ProductsScreen() {
         ) : null}
 
         {brandOptions.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.brandRow}
-          >
-            <BrandChip label="All brands" active={brand === null} onPress={() => setBrand(null)} />
-            {brandOptions.map((b) => (
-              <BrandChip
-                key={b}
-                label={b}
-                active={brand === b}
-                onPress={() => setBrand(brand === b ? null : b)}
-              />
-            ))}
-          </ScrollView>
+          <MultiSelectField
+            label="Brands"
+            allLabel="All brands"
+            options={brandOptions}
+            selected={brandSet}
+            onChange={setBrandSet}
+          />
         ) : null}
 
-        {/* Categories sit under the companies so the two filters read as a pair;
-            they combine on the server, so "Syngenta + Herbicides" works. */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.brandRow}
-        >
-          <BrandChip
-            label="All categories"
-            active={category === null}
-            onPress={() => setCategory(null)}
-          />
-          {/* The backlog, first and only while it exists — this is the chip that
-              says how much of the catalogue still has to be filed. */}
-          {unfiled > 0 ? (
-            <BrandChip
-              label={`Unfiled ${unfiled}`}
-              active={category === UNFILED}
-              onPress={() => setCategory(category === UNFILED ? null : UNFILED)}
-            />
-          ) : null}
-          {categoryOptions.map((c) => (
-            <BrandChip
-              key={c.name}
-              label={c.count === null ? c.name : `${c.name} ${c.count}`}
-              active={category === c.name}
-              onPress={() => setCategory(category === c.name ? null : c.name)}
-            />
-          ))}
-        </ScrollView>
+        <MultiSelectField
+          label="Categories"
+          allLabel="All categories"
+          options={categoryNames}
+          selected={categorySet}
+          onChange={setCategorySet}
+        />
       </View>
 
-      {query.isLoading ? (
+      {loading ? (
         <Loading label="Loading catalogue" />
-      ) : query.isError ? (
+      ) : failed ? (
         <EmptyState
           icon="cloud-off"
           title="Couldn't load the catalogue"
@@ -233,14 +223,14 @@ export default function ProductsScreen() {
               label="Retry"
               icon="refresh-cw"
               variant="secondary"
-              onPress={() => void query.refetch()}
+              onPress={refetchAll}
             />
           }
         />
       ) : (
         <FlashList
           data={rows}
-          keyExtractor={(p) => p.id}
+          keyExtractor={(p) => `${p.shopId ?? ''}-${p.id}`}
           contentContainerStyle={{
             paddingHorizontal: layout.gutter,
             paddingBottom: spacing.lg,
@@ -249,7 +239,7 @@ export default function ProductsScreen() {
             <RefreshControl
               refreshing={query.isRefetching}
               onRefresh={() => {
-                void query.refetch();
+                refetchAll();
                 void brands.refetch();
               }}
               tintColor={colors.primary}
@@ -260,10 +250,7 @@ export default function ProductsScreen() {
               <View style={styles.countRow}>
                 <Text style={styles.countText}>
                   {rows.length} product{rows.length === 1 ? '' : 's'}
-                  {brand ? ` · ${brand}` : ''}
-                  {storeId
-                    ? ` · ${storesQuery.data?.find((s) => s.id === storeId)?.name ?? 'this shop'}`
-                    : ''}
+                  {shopIds.length ? ` · ${shopIds.map((st) => st.name).join(', ')}` : ''}
                 </Text>
                 {inactiveCount > 0 ? (
                   <Text style={styles.countMuted}>{inactiveCount} inactive</Text>
@@ -274,14 +261,14 @@ export default function ProductsScreen() {
           ListEmptyComponent={
             <EmptyState
               icon="package"
-              title={term || brand ? 'Nothing matches' : 'No products yet'}
+              title={filtering ? 'Nothing matches' : 'No products yet'}
               hint={
-                term || brand
-                  ? 'Try a shorter search, or clear the brand filter.'
+                filtering
+                  ? 'Try a shorter search, or remove a filter.'
                   : 'Products added here appear on the till and in stock counts.'
               }
               action={
-                canWrite && !term && !brand ? (
+                canWrite && !filtering ? (
                   <Button
                     label="New Product"
                     icon="plus"
@@ -291,7 +278,9 @@ export default function ProductsScreen() {
               }
             />
           }
-          renderItem={({ item }) => <ProductRow product={item} storeId={storeId} />}
+          renderItem={({ item }) => (
+            <ProductRow product={item} storeId={item.shopId ?? null} showShop={shopIds.length > 1} />
+          )}
         />
       )}
 
@@ -309,9 +298,9 @@ export default function ProductsScreen() {
   );
 }
 
-function ProductRow({ product, storeId }: { product: Product | ProductWithStock; storeId: string | null }) {
+function ProductRow({ product, storeId, showShop }: { product: Row; storeId: string | null; showShop: boolean }) {
   const inactive = !product.is_active;
-  const meta = [product.sku, product.brand].filter(Boolean).join('  ·  ');
+  const meta = [showShop ? product.shopName : null, product.sku, product.brand].filter(Boolean).join('  ·  ');
 
   return (
     <Pressable

@@ -9,6 +9,7 @@ import { useAuth, useCan } from '../src/store/auth';
 import { placeLabel, warehouseFirst } from '../src/store/place';
 import { shareStatementPdf } from '../src/printing/print';
 import { useLayout } from '../src/ui/responsive';
+import { MultiSelectField } from '../src/ui/pickers';
 import { colors, font, formatKwacha, radius, spacing } from '../src/theme';
 import { Button, Card, EmptyState, Loading, Select } from '../src/ui/components';
 
@@ -25,7 +26,7 @@ export default function NonMovingScreen() {
   const allowed = useCan('purchases.write');
   const [months, setMonths] = useState<number>(3);
   const [storeId, setStoreId] = useState('');
-  const [brand, setBrand] = useState('');
+  const [brands, setBrands] = useState<Set<string>>(new Set());
   const [sharing, setSharing] = useState(false);
 
   const shops = useQuery({ queryKey: ['stores'], queryFn: () => storesApi.list(), enabled: allowed });
@@ -44,19 +45,14 @@ export default function NonMovingScreen() {
       ...warehouseFirst(mine).map((s) => ({ value: s.id, label: placeLabel(s) })),
     ];
   }, [shops.data, user]);
-  const brandOptions = useMemo(
-    () => [
-      { value: '', label: 'All brands' },
-      ...[...new Set((query.data ?? []).map((r) => r.brand).filter((b): b is string => Boolean(b)))]
-        .sort()
-        .map((b) => ({ value: b, label: b })),
-    ],
+  const brandNames = useMemo(
+    () => [...new Set((query.data ?? []).map((r) => r.brand).filter((b): b is string => Boolean(b)))].sort(),
     [query.data]
   );
 
   const shown = useMemo(
-    () => (query.data ?? []).filter((r) => !brand || r.brand === brand),
-    [query.data, brand]
+    () => (query.data ?? []).filter((r) => !brands.size || brands.has(r.brand ?? '')),
+    [query.data, brands]
   );
   const byShop = useMemo(() => {
     const m = new Map<string, typeof shown>();
@@ -73,7 +69,7 @@ export default function NonMovingScreen() {
       await shareStatementPdf(
         {
           title: 'Non-moving stock',
-          subject: brand ? `${shopLabel} — ${brand}` : shopLabel,
+          subject: brands.size ? `${shopLabel} — ${[...brands].join(', ')}` : shopLabel,
           meta: [`No sale in the last ${months} months`, `Prepared by ${user?.full_name ?? 'Unknown'}`],
           columns: [
             { label: 'Shop' },
@@ -129,8 +125,8 @@ export default function NonMovingScreen() {
             </Pressable>
           ))}
         </View>
-        {brandOptions.length > 1 ? (
-          <Select label="Brand" value={brand} options={brandOptions} onChange={setBrand} />
+        {brandNames.length > 1 ? (
+          <MultiSelectField label="Brands" allLabel="All brands" options={brandNames} selected={brands} onChange={setBrands} />
         ) : null}
 
         {query.isLoading ? <Loading label="Checking shelves" /> : null}

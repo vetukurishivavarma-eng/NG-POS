@@ -7,8 +7,9 @@ import { useStoreSelection } from '../../src/store/storeSelection';
 import { useCan } from '../../src/store/auth';
 import { useCatalogue, filterCatalogue } from '../../src/hooks/useCatalogue';
 import { useLayout } from '../../src/ui/responsive';
+import { MultiSelectField } from '../../src/ui/pickers';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/theme';
-import { Badge, EmptyState, Icon, Loading, SectionLabel, Select, Subtitle, Title } from '../../src/ui/components';
+import { Badge, EmptyState, Icon, Loading, SectionLabel, Subtitle, Title } from '../../src/ui/components';
 
 type Filter = 'all' | 'in' | 'low' | 'out';
 
@@ -18,21 +19,19 @@ export default function StockScreen() {
   const showCosts = useCan('costs.view');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [brand, setBrand] = useState('');
+  const [brands, setBrands] = useState<Set<string>>(new Set());
 
   const { data, isLoading, refetch, isRefetching } = useCatalogue(store?.id ?? null);
   const allItems = data?.items ?? [];
-  const brandOptions = useMemo(
-    () => [
-      { value: '', label: 'All brands' },
-      ...[...new Set(allItems.map((p) => p.brand).filter((b): b is string => Boolean(b)))]
-        .sort()
-        .map((b) => ({ value: b, label: b })),
-    ],
+  const brandNames = useMemo(
+    () => [...new Set(allItems.map((p) => p.brand).filter((b): b is string => Boolean(b)))].sort(),
     [allItems]
   );
   // The brand narrows the counts and the stock value too, so the cards read as that brand's stock.
-  const items = useMemo(() => (brand ? allItems.filter((p) => p.brand === brand) : allItems), [allItems, brand]);
+  const items = useMemo(
+    () => (brands.size ? allItems.filter((p) => brands.has(p.brand ?? '')) : allItems),
+    [allItems, brands]
+  );
 
   const summary = useMemo(() => {
     let inStock = 0;
@@ -128,9 +127,9 @@ export default function StockScreen() {
         />
       </View>
 
-      {brandOptions.length > 1 ? (
-        <View style={{ marginHorizontal: layout.gutter }}>
-          <Select value={brand} options={brandOptions} onChange={setBrand} />
+      {brandNames.length > 1 ? (
+        <View style={{ marginHorizontal: layout.gutter, marginTop: spacing.sm }}>
+          <MultiSelectField label="Brands" allLabel="All brands" options={brandNames} selected={brands} onChange={setBrands} />
         </View>
       ) : null}
 

@@ -113,33 +113,29 @@ productsRouter.get(
     const q = listQuery.parse(req.query);
     const organizationId = currentUser(req).organizationId;
 
+    // Several brands / categories may be ticked at once, sent '|'-separated
+    // (a comma can appear inside a company name).
+    const brands = (q.brand ?? '').split('|').map((b) => b.trim()).filter(Boolean);
+    const heads = (q.category ?? '').split('|').map((c) => normaliseCategory(c.trim())).filter(Boolean);
+
     // One extra query, and only when a category filter is actually on.
-    const stored = q.category || q.uncategorized ? await storedCategories(organizationId) : [];
-    const head = q.category ? normaliseCategory(q.category) : null;
+    const stored = heads.length || q.uncategorized ? await storedCategories(organizationId) : [];
+    // A ticked head and "Unfiled" together mean either one, so they share one OR.
+    const categoryOr = [
+      ...(heads.length ? [{ category: { in: stored.filter((c) => heads.includes(normaliseCategory(c))) } }] : []),
+      // "Unfiled" means the same here as it does in the counts: never set, or
+      // set to something the list no longer recognises.
+      ...(q.uncategorized
+        ? [{ category: null }, { category: '' }, { category: { in: stored.filter((c) => !normaliseCategory(c)) } }]
+        : []),
+    ];
 
     const products = await prisma.product.findMany({
       where: {
         organizationId,
         ...(q.include_inactive ? {} : { isActive: true }),
-        ...(q.brand ? { brand: q.brand } : {}),
-        ...(q.category
-          ? { category: { in: stored.filter((c) => normaliseCategory(c) === head) } }
-          : {}),
-        // "Unfiled" means the same here as it does in the counts: never set, or
-        // set to something the list no longer recognises.
-        ...(q.uncategorized
-          ? {
-              AND: [
-                {
-                  OR: [
-                    { category: null },
-                    { category: '' },
-                    { category: { in: stored.filter((c) => !normaliseCategory(c)) } },
-                  ],
-                },
-              ],
-            }
-          : {}),
+        ...(brands.length ? { brand: { in: brands } } : {}),
+        ...(categoryOr.length ? { AND: [{ OR: categoryOr }] } : {}),
         ...(q.search
           ? {
               OR: [

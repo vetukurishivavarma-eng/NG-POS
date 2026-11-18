@@ -12,6 +12,7 @@ import { useStoreSelection } from '../src/store/storeSelection';
 import { useQuery } from '@tanstack/react-query';
 import { shareOrderReportPdf } from '../src/printing/print';
 import { useLayout } from '../src/ui/responsive';
+import { MultiSelectField } from '../src/ui/pickers';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../src/theme';
 import { Button, EmptyState, Icon, Loading, Select } from '../src/ui/components';
 
@@ -27,7 +28,7 @@ export default function ReorderScreen() {
   const [months, setMonths] = useState<number>(1);
   const [scope, setScope] = useState<string>(selectedStore?.id ?? ALL_SHOPS);
   const [search, setSearch] = useState('');
-  const [brand, setBrand] = useState('');
+  const [brands, setBrands] = useState<Set<string>>(new Set());
   const [sharing, setSharing] = useState(false);
 
   const storeList = useQuery({ queryKey: ['stores'], queryFn: () => storesApi.list() });
@@ -63,21 +64,16 @@ export default function ReorderScreen() {
     queryFn: () => analytics.reorder(storeId, months),
   });
 
-  const brandOptions = useMemo(
-    () => [
-      { value: '', label: 'All brands' },
-      ...[...new Set((query.data ?? []).map((r) => r.brand).filter((b): b is string => Boolean(b)))]
-        .sort()
-        .map((b) => ({ value: b, label: b })),
-    ],
+  const brandNames = useMemo(
+    () => [...new Set((query.data ?? []).map((r) => r.brand).filter((b): b is string => Boolean(b)))].sort(),
     [query.data]
   );
   const byBrand = useMemo(
     () =>
       [...(query.data ?? [])]
-        .filter((r) => !brand || r.brand === brand)
+        .filter((r) => !brands.size || brands.has(r.brand ?? ''))
         .sort((a, b) => b.quantity - a.quantity),
-    [query.data, brand]
+    [query.data, brands]
   );
 
   const rows = useMemo(() => {
@@ -102,7 +98,7 @@ export default function ReorderScreen() {
       const lines = byBrand
         .map((r) => ({ name: r.product_name, brand: r.brand, quantity: r.quantity, value: r.sales }));
       await shareOrderReportPdf({
-        storeName: brand ? `${scopeLabel} — ${brand}` : scopeLabel,
+        storeName: brands.size ? `${scopeLabel} — ${[...brands].join(', ')}` : scopeLabel,
         months,
         preparedBy: user?.full_name ?? 'Unknown',
         lines,
@@ -147,8 +143,8 @@ export default function ReorderScreen() {
 
         <View style={styles.controls}>
           <Select label="Shop" value={effectiveScope} options={storeOptions} onChange={setScope} />
-          {brandOptions.length > 1 ? (
-            <Select label="Brand" value={brand} options={brandOptions} onChange={setBrand} />
+          {brandNames.length > 1 ? (
+            <MultiSelectField label="Brands" allLabel="All brands" options={brandNames} selected={brands} onChange={setBrands} />
           ) : null}
           <View>
             <Text style={styles.fieldLabel}>Window</Text>

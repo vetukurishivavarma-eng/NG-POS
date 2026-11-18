@@ -130,13 +130,27 @@ export function MultiSelectField({
   return (
     <>
       <Field label={label} value={summary} onPress={() => setOpen(true)} />
+      {selected.size ? (
+        <View style={styles.chips}>
+          {[...selected].map((o) => (
+            <Pressable key={o} onPress={() => toggle(o)} style={styles.chip} hitSlop={4}>
+              <Text style={styles.chipText}>{o}  ✕</Text>
+            </Pressable>
+          ))}
+          {selected.size > 1 ? (
+            <Pressable onPress={() => onChange(new Set())} style={styles.chip} hitSlop={4}>
+              <Text style={styles.clear}>Clear all</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
       <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
         <SafeAreaView style={styles.full}>
           <View style={styles.listHead}>
             <TextInput
               value={q}
               onChangeText={setQ}
-              placeholder="Search products"
+              placeholder={`Search ${label.toLowerCase()}`}
               placeholderTextColor={colors.textMuted}
               style={styles.search}
               autoFocus
@@ -192,6 +206,17 @@ const styles = StyleSheet.create({
   cellOn: { backgroundColor: colors.primary },
   cellOnText: { color: '#fff' },
   full: { flex: 1, backgroundColor: colors.canvas },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
+  chip: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: colors.primarySoft,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  chipText: { color: colors.primary, fontSize: 13, fontWeight: '600' },
+  clear: { color: colors.textMuted, fontSize: 13 },
   listHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md },
   search: {
     flex: 1,
