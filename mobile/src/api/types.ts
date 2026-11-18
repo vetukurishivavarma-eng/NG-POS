@@ -617,12 +617,27 @@ export interface ProductSalesRow {
   store_name: string;
   product_id: string | null;
   product_name: string;
+  brand: string | null;
   quantity: number;
   sales: number;
   /** Present only for accounts that may see buying prices. */
   cost?: number;
   profit?: number;
   sold_below_cost_qty?: number;
+}
+
+/** In stock at a shop with no sale in the chosen window. */
+export interface NonMovingRow {
+  store_id: string;
+  store_name: string;
+  product_id: string;
+  product_name: string;
+  brand: string | null;
+  quantity: number;
+  /** ISO time of the last sale at this shop; null = never sold here. */
+  last_sold: string | null;
+  /** Stock at cost — only for accounts that may see buying prices. */
+  value?: number;
 }
 
 export interface ProfitPerProductRow extends SalesPerProductRow {

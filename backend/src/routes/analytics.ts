@@ -65,14 +65,15 @@ async function scope(req: Parameters<typeof currentUser>[0], storeId?: string) {
  * would be answered with figures for the whole organisation — which is exactly
  * what the Prisma-side `scope()` exists to prevent.
  */
-async function rawScope(req: Parameters<typeof currentUser>[0], storeId?: string) {
+async function rawScope(req: Parameters<typeof currentUser>[0], storeId?: string, col = 't.store_id') {
   const user = currentUser(req);
+  const c = Prisma.raw(col);
   if (storeId) {
     await assertStoreAccess(user, storeId);
-    return Prisma.sql`AND t.store_id = ${storeId}`;
+    return Prisma.sql`AND ${c} = ${storeId}`;
   }
   if (user.role !== 'ORG_ADMIN' && user.assignedStores.length > 0) {
-    return Prisma.sql`AND t.store_id IN (${Prisma.join(user.assignedStores)})`;
+    return Prisma.sql`AND ${c} IN (${Prisma.join(user.assignedStores)})`;
   }
   return Prisma.empty;
 }
@@ -225,7 +226,7 @@ analyticsRouter.get(
     const since = q.months ? monthsAgo(q.months) : periodStart(q.period);
 
     const rows = await prisma.transactionItem.groupBy({
-      by: ['productId', 'productName', 'brand'],
+      by: ['productId', 'productName'],
       where: {
         transaction: {
           ...(await scope(req, q.store_id)),
@@ -236,12 +237,22 @@ analyticsRouter.get(
       _sum: { quantity: true, lineTotal: true },
       orderBy: { _sum: { lineTotal: 'desc' } },
     });
+    // The product's brand as it is now, not as it was on the receipt: brands
+    // filled in today should group last month's sales too.
+    const brands = new Map(
+      (
+        await prisma.product.findMany({
+          where: { id: { in: rows.map((r) => r.productId).filter((id): id is string => Boolean(id)) } },
+          select: { id: true, brand: true },
+        })
+      ).map((p) => [p.id, p.brand])
+    );
 
     res.json(
       rows.map((r) => ({
         product_id: r.productId,
         product_name: r.productName,
-        brand: r.brand,
+        brand: (r.productId && brands.get(r.productId)) || null,
         quantity: Number(r._sum.quantity ?? 0),
         sales: Number(r._sum.lineTotal ?? 0),
       }))
@@ -353,6 +364,7 @@ analyticsRouter.get(
         store_name: string;
         product_id: string | null;
         product_name: string;
+        brand: string | null;
         qty: number;
         sales: number;
         cost: number;
@@ -360,6 +372,7 @@ analyticsRouter.get(
       }[]
     >`
       SELECT t.store_id, s.name AS store_name, ti.product_id, ti.product_name,
+             COALESCE(p.brand, MAX(ti.brand)) AS brand,
              SUM(ti.quantity)::float8 AS qty,
              SUM(ti.line_total)::float8 AS sales,
              SUM(ti.cost_price * ti.quantity)::float8 AS cost,
@@ -368,12 +381,13 @@ analyticsRouter.get(
       FROM transaction_items ti
       JOIN transactions t ON t.id = ti.transaction_id
       JOIN stores s ON s.id = t.store_id
+      LEFT JOIN products p ON p.id = ti.product_id
       WHERE t.organization_id = ${user.organizationId}
         AND t.status <> 'voided'
         AND t.created_at >= ${from} AND t.created_at < ${to}
         ${ids.length ? Prisma.sql`AND ti.product_id IN (${Prisma.join(ids)})` : Prisma.empty}
         ${await rawScope(req, q.store_id)}
-      GROUP BY t.store_id, s.name, ti.product_id, ti.product_name
+      GROUP BY t.store_id, s.name, ti.product_id, ti.product_name, p.brand
       ORDER BY s.name, qty DESC
     `;
 
@@ -385,6 +399,7 @@ analyticsRouter.get(
           store_name: r.store_name,
           product_id: r.product_id,
           product_name: r.product_name,
+          brand: r.brand,
           quantity: Number(r.qty),
           sales: Number(r.sales),
           ...(showCost && {
@@ -393,6 +408,75 @@ analyticsRouter.get(
             sold_below_cost_qty: Number(r.below_cost_qty),
           }),
         }))
+    );
+  })
+);
+
+/**
+ * Stock sitting on a shelf with no sale in the last N months, per shop — what
+ * to send back to the supplier or move to a shop where it sells. A line that
+ * only arrived inside the window is left out (it has not had the chance to
+ * sell yet); "first seen" is its first stock movement at that shop.
+ */
+analyticsRouter.get(
+  '/non-moving',
+  asyncHandler(async (req, res) => {
+    const q = z
+      .object({
+        store_id: z.string().uuid().optional(),
+        months: z.coerce.number().int().min(1).max(24).default(3),
+      })
+      .parse(req.query);
+    const user = currentUser(req);
+    const showCost = await mayViewCosts(user);
+    const since = monthsAgo(q.months);
+
+    const rows = await prisma.$queryRaw<
+      {
+        store_id: string;
+        store_name: string;
+        product_id: string;
+        product_name: string;
+        brand: string | null;
+        qty: number;
+        cost_price: number;
+        last_sold: Date | null;
+      }[]
+    >`
+      WITH m AS (
+        SELECT sm.store_id, sm.product_id,
+               MAX(sm.created_at) FILTER (WHERE sm.type = 'sale') AS last_sold,
+               MIN(sm.created_at) AS first_seen
+        FROM stock_movements sm
+        JOIN stores st ON st.id = sm.store_id AND st.organization_id = ${user.organizationId}
+        GROUP BY sm.store_id, sm.product_id
+      )
+      SELECT i.store_id, s.name AS store_name, p.id AS product_id, p.name AS product_name, p.brand,
+             i.quantity::float8 AS qty, p.cost_price::float8 AS cost_price, m.last_sold
+      FROM inventory i
+      JOIN products p ON p.id = i.product_id
+      JOIN stores s ON s.id = i.store_id
+      LEFT JOIN m ON m.store_id = i.store_id AND m.product_id = i.product_id
+      WHERE p.organization_id = ${user.organizationId}
+        AND p.is_active AND s.is_active
+        AND i.quantity > 0
+        AND (m.last_sold IS NULL OR m.last_sold < ${since})
+        AND (m.first_seen IS NULL OR m.first_seen < ${since})
+        ${await rawScope(req, q.store_id, 'i.store_id')}
+      ORDER BY s.name, i.quantity * p.cost_price DESC, p.name
+    `;
+
+    res.json(
+      rows.map((r) => ({
+        store_id: r.store_id,
+        store_name: r.store_name,
+        product_id: r.product_id,
+        product_name: r.product_name,
+        brand: r.brand,
+        quantity: Number(r.qty),
+        last_sold: r.last_sold ? r.last_sold.toISOString() : null,
+        ...(showCost && { value: Number(r.qty) * Number(r.cost_price) }),
+      }))
     );
   })
 );

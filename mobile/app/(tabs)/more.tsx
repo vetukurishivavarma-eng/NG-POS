@@ -234,6 +234,13 @@ export default function MoreScreen() {
                 value="What sold over the last 1–3 months, as a PDF to send"
                 onPress={() => router.push('/reorder')}
               />
+              <View style={styles.divider} />
+              <LinkRow
+                icon="archive"
+                label="Non-moving Stock"
+                value="Unsold for 3/6/12 months, per shop — return or shift it"
+                onPress={() => router.push('/non-moving')}
+              />
               {canViewSuppliers ? (
                 <>
                   <View style={styles.divider} />

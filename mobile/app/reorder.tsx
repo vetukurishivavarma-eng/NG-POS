@@ -27,6 +27,7 @@ export default function ReorderScreen() {
   const [months, setMonths] = useState<number>(1);
   const [scope, setScope] = useState<string>(selectedStore?.id ?? ALL_SHOPS);
   const [search, setSearch] = useState('');
+  const [brand, setBrand] = useState('');
   const [sharing, setSharing] = useState(false);
 
   const storeList = useQuery({ queryKey: ['stores'], queryFn: () => storesApi.list() });
@@ -62,8 +63,25 @@ export default function ReorderScreen() {
     queryFn: () => analytics.reorder(storeId, months),
   });
 
+  const brandOptions = useMemo(
+    () => [
+      { value: '', label: 'All brands' },
+      ...[...new Set((query.data ?? []).map((r) => r.brand).filter((b): b is string => Boolean(b)))]
+        .sort()
+        .map((b) => ({ value: b, label: b })),
+    ],
+    [query.data]
+  );
+  const byBrand = useMemo(
+    () =>
+      [...(query.data ?? [])]
+        .filter((r) => !brand || r.brand === brand)
+        .sort((a, b) => b.quantity - a.quantity),
+    [query.data, brand]
+  );
+
   const rows = useMemo(() => {
-    const all = [...(query.data ?? [])].sort((a, b) => b.quantity - a.quantity);
+    const all = byBrand;
     const needle = search.trim().toLowerCase();
     if (!needle) return all;
     return all.filter(
@@ -71,21 +89,20 @@ export default function ReorderScreen() {
         r.product_name.toLowerCase().includes(needle) ||
         (r.brand ?? '').toLowerCase().includes(needle)
     );
-  }, [query.data, search]);
+  }, [byBrand, search]);
 
   const totalUnits = rows.reduce((sum, r) => sum + r.quantity, 0);
   const totalValue = rows.reduce((sum, r) => sum + r.sales, 0);
 
   async function sharePdf() {
-    if (!query.data || query.data.length === 0) return;
+    if (byBrand.length === 0) return;
     setSharing(true);
     try {
-      // Always the full ranked list, not whatever the search box has narrowed to.
-      const lines = [...query.data]
-        .sort((a, b) => b.quantity - a.quantity)
+      // The chosen brand's full ranked list, not whatever the search box has narrowed to.
+      const lines = byBrand
         .map((r) => ({ name: r.product_name, brand: r.brand, quantity: r.quantity, value: r.sales }));
       await shareOrderReportPdf({
-        storeName: scopeLabel,
+        storeName: brand ? `${scopeLabel} — ${brand}` : scopeLabel,
         months,
         preparedBy: user?.full_name ?? 'Unknown',
         lines,
@@ -130,6 +147,9 @@ export default function ReorderScreen() {
 
         <View style={styles.controls}>
           <Select label="Shop" value={effectiveScope} options={storeOptions} onChange={setScope} />
+          {brandOptions.length > 1 ? (
+            <Select label="Brand" value={brand} options={brandOptions} onChange={setBrand} />
+          ) : null}
           <View>
             <Text style={styles.fieldLabel}>Window</Text>
             <View style={styles.monthRow}>

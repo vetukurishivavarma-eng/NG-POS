@@ -13,6 +13,7 @@ import { colors, formatKwacha, radius, spacing } from '../src/theme';
 import { DateField, MultiSelectField } from '../src/ui/pickers';
 import { Badge, Card, EmptyState, Loading, SectionLabel, Select } from '../src/ui/components';
 
+const NO_BRAND = 'No brand';
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => iso(new Date(Date.now() - n * 86400000));
 const PRESETS = [
@@ -36,6 +37,7 @@ export default function ProductSalesScreen() {
   const [from, setFrom] = useState(daysAgo(30));
   const [to, setTo] = useState(iso(new Date()));
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [brands, setBrands] = useState<Set<string>>(new Set());
   const [belowCost, setBelowCost] = useState(false);
 
   const shops = useQuery({ queryKey: ['stores'], queryFn: storesApi.list, enabled: allowed });
@@ -65,9 +67,14 @@ export default function ProductSalesScreen() {
       (rows.data ?? []).filter(
         (r) =>
           (!picked.size || picked.has(r.product_name)) &&
+          (!brands.size || brands.has(r.brand || NO_BRAND)) &&
           (!belowCost || (r.sold_below_cost_qty ?? 0) > 0)
       ),
-    [rows.data, picked, belowCost]
+    [rows.data, picked, brands, belowCost]
+  );
+  const brandNames = useMemo(
+    () => [...new Set((rows.data ?? []).map((r) => r.brand || NO_BRAND))].sort(),
+    [rows.data]
   );
   // Product choices come from the unfiltered result so a pick never hides itself.
   const names = useMemo(
@@ -113,6 +120,16 @@ export default function ProductSalesScreen() {
           <Switch value={belowCost} onValueChange={setBelowCost} />
         </View>
 
+        {brandNames.length > 1 ? (
+          <MultiSelectField
+            label="Brands"
+            allLabel="All brands"
+            options={brandNames}
+            selected={brands}
+            onChange={setBrands}
+          />
+        ) : null}
+
         {names.length ? (
           <MultiSelectField
             label="Products"
@@ -145,6 +162,7 @@ export default function ProductSalesScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.name}>{r.product_name}</Text>
                   <Text style={styles.sub}>
+                    {r.brand ? `${r.brand} · ` : ''}
                     {r.quantity} sold · {formatKwacha(r.sales)}
                     {r.profit !== undefined ? ` · profit ${formatKwacha(r.profit)}` : ''}
                   </Text>
