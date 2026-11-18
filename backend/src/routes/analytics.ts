@@ -414,9 +414,10 @@ analyticsRouter.get(
 
 /**
  * Stock sitting on a shelf with no sale in the last N months, per shop — what
- * to send back to the supplier or move to a shop where it sells. A line that
- * only arrived inside the window is left out (it has not had the chance to
- * sell yet); "first seen" is its first stock movement at that shop.
+ * to send back to the supplier or move to a shop where it sells. `first_seen`
+ * (its first stock movement at that shop) is returned so a line that only
+ * arrived recently can be told apart; it is NOT filtered out, because the
+ * live data only starts 2026-08-15 and that would empty the 6/12-month lists.
  */
 analyticsRouter.get(
   '/non-moving',
@@ -441,6 +442,7 @@ analyticsRouter.get(
         qty: number;
         cost_price: number;
         last_sold: Date | null;
+        first_seen: Date | null;
       }[]
     >`
       WITH m AS (
@@ -452,7 +454,7 @@ analyticsRouter.get(
         GROUP BY sm.store_id, sm.product_id
       )
       SELECT i.store_id, s.name AS store_name, p.id AS product_id, p.name AS product_name, p.brand,
-             i.quantity::float8 AS qty, p.cost_price::float8 AS cost_price, m.last_sold
+             i.quantity::float8 AS qty, p.cost_price::float8 AS cost_price, m.last_sold, m.first_seen
       FROM inventory i
       JOIN products p ON p.id = i.product_id
       JOIN stores s ON s.id = i.store_id
@@ -461,7 +463,6 @@ analyticsRouter.get(
         AND p.is_active AND s.is_active
         AND i.quantity > 0
         AND (m.last_sold IS NULL OR m.last_sold < ${since})
-        AND (m.first_seen IS NULL OR m.first_seen < ${since})
         ${await rawScope(req, q.store_id, 'i.store_id')}
       ORDER BY s.name, i.quantity * p.cost_price DESC, p.name
     `;
@@ -475,6 +476,7 @@ analyticsRouter.get(
         brand: r.brand,
         quantity: Number(r.qty),
         last_sold: r.last_sold ? r.last_sold.toISOString() : null,
+        first_seen: r.first_seen ? r.first_seen.toISOString() : null,
         ...(showCost && { value: Number(r.qty) * Number(r.cost_price) }),
       }))
     );
