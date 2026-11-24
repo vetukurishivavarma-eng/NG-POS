@@ -7,7 +7,9 @@ import { assertStoreAccess, authenticate, currentUser, requireCapability } from 
 import { serializeTransaction } from '../lib/serialize.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { nextAuditAction } from '../lib/auditContext.js';
-import { createSale } from '../services/sales.js';
+import { dateKeyIn } from '../lib/time.js';
+import { env } from '../env.js';
+import { correctSale, createSale } from '../services/sales.js';
 import {
   ALL_STORES_ID,
   computeAllStoresDailyFigures,
@@ -389,6 +391,69 @@ transactionsRouter.post(
       data: { status: 'voided', voidedAt: new Date(), voidReason: reason },
       include,
     });
+
+    res.json(serializeTransaction(updated));
+  })
+);
+
+/**
+ * Admin correction of a sale without a refund: same receipt, lines/prices/
+ * tender/customer rewritten, stock moved by the difference (see `correctSale`).
+ * A day report already sealed for that shop-day is rebuilt so it agrees.
+ */
+transactionsRouter.post(
+  '/:id/correct',
+  requireCapability('transactions.correct'),
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        items: z
+          .array(
+            z.object({
+              product_id: z.string().uuid(),
+              quantity: z.number().positive(),
+              unit_price: z.number().min(0),
+              discount_amount: z.number().min(0).optional(),
+            })
+          )
+          .min(1),
+        payments: z
+          .array(
+            z.object({
+              method: z.enum(['cash', 'card', 'mobile']),
+              amount: z.number(),
+              reference: z.string().nullable().optional(),
+            })
+          )
+          .min(1),
+        customer_name: z.string().nullable().optional(),
+        customer_phone: z.string().nullable().optional(),
+        reason: z.string().trim().min(1, 'Say why the invoice is being corrected.'),
+      })
+      .parse(req.body);
+    const user = currentUser(req);
+
+    const found = await prisma.transaction.findFirst({
+      where: { id: req.params.id, organizationId: user.organizationId },
+      select: { storeId: true },
+    });
+    if (!found) throw notFound('Transaction not found.');
+    await assertStoreAccess(user, found.storeId);
+
+    const updated = await correctSale(user, req.params.id as string, body);
+
+    const day = dateKeyIn(updated.createdAt, env.REPORT_TIMEZONE);
+    const sealed = await prisma.dailyReport.findUnique({
+      where: { storeId_date: { storeId: updated.storeId, date: day } },
+      select: { finalized: true },
+    });
+    if (sealed?.finalized) {
+      await prisma.dailyReport.update({
+        where: { storeId_date: { storeId: updated.storeId, date: day } },
+        data: { finalized: false },
+      });
+      await snapshotStoreDay(updated.storeId, day, { finalize: true });
+    }
 
     res.json(serializeTransaction(updated));
   })

@@ -134,6 +134,7 @@ export type Permission =
   | 'settings.write'
   | 'refunds.issue'
   | 'transactions.void'
+  | 'transactions.correct'
   | 'reports.rebuild'
   | 'devices.remove'
   | 'audit.read'
@@ -182,6 +183,7 @@ const PERMISSIONS: Record<Permission, RoleLevel[]> = {
   'settings.write': ['admin'],
   'refunds.issue': ['admin', 'manager'],
   'transactions.void': ['admin'],
+  'transactions.correct': ['admin'],
   'reports.rebuild': ['admin'],
   'devices.remove': ['admin'],
   // Was ['admin', 'manager'] — withdrawn from the shop login 2026-08-17 at the

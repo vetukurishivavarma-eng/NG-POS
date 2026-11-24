@@ -177,6 +177,15 @@ export default function TransactionScreen() {
             />
           ) : null}
 
+          {can(user, 'transactions.correct') && t.transaction_type === 'sale' && t.status === 'completed' ? (
+            <Button
+              label="Correct Invoice"
+              icon="edit-3"
+              variant="secondary"
+              onPress={() => router.push(`/correct-invoice?id=${t.id}`)}
+            />
+          ) : null}
+
           {/* The receipt shows what the sale is now. This shows whether it has
               always been that — which is the question actually being asked when
               somebody brings a printed receipt back to the counter. */}

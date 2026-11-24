@@ -189,7 +189,9 @@ export function serializeTransaction(t: {
     receipt_number: t.receiptNumber,
     transaction_type: t.transactionType,
     status: t.status,
-    items: t.items.map((i) => ({
+    // Zeroed rows are lines/tenders taken off by an invoice correction
+    // (correctSale): they can't be deleted, so they're hidden here.
+    items: t.items.filter((i) => !i.quantity.isZero()).map((i) => ({
       product_id: i.productId,
       product_name: i.productName,
       sku: i.sku,
@@ -205,7 +207,7 @@ export function serializeTransaction(t: {
     discount_amount: num(t.discountAmount),
     tax_amount: num(t.taxAmount),
     total: num(t.total),
-    payments: t.payments.map((p) => ({
+    payments: t.payments.filter((p) => !p.amount.isZero()).map((p) => ({
       method: p.method,
       amount: num(p.amount),
       reference: p.reference,

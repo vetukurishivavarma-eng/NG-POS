@@ -5,6 +5,7 @@ import { env } from '../env.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { dateKeyIn } from '../lib/time.js';
 import { mayViewCosts } from '../lib/capabilities.js';
+import { nextAuditAction } from '../lib/auditContext.js';
 import type { AuthUser } from '../middleware/auth.js';
 
 const D = Prisma.Decimal;
@@ -400,4 +401,183 @@ export async function createSale(user: AuthUser, input: SaleInput, deviceName: s
 
 function round2(v: Prisma.Decimal): Prisma.Decimal {
   return v.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+}
+
+export interface CorrectionInput {
+  items: { product_id: string; quantity: number; unit_price: number; discount_amount?: number }[];
+  payments: SaleInput['payments'];
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  reason: string;
+}
+
+/**
+ * Corrects a sale in place: the client's "fix the invoice without refunding".
+ * Same receipt number and date; lines, prices, tender and customer are rewritten
+ * and stock moves by the difference only, as an `adjustment` movement.
+ *
+ * Sale lines and payments can never be deleted (`NEVER_DELETE` in lib/audit.ts),
+ * so rows are rewritten in place: a line taken off the sale is zeroed and the
+ * serializer hides it. The transaction update goes FIRST so its audit entry's
+ * "before" snapshot holds the original lines and tender.
+ *
+ * Refused once the sale has a refund against it: the refund's per-product
+ * arithmetic is measured against the original lines.
+ */
+export async function correctSale(user: AuthUser, id: string, input: CorrectionInput) {
+  if (input.items.length === 0) throw badRequest('An invoice needs at least one item.');
+
+  return prisma.$transaction(
+    async (tx) => {
+      const original = await tx.transaction.findFirst({
+        where: { id, organizationId: user.organizationId },
+        include: {
+          items: { orderBy: { id: 'asc' } },
+          payments: { orderBy: { id: 'asc' } },
+          reversedBy: { where: { voidedAt: null }, select: { id: true } },
+        },
+      });
+      if (!original) throw notFound('Transaction not found.');
+      if (original.transactionType !== 'sale') throw badRequest('Only a sale can be corrected.');
+      if (original.voidedAt || original.status !== 'completed') {
+        throw badRequest('Only a completed sale can be corrected.');
+      }
+      if (original.reversedBy.length > 0) {
+        throw badRequest('This sale already has a refund against it and can no longer be corrected.');
+      }
+
+      const org = await tx.organization.findUniqueOrThrow({
+        where: { id: user.organizationId },
+        select: { vatRate: true },
+      });
+      const products = await tx.product.findMany({
+        where: { id: { in: input.items.map((i) => i.product_id) }, organizationId: user.organizationId },
+      });
+      const byId = new Map(products.map((p) => [p.id, p]));
+      // A product already on the sale keeps the cost it was sold at, so margin
+      // reports don't shift because the catalogue cost moved since.
+      const oldCost = new Map(original.items.map((i) => [i.productId, i.costPrice]));
+
+      let subtotal = new D(0);
+      let discountTotal = new D(0);
+      let taxTotal = new D(0);
+      let grandTotal = new D(0);
+      const rows: Omit<Prisma.TransactionItemCreateManyInput, 'transactionId'>[] = [];
+      const newQty = new Map<string, Prisma.Decimal>();
+
+      for (const line of input.items) {
+        const product = byId.get(line.product_id);
+        if (!product) throw badRequest(`Unknown product: ${line.product_id}`);
+        const quantity = new D(line.quantity);
+        const unitPrice = new D(line.unit_price);
+        const gross = unitPrice.mul(quantity);
+        const discount = new D(line.discount_amount ?? 0);
+        if (discount.gt(gross)) throw badRequest(`Discount exceeds the line total for ${product.name}.`);
+        const net = gross.sub(discount);
+        const tax = product.taxType === 'vat' ? net.mul(org.vatRate) : new D(0);
+        const lineTotal = net.add(tax);
+
+        subtotal = subtotal.add(gross);
+        discountTotal = discountTotal.add(discount);
+        taxTotal = taxTotal.add(tax);
+        grandTotal = grandTotal.add(lineTotal);
+        newQty.set(product.id, (newQty.get(product.id) ?? new D(0)).add(quantity));
+
+        rows.push({
+          productId: product.id,
+          productName: product.name,
+          sku: product.sku,
+          brand: product.brand,
+          quantity,
+          unitPrice,
+          costPrice: oldCost.get(product.id) ?? product.costPrice,
+          discountAmount: discount,
+          taxType: product.taxType,
+          taxAmount: round2(tax),
+          lineTotal: round2(lineTotal),
+        });
+      }
+
+      const total = round2(grandTotal);
+      const paymentRows = reconcilePayments(input.payments, grandTotal, total);
+      const stamp = `Corrected ${new Date().toISOString().slice(0, 10)} by ${user.fullName}: ${input.reason}`;
+
+      nextAuditAction('correct');
+      await tx.transaction.update({
+        where: { id: original.id },
+        data: {
+          subtotal: round2(subtotal),
+          discountAmount: round2(discountTotal),
+          taxAmount: round2(taxTotal),
+          total,
+          customerName: input.customer_name ?? null,
+          customerPhone: input.customer_phone ?? null,
+          notes: original.notes ? `${original.notes}\n${stamp}` : stamp,
+        },
+      });
+
+      // Lines: overwrite existing rows in order, zero the leftovers, create any extra.
+      for (let i = 0; i < Math.max(rows.length, original.items.length); i++) {
+        const row = rows[i];
+        const existing = original.items[i];
+        if (row && existing) {
+          await tx.transactionItem.update({ where: { id: existing.id }, data: row });
+        } else if (row) {
+          await tx.transactionItem.create({ data: { ...row, transactionId: original.id } });
+        } else if (existing) {
+          await tx.transactionItem.update({
+            where: { id: existing.id },
+            data: { quantity: 0, discountAmount: 0, taxAmount: 0, lineTotal: 0 },
+          });
+        }
+      }
+
+      // Payments: same pattern.
+      for (let i = 0; i < Math.max(paymentRows.length, original.payments.length); i++) {
+        const row = paymentRows[i];
+        const existing = original.payments[i];
+        if (row && existing) {
+          await tx.payment.update({ where: { id: existing.id }, data: row });
+        } else if (row) {
+          await tx.payment.create({ data: { ...row, transactionId: original.id } });
+        } else if (existing) {
+          await tx.payment.update({ where: { id: existing.id }, data: { amount: 0 } });
+        }
+      }
+
+      // Stock: only the difference moves.
+      const oldQty = new Map<string, Prisma.Decimal>();
+      for (const item of original.items) {
+        if (!item.productId) continue;
+        oldQty.set(item.productId, (oldQty.get(item.productId) ?? new D(0)).add(item.quantity));
+      }
+      for (const productId of new Set([...oldQty.keys(), ...newQty.keys()])) {
+        const delta = (oldQty.get(productId) ?? new D(0)).sub(newQty.get(productId) ?? new D(0));
+        if (delta.isZero()) continue;
+        const inventory = await tx.inventory.upsert({
+          where: { storeId_productId: { storeId: original.storeId, productId } },
+          create: { storeId: original.storeId, productId, quantity: delta, reorderLevel: new D(10) },
+          update: { quantity: { increment: delta } },
+          select: { quantity: true },
+        });
+        await tx.stockMovement.create({
+          data: {
+            storeId: original.storeId,
+            productId,
+            type: 'adjustment',
+            quantity: delta,
+            balance: inventory.quantity,
+            reference: `${original.receiptNumber} correction`,
+            userId: user.id,
+          },
+        });
+      }
+
+      return tx.transaction.findUniqueOrThrow({
+        where: { id: original.id },
+        include: { items: true, payments: true },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 30000 }
+  );
 }

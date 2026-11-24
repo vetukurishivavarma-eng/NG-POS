@@ -13,7 +13,7 @@ beforeEach(async () => {
     TRUNCATE TABLE
       payments, transaction_items, transactions, stock_movements,
       receipt_counters, daily_reports, inventory, store_prices,
-      warehouse_stock, transfer_items, transfers, warehouses,
+      transfer_items, transfers,
       supplier_payments, supplier_invoice_items, supplier_invoices, suppliers,
       password_reset_requests,
       products, stores, users, organizations

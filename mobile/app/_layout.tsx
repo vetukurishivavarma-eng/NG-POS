@@ -265,6 +265,10 @@ export default function RootLayout() {
             name="refund"
             options={{ presentation: 'modal', headerShown: true, title: 'Issue Refund' }}
           />
+          <Stack.Screen
+            name="correct-invoice"
+            options={{ presentation: 'modal', headerShown: true, title: 'Correct Invoice' }}
+          />
           <Stack.Screen name="day-report" options={{ headerShown: true, title: 'Day Report' }} />
           <Stack.Screen
             name="shop-day-report"

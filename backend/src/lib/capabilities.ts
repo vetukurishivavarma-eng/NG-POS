@@ -47,6 +47,9 @@ export const CAPABILITIES = [
   'settings.write',
   'refunds.issue',
   'transactions.void',
+  // Rewriting a sale in place (lines, prices, tender, customer) with no refund.
+  // Admin + warehouse only, via the default "everything" grant.
+  'transactions.correct',
   'reports.rebuild',
   'devices.remove',
   'audit.read',

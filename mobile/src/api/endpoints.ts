@@ -319,6 +319,17 @@ export const transactions = {
     api.post<Transaction>(`/transactions/${id}/refund`, body).then((r) => r.data),
   void: (id: string, reason: string) =>
     api.post<Transaction>(`/transactions/${id}/void`, { reason }).then((r) => r.data),
+  /** Admin: rewrite a sale in place (no refund); stock moves by the difference. */
+  correct: (
+    id: string,
+    body: {
+      items: { product_id: string; quantity: number; unit_price: number; discount_amount?: number }[];
+      payments: { method: 'cash' | 'card' | 'mobile'; amount: number }[];
+      customer_name?: string | null;
+      customer_phone?: string | null;
+      reason: string;
+    }
+  ) => api.post<Transaction>(`/transactions/${id}/correct`, body).then((r) => r.data),
   /** Z-report for one store on one day, or every store the caller can see combined
    *  into one report if `storeId` is `'all'` (see DayReportView's ALL_STORES_ID).
    *  `date` is YYYY-MM-DD; omit for today. */
