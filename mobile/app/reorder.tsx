@@ -11,6 +11,7 @@ import { placeLabel, warehouseFirst } from '../src/store/place';
 import { useStoreSelection } from '../src/store/storeSelection';
 import { useQuery } from '@tanstack/react-query';
 import { shareOrderReportPdf } from '../src/printing/print';
+import { shareStatementCsv } from '../src/printing/csv';
 import { useLayout } from '../src/ui/responsive';
 import { MultiSelectField } from '../src/ui/pickers';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../src/theme';
@@ -89,6 +90,21 @@ export default function ReorderScreen() {
 
   const totalUnits = rows.reduce((sum, r) => sum + r.quantity, 0);
   const totalValue = rows.reduce((sum, r) => sum + r.sales, 0);
+
+  function exportExcel() {
+    void shareStatementCsv(
+      {
+        title: 'Order list',
+        subject: brands.size ? `${scopeLabel} — ${[...brands].join(', ')}` : scopeLabel,
+        meta: [`Sold in the last ${months} month${months === 1 ? '' : 's'}`, `Prepared by ${user?.full_name ?? 'Unknown'}`],
+        columns: [{ label: 'Product' }, { label: 'Brand' }, { label: 'Qty sold' }, { label: 'Sales' }],
+        rows: byBrand.map((r) => [r.product_name, r.brand ?? '', String(r.quantity), formatKwacha(r.sales)]),
+        totals: ['Total', '', String(byBrand.reduce((n, r) => n + r.quantity, 0)), formatKwacha(byBrand.reduce((n, r) => n + r.sales, 0))],
+        empty: 'Nothing sold in this window.',
+      },
+      `Order-List-${scopeLabel}-${months}m`
+    );
+  }
 
   async function sharePdf() {
     if (byBrand.length === 0) return;
@@ -254,6 +270,7 @@ export default function ReorderScreen() {
               loading={sharing}
               onPress={() => void sharePdf()}
             />
+            <Button label="Export to Excel" icon="grid" variant="secondary" size="lg" onPress={exportExcel} />
           </>
         )}
       </ScrollView>

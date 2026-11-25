@@ -9,6 +9,7 @@ import { useLayout } from '../src/ui/responsive';
 import { colors, font, radius, spacing } from '../src/theme';
 import { Badge, Button, EmptyState, Icon, Loading, Select, type IconName } from '../src/ui/components';
 import { MOVEMENT_LABELS, type MovementType, type StockMovement } from '../src/api/types';
+import { shareStatementCsv } from '../src/printing/csv';
 
 const LIMIT = 200;
 
@@ -61,6 +62,29 @@ export default function MovementsScreen() {
             { value: 'transfer_out', label: MOVEMENT_LABELS.transfer_out },
             { value: 'refund', label: MOVEMENT_LABELS.refund },
           ]}
+        />
+        <Button
+          label="Export to Excel"
+          icon="grid"
+          variant="secondary"
+          disabled={!query.data?.length}
+          onPress={() => {
+            const rows = (query.data ?? []).filter((m) => filter === 'all' || m.type === filter);
+            void shareStatementCsv(
+              {
+                title: 'Stock movements',
+                subject: store.name,
+                meta: [filter === 'all' ? 'All movements' : MOVEMENT_LABELS[filter], `Latest ${LIMIT}`],
+                columns: ['Date', 'Time', 'Product', 'SKU', 'Type', 'Qty', 'Balance after', 'Reference', 'Note'].map((label) => ({ label })),
+                rows: rows.map((m) => {
+                  const d = new Date(m.created_at);
+                  return [d.toISOString().slice(0, 10), d.toTimeString().slice(0, 5), m.product_name, m.sku, MOVEMENT_LABELS[m.type] ?? m.type, String(m.quantity), String(m.balance), m.reference ?? '', m.note ?? ''];
+                }),
+                empty: 'No movements.',
+              },
+              `Stock-Movements-${store.name}`
+            );
+          }}
         />
       </View>
 
@@ -256,7 +280,7 @@ function signed(n: number): string {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.canvas },
 
-  toolbar: { paddingTop: spacing.md, paddingBottom: spacing.xs, backgroundColor: colors.canvas },
+  toolbar: { paddingTop: spacing.md, paddingBottom: spacing.xs, gap: spacing.sm, backgroundColor: colors.canvas },
 
   dayHeader: {
     flexDirection: 'row',

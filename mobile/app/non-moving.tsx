@@ -7,7 +7,7 @@ import { analytics, stores as storesApi } from '../src/api/endpoints';
 import { errorMessage } from '../src/api/client';
 import { useAuth, useCan } from '../src/store/auth';
 import { placeLabel, warehouseFirst } from '../src/store/place';
-import { shareStatementPdf } from '../src/printing/print';
+import { shareStatement } from '../src/printing/csv';
 import { useLayout } from '../src/ui/responsive';
 import { MultiSelectField } from '../src/ui/pickers';
 import { colors, font, formatKwacha, radius, spacing } from '../src/theme';
@@ -63,10 +63,11 @@ export default function NonMovingScreen() {
   const total = shown.reduce((sum, r) => sum + (r.value ?? 0), 0);
   const shopLabel = shopOptions.find((o) => o.value === storeId)?.label ?? 'All shops';
 
-  async function sharePdf() {
+  async function sharePdf(format: 'pdf' | 'csv' = 'pdf') {
     setSharing(true);
     try {
-      await shareStatementPdf(
+      await shareStatement(
+        format,
         {
           title: 'Non-moving stock',
           subject: brands.size ? `${shopLabel} — ${[...brands].join(', ')}` : shopLabel,
@@ -165,7 +166,10 @@ export default function NonMovingScreen() {
         ))}
 
         {shown.length ? (
-          <Button label="Save as PDF / Share" icon="share-2" size="lg" loading={sharing} onPress={() => void sharePdf()} />
+          <>
+            <Button label="Save as PDF / Share" icon="share-2" size="lg" loading={sharing} onPress={() => void sharePdf()} />
+            <Button label="Export to Excel" icon="download" variant="secondary" size="lg" loading={sharing} onPress={() => void sharePdf('csv')} />
+          </>
         ) : null}
       </ScrollView>
     </SafeAreaView>

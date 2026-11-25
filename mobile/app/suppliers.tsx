@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { purchases as purchasesApi, suppliers as suppliersApi } from '../src/api/endpoints';
-import { shareStatementPdf } from '../src/printing/print';
+import { shareStatement } from '../src/printing/csv';
 import { errorMessage } from '../src/api/client';
 import { useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
@@ -167,10 +167,10 @@ function SupplierCard({
   const balance = supplier.outstanding_balance ?? 0;
   const [busy, setBusy] = useState(false);
 
-  async function downloadStatement() {
+  async function downloadStatement(format: 'pdf' | 'csv' = 'pdf') {
     setBusy(true);
     try {
-      await shareSupplierStatement(supplier);
+      await shareSupplierStatement(supplier, format);
     } catch (err) {
       Alert.alert("Couldn't load the statement", errorMessage(err));
     } finally {
@@ -230,6 +230,16 @@ function SupplierCard({
           <Text style={styles.actionText}>{busy ? 'Preparing…' : 'Statement'}</Text>
         </Pressable>
 
+        <Pressable
+          onPress={() => void downloadStatement('csv')}
+          disabled={busy}
+          style={styles.action}
+          hitSlop={6}
+        >
+          <Icon name="grid" size={14} color={colors.primary} />
+          <Text style={styles.actionText}>Excel</Text>
+        </Pressable>
+
         {canWrite ? (
           <Pressable onPress={onEdit} style={styles.action} hitSlop={6}>
             <Icon name="edit-2" size={14} color={colors.primary} />
@@ -252,7 +262,7 @@ function SupplierCard({
  * Every invoice (what we were billed) and every payment (what we paid) for one
  * supplier, oldest first, with the running balance owed — as a PDF.
  */
-async function shareSupplierStatement(supplier: Supplier) {
+async function shareSupplierStatement(supplier: Supplier, format: 'pdf' | 'csv') {
   const invoices = [];
   for (let offset = 0; ; offset += 200) {
     const page = await purchasesApi.list({ supplier_id: supplier.id, limit: 200, offset });
@@ -293,7 +303,8 @@ async function shareSupplierStatement(supplier: Supplier) {
   const billed = entries.reduce((sum, e) => sum + e.billed, 0);
   const paid = entries.reduce((sum, e) => sum + e.paid, 0);
 
-  await shareStatementPdf(
+  await shareStatement(
+    format,
     {
       title: 'Supplier statement',
       subject: supplier.name,

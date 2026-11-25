@@ -8,6 +8,7 @@ import { transactions as txApi } from '../api/endpoints';
 import { useAuth } from '../store/auth';
 import { useSync } from '../db/sync';
 import { printDayReport, shareDayReportPdf } from '../printing/print';
+import { shareStatementCsv } from '../printing/csv';
 import { printBlockedReason } from '../printing/printer';
 import { useLayout } from '../ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing, splitAmount } from '../theme';
@@ -107,6 +108,30 @@ export default function DayReportView({
     } finally {
       setPrinting(false);
     }
+  }
+
+  function exportExcel() {
+    if (!figures) return;
+    const m = figures.by_payment_method;
+    void shareStatementCsv(
+      {
+        title: 'Day report',
+        subject: `${store.name} — ${figures.date}`,
+        meta: [
+          `Transactions: ${figures.transaction_count}`,
+          `Net sales: ${figures.gross_total}`,
+          `Tax: ${figures.tax_total}`,
+          `Refunds: ${figures.refund_total}`,
+          `Cash: ${m.cash}  Card: ${m.card}  Mobile: ${m.mobile}`,
+          ...(figures.by_store ?? []).map((b) => `${b.store_name}: ${b.transaction_count} sales, ${b.gross_total}`),
+        ],
+        columns: [{ label: 'Product' }, { label: 'Qty' }, { label: 'Total' }],
+        rows: productLines.map((p) => [p.name, String(p.quantity), formatKwacha(p.total)]),
+        totals: ['Total', String(productLines.reduce((n, p) => n + p.quantity, 0)), formatKwacha(productLines.reduce((n, p) => n + p.total, 0))],
+        empty: 'Nothing sold.',
+      },
+      `Day-Report-${store.name}-${figures.date}`
+    );
   }
 
   async function sharePdf() {
@@ -313,6 +338,7 @@ export default function DayReportView({
               loading={sharing}
               onPress={() => void sharePdf()}
             />
+            <Button label="Export to Excel" icon="grid" variant="secondary" onPress={exportExcel} />
             {renderFooter ? renderFooter({ print, offset }) : null}
           </View>
         </>

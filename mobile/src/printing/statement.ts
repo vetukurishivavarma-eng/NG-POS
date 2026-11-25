@@ -87,3 +87,23 @@ export function statementHtml(data: StatementData, opts: { organizationName: str
   </body>
 </html>`;
 }
+
+/**
+ * "Export to Excel" for every report: the same table the PDF prints, written as
+ * a CSV — the same kind of file as the closing-stock download, which Excel
+ * opens directly. Money cells ("K1,234.50") go out as plain numbers so the
+ * sheet can be summed and consolidated across shops.
+ */
+export function statementCsv(data: StatementData): string {
+  const head = [[data.title, data.subject], ...data.meta.map((m) => [m]), []];
+  const table = [data.columns.map((c) => c.label), ...data.rows, ...(data.totals ? [data.totals] : [])];
+  return '﻿' +[...head, ...table].map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';
+}
+
+const MONEY = /^(-?)K?([\d,]+(?:\.\d+)?)$/;
+
+function cell(value: string): string {
+  const money = MONEY.exec(value.trim());
+  if (money && /[K,]/.test(value)) return money[1] + money[2].replace(/,/g, '');
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}

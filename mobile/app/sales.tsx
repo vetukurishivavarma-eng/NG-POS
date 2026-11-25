@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -18,6 +19,7 @@ import { useLayout } from '../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing } from '../src/theme';
 import { Badge, Button, EmptyState, Icon, Loading } from '../src/ui/components';
 import type { Transaction, TransactionType } from '../src/api/types';
+import { shareStatementCsv } from '../src/printing/csv';
 
 const PAGE_SIZE = 40;
 
@@ -63,6 +65,49 @@ export default function SalesScreen() {
   }, [rows, search]);
 
   const sections = useMemo(() => groupByDay(filtered), [filtered]);
+  const [exporting, setExporting] = useState(false);
+
+  /** Every receipt for this shop (not just the loaded pages), one row per item sold. */
+  async function exportExcel() {
+    if (!store) return;
+    setExporting(true);
+    try {
+      const all: Transaction[] = [];
+      // ponytail: 50 pages x 200 = 10,000 receipts cap; add a date range if a shop outgrows it.
+      for (let page = 0; page < 50; page += 1) {
+        const batch = await txApi.list(store.id, {
+          limit: 200,
+          offset: page * 200,
+          ...(filter === 'all' ? {} : { type: filter as TransactionType }),
+        });
+        all.push(...batch);
+        if (batch.length < 200) break;
+      }
+      await shareStatementCsv(
+        {
+          title: 'Sales history',
+          subject: store.name,
+          meta: [filter === 'all' ? 'Sales and refunds' : filter === 'sale' ? 'Sales only' : 'Refunds only', `${all.length} receipts`],
+          columns: ['Date', 'Time', 'Receipt', 'Type', 'Status', 'Cashier', 'Device', 'Customer', 'Phone', 'Product', 'SKU', 'Brand', 'Qty', 'Unit price', 'Discount', 'Tax', 'Line total', 'Paid by'].map((label) => ({ label })),
+          rows: all.flatMap((t) => {
+            const d = new Date(t.created_at);
+            const paidBy = t.payments.map((p) => p.method).join(' + ');
+            return t.items.map((i) => [
+              d.toISOString().slice(0, 10), d.toTimeString().slice(0, 5), t.receipt_number, t.transaction_type.replace(/_/g, ' '), t.status,
+              t.cashier_name, t.device_name ?? '', t.customer_name ?? '', t.customer_phone ?? '', i.product_name, i.sku, i.brand ?? '',
+              String(i.quantity), formatKwacha(i.unit_price), formatKwacha(i.discount_amount), formatKwacha(i.tax_amount), formatKwacha(i.line_total), paidBy,
+            ]);
+          }),
+          empty: 'No transactions.',
+        },
+        `Sales-${store.name}`
+      );
+    } catch (err) {
+      Alert.alert("Couldn't export", err instanceof Error ? err.message : 'Try again.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   if (!store) {
     return (
@@ -102,6 +147,7 @@ export default function SalesScreen() {
             onPress={() => setFilter('refund')}
           />
         </View>
+        <Button label="Export to Excel" icon="grid" variant="secondary" loading={exporting} onPress={() => void exportExcel()} />
       </View>
 
       {query.isLoading ? (

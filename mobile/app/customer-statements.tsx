@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { transactions as transactionsApi } from '../src/api/endpoints';
 import { errorMessage } from '../src/api/client';
-import { shareStatementPdf } from '../src/printing/print';
+import { shareStatement } from '../src/printing/csv';
 import { useLayout } from '../src/ui/responsive';
 import { colors, font, formatKwacha, radius, spacing } from '../src/theme';
 import { EmptyState, Field, Icon, Loading } from '../src/ui/components';
@@ -34,7 +34,7 @@ export default function CustomerStatementsScreen() {
     queryFn: () => transactionsApi.customers(term || undefined),
   });
 
-  async function download(c: CustomerSummary) {
+  async function download(c: CustomerSummary, format: 'pdf' | 'csv' = 'pdf') {
     const key = `${c.name}|${c.phone}`;
     setBusyKey(key);
     try {
@@ -46,7 +46,8 @@ export default function CustomerStatementsScreen() {
         0
       );
 
-      await shareStatementPdf(
+      await shareStatement(
+        format,
         {
           title: 'Customer statement',
           subject: c.name,
@@ -91,7 +92,7 @@ export default function CustomerStatementsScreen() {
       >
         <Text style={styles.lead}>
           Customers are the names typed on sales at the till. Tap one to download every sale and
-          payment as a PDF.
+          payment as a PDF, or Excel for a spreadsheet.
         </Text>
 
         <Field
@@ -132,8 +133,11 @@ export default function CustomerStatementsScreen() {
                       .join(' · ')}
                   </Text>
                 </View>
-                <Text style={styles.action}>{busyKey === key ? 'Preparing…' : 'Statement'}</Text>
+                <Text style={styles.action}>{busyKey === key ? 'Preparing…' : 'PDF'}</Text>
                 <Icon name="download" size={16} color={colors.primary} />
+                <Pressable onPress={() => void download(c, 'csv')} disabled={busyKey !== null} hitSlop={8}>
+                  <Text style={styles.action}>Excel</Text>
+                </Pressable>
               </Pressable>
             );
           })

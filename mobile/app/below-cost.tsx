@@ -9,7 +9,8 @@ import { errorMessage } from '../src/api/client';
 import { useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
 import { colors, formatKwacha, spacing } from '../src/theme';
-import { Badge, Card, EmptyState, Loading } from '../src/ui/components';
+import { Badge, Button, Card, EmptyState, Loading } from '../src/ui/components';
+import { shareStatementCsv } from '../src/printing/csv';
 
 /**
  * Every sale line that went out below cost: which receipt, which shop, which
@@ -72,6 +73,31 @@ export default function BelowCostScreen() {
             </Card>
           </Pressable>
         ))}
+        {rows.data?.length ? (
+          <Button
+            label="Export to Excel"
+            icon="grid"
+            variant="secondary"
+            size="lg"
+            onPress={() =>
+              void shareStatementCsv(
+                {
+                  title: 'Sold below cost',
+                  subject: params.title || 'All products',
+                  meta: [query.from && query.to ? `${query.from} to ${query.to}` : query.period ? `Period: ${query.period}` : ''].filter(Boolean),
+                  columns: ['Date', 'Receipt', 'Shop', 'Product', 'Qty', 'Price (ex-VAT)', 'Cost', 'Loss', 'Login', 'Device'].map((label) => ({ label })),
+                  rows: rows.data.map((r) => [
+                    new Date(r.created_at).toLocaleString(), r.receipt_number, r.store_name, r.product_name, String(r.quantity),
+                    formatKwacha(r.net_price), formatKwacha(r.cost_price), formatKwacha(r.loss), r.cashier_name || '', r.device_name ?? '',
+                  ]),
+                  totals: ['Total', '', '', '', '', '', '', formatKwacha(rows.data.reduce((n, r) => n + r.loss, 0)), '', ''],
+                  empty: 'None found.',
+                },
+                'Below-Cost-Sales'
+              )
+            }
+          />
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

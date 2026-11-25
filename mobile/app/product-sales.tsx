@@ -11,7 +11,8 @@ import { useCan } from '../src/store/auth';
 import { useLayout } from '../src/ui/responsive';
 import { colors, formatKwacha, radius, spacing } from '../src/theme';
 import { DateField, MultiSelectField } from '../src/ui/pickers';
-import { Badge, Card, EmptyState, Loading, SectionLabel, Select } from '../src/ui/components';
+import { Badge, Button, Card, EmptyState, Loading, SectionLabel, Select } from '../src/ui/components';
+import { shareStatementCsv } from '../src/printing/csv';
 
 const NO_BRAND = 'No brand';
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -86,6 +87,32 @@ export default function ProductSalesScreen() {
     for (const r of shown) m.set(r.store_name, [...(m.get(r.store_name) ?? []), r]);
     return [...m.entries()];
   }, [shown]);
+
+  function exportExcel() {
+    const shop = (shops.data ?? []).find((x) => x.id === storeId)?.name ?? 'All shops';
+    const costs = shown.some((r) => r.profit !== undefined);
+    void shareStatementCsv(
+      {
+        title: 'Product sales',
+        subject: brands.size ? `${shop} — ${[...brands].join(', ')}` : shop,
+        meta: [`${from} to ${to}`, ...(belowCost ? ['Below cost only'] : [])],
+        columns: [
+          { label: 'Shop' }, { label: 'Product' }, { label: 'Brand' }, { label: 'Qty' }, { label: 'Sales' },
+          ...(costs ? [{ label: 'Cost' }, { label: 'Profit' }, { label: 'Qty below cost' }] : []),
+        ],
+        rows: shown.map((r) => [
+          r.store_name, r.product_name, r.brand ?? '', String(r.quantity), formatKwacha(r.sales),
+          ...(costs ? [formatKwacha(r.cost ?? 0), formatKwacha(r.profit ?? 0), String(r.sold_below_cost_qty ?? 0)] : []),
+        ]),
+        totals: [
+          'Total', '', '', String(shown.reduce((n, r) => n + r.quantity, 0)), formatKwacha(shown.reduce((n, r) => n + r.sales, 0)),
+          ...(costs ? [formatKwacha(shown.reduce((n, r) => n + (r.cost ?? 0), 0)), formatKwacha(shown.reduce((n, r) => n + (r.profit ?? 0), 0)), ''] : []),
+        ],
+        empty: 'Nothing sold.',
+      },
+      `Product-Sales-${shop}-${from}-${to}`
+    );
+  }
 
   if (!allowed) {
     return (
@@ -182,6 +209,7 @@ export default function ProductSalesScreen() {
             ))}
           </Card>
         ))}
+        {shown.length ? <Button label="Export to Excel" icon="grid" variant="secondary" size="lg" onPress={exportExcel} /> : null}
       </ScrollView>
     </SafeAreaView>
   );

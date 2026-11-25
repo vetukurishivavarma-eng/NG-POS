@@ -14,8 +14,10 @@ import { useStoreSelection } from '../src/store/storeSelection';
 import { useLayout } from '../src/ui/responsive';
 import { colors, font, formatKwacha, radius, shadow, spacing, splitAmount } from '../src/theme';
 import { Donut, DonutLegend, type DonutSlice } from '../src/ui/Donut';
+import { shareStatementCsv } from '../src/printing/csv';
 import {
   Badge,
+  Button,
   Card,
   EmptyState,
   Icon,
@@ -215,6 +217,41 @@ export default function AnalyticsScreen() {
         }
       : null;
 
+  function exportProducts() {
+    const rows = profit.data ?? [];
+    const sum = (k: 'quantity' | 'sales' | 'cost' | 'tax' | 'profit') => rows.reduce((n, r) => n + r[k], 0);
+    void shareStatementCsv(
+      {
+        title: 'Product by product',
+        subject: scopeLabel,
+        meta: [PERIOD_LABELS[period]],
+        columns: ['Product', 'Brand', 'Qty', 'Sales', 'Cost', 'Tax', 'Profit', 'Qty below cost', 'Below-cost loss'].map((label) => ({ label })),
+        rows: rows.map((r) => [
+          r.product_name, r.brand ?? '', String(r.quantity), formatKwacha(r.sales), formatKwacha(r.cost), formatKwacha(r.tax),
+          formatKwacha(r.profit), String(r.below_cost_qty ?? 0), formatKwacha(r.below_cost_loss ?? 0),
+        ]),
+        totals: ['Total', '', String(sum('quantity')), formatKwacha(sum('sales')), formatKwacha(sum('cost')), formatKwacha(sum('tax')), formatKwacha(sum('profit')), '', ''],
+        empty: 'Nothing sold.',
+      },
+      `Analytics-Products-${scopeLabel}-${period}`
+    );
+  }
+
+  function exportBranches() {
+    void shareStatementCsv(
+      {
+        title: 'Branches',
+        subject: 'All branches',
+        meta: [PERIOD_LABELS[period]],
+        columns: ['Branch', 'Transactions', 'Sales', 'Profit'].map((label) => ({ label })),
+        rows: branches.map((b) => [b.branch, String(b.transactions), formatKwacha(b.sales), formatKwacha(b.profit)]),
+        totals: ['Total', String(branches.reduce((n, b) => n + b.transactions, 0)), formatKwacha(branches.reduce((n, b) => n + b.sales, 0)), formatKwacha(branches.reduce((n, b) => n + b.profit, 0))],
+        empty: 'No branch activity.',
+      },
+      `Analytics-Branches-${period}`
+    );
+  }
+
   // Every panel on this screen is built from the buying price, and the three
   // endpoints behind them now refuse an account without `costs.view`. The link
   // into it is hidden from the same accounts, but a handset can be sitting on
@@ -383,6 +420,9 @@ export default function AnalyticsScreen() {
             above does not narrow them — only the period does.
           </Text>
         </View>
+
+        <Button label="Export products to Excel" icon="grid" variant="secondary" disabled={!profit.data?.length} onPress={exportProducts} />
+        <Button label="Export branches to Excel" icon="grid" variant="secondary" disabled={!branches.length} onPress={exportBranches} />
       </ScrollView>
     </SafeAreaView>
   );

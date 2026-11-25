@@ -6,7 +6,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { stores as storesApi, transfers as transfersApi } from '../../src/api/endpoints';
 import { errorMessage } from '../../src/api/client';
-import { printTransferNote, shareStatementPdf, shareTransferPdf } from '../../src/printing/print';
+import { printTransferNote, shareTransferPdf } from '../../src/printing/print';
+import { shareStatement } from '../../src/printing/csv';
 import { useCan } from '../../src/store/auth';
 import { useLayout } from '../../src/ui/responsive';
 import { colors, font, radius, shadow, spacing } from '../../src/theme';
@@ -56,7 +57,7 @@ export default function TransfersScreen() {
 
   const rows = query.data ?? [];
 
-  function download() {
+  function download(format: 'pdf' | 'csv' = 'pdf') {
     const nameOf = (id: string) => shopOptions.find((o) => o.value === id)?.label ?? '';
     const lines = rows.flatMap((t) =>
       t.items.map((i) => [
@@ -73,7 +74,8 @@ export default function TransfersScreen() {
       .filter((t) => t.status !== 'cancelled')
       .reduce((sum, t) => sum + t.items.reduce((s, i) => s + i.quantity, 0), 0);
 
-    void shareStatementPdf(
+    void shareStatement(
+      format,
       {
         title: 'Transfer list',
         subject: `${fromId ? nameOf(fromId) : 'Any shop'} → ${toId ? nameOf(toId) : 'Any shop'}`,
@@ -118,7 +120,14 @@ export default function TransfersScreen() {
         icon="download"
         variant="secondary"
         disabled={rows.length === 0}
-        onPress={download}
+        onPress={() => download()}
+      />
+      <Button
+        label="Export to Excel"
+        icon="grid"
+        variant="secondary"
+        disabled={rows.length === 0}
+        onPress={() => download('csv')}
       />
     </View>
   );

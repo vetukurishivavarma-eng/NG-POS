@@ -12,6 +12,7 @@ import { colors, font, formatKwacha, radius, shadow, spacing } from '../../src/t
 import { Badge, Button, EmptyState, Icon, Loading, Select } from '../../src/ui/components';
 import { InvoiceStatusBadge } from '../../src/ui/invoiceStatus';
 import type { SupplierInvoice } from '../../src/api/types';
+import { shareStatementCsv } from '../../src/printing/csv';
 
 type Filter = 'outstanding' | 'paid' | 'all';
 
@@ -133,6 +134,34 @@ export default function PurchasesScreen() {
             { value: 'all', label: 'All' },
           ]}
         />
+
+        {rows.length ? (
+          <Button
+            label="Export to Excel"
+            icon="grid"
+            variant="secondary"
+            onPress={() =>
+              void shareStatementCsv(
+                {
+                  title: 'Supplier invoices',
+                  subject: store?.name ?? '',
+                  meta: [filter === 'all' ? 'All invoices' : filter === 'paid' ? 'Paid' : 'Outstanding', 'Latest 100'],
+                  columns: ['Invoice date', 'Invoice', 'Supplier', 'Shop', 'Status', 'Due', 'Product', 'SKU', 'Qty', 'Unit cost', 'Line total', 'Invoice total', 'Paid', 'Balance'].map((label) => ({ label })),
+                  rows: rows.flatMap((inv) =>
+                    inv.items.map((i, n) => [
+                      inv.invoice_date.slice(0, 10), inv.invoice_number, inv.supplier_name, inv.store_name, inv.status, inv.due_date?.slice(0, 10) ?? '',
+                      i.product_name, i.sku, String(i.quantity), formatKwacha(i.unit_cost), formatKwacha(i.line_total),
+                      // Invoice-level money on its first line only, so a column sum isn't multiplied by the line count.
+                      ...(n === 0 ? [formatKwacha(inv.total), formatKwacha(inv.amount_paid), formatKwacha(inv.balance)] : ['', '', '']),
+                    ])
+                  ),
+                  empty: 'No invoices.',
+                },
+                `Supplier-Invoices-${store?.name ?? ''}`
+              )
+            }
+          />
+        ) : null}
 
         {supplierId ? (
           <Pressable style={styles.filterChip} onPress={() => router.setParams({ supplier_id: '' })}>
